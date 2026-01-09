@@ -50,7 +50,7 @@ impl DatabaseOperations for RedisDatabase {
             .map_err(|e| DbError::ConnectionFailed(format!("创建 Redis 客户端失败: {}", e)))?;
         
         // 获取连接
-        let mut conn = client.get_multiplexed_tokio_connection()
+        let mut conn = client.get_multiplexed_async_connection()
             .await
             .map_err(|e| DbError::ConnectionFailed(format!("连接 Redis 失败: {}", e)))?;
         
@@ -71,7 +71,7 @@ impl DatabaseOperations for RedisDatabase {
             .map_err(|e| DbError::ConnectionFailed(format!("创建 Redis 客户端失败: {}", e)))?;
         
         // 获取连接
-        let conn = client.get_multiplexed_tokio_connection()
+        let conn = client.get_multiplexed_async_connection()
             .await
             .map_err(|e| DbError::ConnectionFailed(format!("连接 Redis 失败: {}", e)))?;
         

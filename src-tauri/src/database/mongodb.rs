@@ -59,7 +59,7 @@ impl DatabaseOperations for MongoDatabase {
         // 测试连接 - 执行 ping 命令
         let admin_db = client.database("admin");
         admin_db
-            .run_command(mongodb::bson::doc! { "ping": 1 }, None)
+            .run_command(mongodb::bson::doc! { "ping": 1 })
             .await
             .map_err(|e| DbError::ConnectionFailed(format!("连接 MongoDB 失败: {}", e)))?;
         
@@ -106,7 +106,7 @@ impl DatabaseOperations for MongoDatabase {
         
         // 列出所有数据库
         let db_names = client
-            .list_database_names(None, None)
+            .list_database_names()
             .await
             .map_err(|e| DbError::QueryFailed(format!("获取数据库列表失败: {}", e)))?;
         
@@ -136,7 +136,7 @@ impl DatabaseOperations for MongoDatabase {
         
         // 获取所有集合名称
         let collection_names = db
-            .list_collection_names(None)
+            .list_collection_names()
             .await
             .map_err(|e| DbError::QueryFailed(format!("获取集合列表失败: {}", e)))?;
         
@@ -145,7 +145,7 @@ impl DatabaseOperations for MongoDatabase {
             // 获取集合统计信息
             let collection = db.collection::<mongodb::bson::Document>(&name);
             let count = collection
-                .estimated_document_count(None)
+                .estimated_document_count()
                 .await
                 .ok();
             
@@ -184,7 +184,7 @@ impl DatabaseOperations for MongoDatabase {
         
         // 获取索引信息
         let mut cursor = collection
-            .list_indexes(None)
+            .list_indexes()
             .await
             .map_err(|e| DbError::QueryFailed(format!("获取索引列表失败: {}", e)))?;
         
