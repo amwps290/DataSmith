@@ -240,7 +240,6 @@ impl DatabaseOperations for MySqlDatabase {
         let rows = sqlx::query(
             "SELECT SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME 
              FROM information_schema.SCHEMATA 
-             WHERE SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
              ORDER BY SCHEMA_NAME"
         )
         .fetch_all(pool)
