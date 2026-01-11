@@ -12,95 +12,34 @@ use std::sync::OnceLock;
 
 static MASTER_KEY: OnceLock<[u8; 32]> = OnceLock::new();
 
-/// 初始化主密钥（从系统密钥链获取或生成）
+/// 初始化主密钥（使用机器ID派生确定性密钥）
 pub fn initialize_master_key() -> Result<(), String> {
     MASTER_KEY.get_or_init(|| {
-        // 尝试从系统密钥链获取
-        match get_or_create_master_key() {
-            Ok(key) => key,
-            Err(e) => {
-                eprintln!("密钥初始化警告: {}", e);
-                // 回退到机器ID派生的密钥
-                derive_machine_key()
-            }
-        }
+        // 直接使用机器ID派生密钥，确保确定性和跨重启一致性
+        derive_machine_key()
     });
     Ok(())
 }
 
-/// 从系统密钥链获取或创建主密钥
-fn get_or_create_master_key() -> Result<[u8; 32], String> {
-    let service_name = "DataSmith";
-    let username = "master_encryption_key";
-    
-    let entry = Entry::new(service_name, username)
-        .map_err(|e| format!("无法访问系统密钥链: {}", e))?;
-
-    match entry.get_password() {
-        Ok(key_str) => {
-            // 密钥存在，解码并返回
-            let decoded = general_purpose::STANDARD
-                .decode(&key_str)
-                .map_err(|e| format!("密钥解码失败: {}", e))?;
-            
-            if decoded.len() != 32 {
-                return Err("存储的密钥长度不正确".to_string());
-            }
-            
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&decoded);
-            Ok(key)
-        }
-        Err(_) => {
-            // 密钥不存在，生成新密钥
-            let mut key = [0u8; 32];
-            OsRng.fill_bytes(&mut key);
-            
-            // 保存到系统密钥链
-            let encoded = general_purpose::STANDARD.encode(&key);
-            entry
-                .set_password(&encoded)
-                .map_err(|e| format!("无法保存密钥到系统密钥链: {}", e))?;
-            
-            Ok(key)
-        }
-    }
-}
-
-/// 使用机器ID派生密钥（备用方案）
+/// 使用机器ID派生密钥（备用方案，确定性派生）
 fn derive_machine_key() -> [u8; 32] {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+    use sha2::{Digest, Sha256};
     
     // 获取机器唯一标识
     let machine_id = get_machine_id();
     
-    // 使用Argon2派生密钥
-    let salt = SaltString::from_b64("DataSmithSaltV1.0.0.0.0.0.0")
-        .unwrap_or_else(|_| SaltString::from_b64("aaaaaaaaaaaaaaaaaaaaaa").unwrap());
+    // 使用固定的 salt 确保确定性
+    let salt = "DataSmithSaltV1.0.0.0.0.0.0";
     
-    let argon2 = Argon2::default();
+    // 使用 SHA-256 进行确定性密钥派生
+    let mut hasher = Sha256::new();
+    hasher.update(machine_id.as_bytes());
+    hasher.update(salt.as_bytes());
+    let hash_result = hasher.finalize();
     
-    match argon2.hash_password(machine_id.as_bytes(), &salt) {
-        Ok(hash) => {
-            let hash_output = hash.hash.unwrap();
-            let hash_bytes = hash_output.as_bytes();
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&hash_bytes[..32]);
-            key
-        }
-        Err(_) => {
-            // 最后的回退方案
-            let mut hasher = DefaultHasher::new();
-            machine_id.hash(&mut hasher);
-            let hash = hasher.finish();
-            let mut key = [0u8; 32];
-            for (i, byte) in key.iter_mut().enumerate() {
-                *byte = ((hash >> (i % 8)) ^ (i as u64)) as u8;
-            }
-            key
-        }
-    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&hash_result);
+    key
 }
 
 /// 获取机器唯一标识
@@ -197,4 +136,3 @@ pub fn decrypt_password(encrypted: &str) -> Result<String, String> {
     
     String::from_utf8(plaintext).map_err(|e| format!("UTF-8 转换失败: {}", e))
 }
-
