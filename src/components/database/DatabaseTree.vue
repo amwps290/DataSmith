@@ -246,6 +246,7 @@
       :connection-id="connectionId!"
       :database="currentDatabase"
       :table="currentTable"
+      :schema="currentSchema"
       @imported="handleDataImported"
     />
     
@@ -348,6 +349,7 @@ const showRestoreDatabaseDialog = ref(false)
 // 当前操作的数据库和表
 const currentDatabase = ref('')
 const currentTable = ref('')
+const currentSchema = ref('')
 
 // 获取图标
 // function getIcon(type: string) {
@@ -1072,6 +1074,7 @@ async function handleViewData() {
       connectionId: props.connectionId,
       table: selectedNode.value.metadata.name || selectedNode.value.title,
       database: selectedNode.value.metadata.database,
+      schema: selectedNode.value.metadata.schema, // PostgreSQL 需要 schema 参数
       limit: 1000,
     })
     
@@ -1095,6 +1098,7 @@ async function handleViewStructure() {
   emit('design-table', {
     database: selectedNode.value.metadata.database,
     table: selectedNode.value.metadata.name || selectedNode.value.title,
+    schema: selectedNode.value.metadata.schema,
     connectionId: props.connectionId,
   })
 }
@@ -1268,6 +1272,7 @@ function handleImportData() {
   
   currentDatabase.value = selectedNode.value.metadata.database
   currentTable.value = selectedNode.value.metadata.name || selectedNode.value.title
+  currentSchema.value = selectedNode.value.metadata.schema || ''
   showImportDataDialog.value = true
 }
 
@@ -1363,6 +1368,7 @@ function handleTruncateTable() {
           connectionId: props.connectionId,
           table: selectedNode.value!.metadata.name || selectedNode.value!.title,
           database: selectedNode.value!.metadata.database,
+          schema: selectedNode.value!.metadata.schema,
         })
         message.success('表已清空')
       } catch (error: any) {
@@ -1388,6 +1394,7 @@ function handleDropTable() {
           connectionId: props.connectionId,
           table: selectedNode.value!.metadata.name || selectedNode.value!.title,
           database: selectedNode.value!.metadata.database,
+          schema: selectedNode.value!.metadata.schema,
         })
         message.success('表已删除')
         
@@ -1454,6 +1461,7 @@ function handleDropView() {
           connectionId: props.connectionId,
           view: selectedNode.value!.metadata.name || selectedNode.value!.title,
           database: selectedNode.value!.metadata.database,
+          schema: selectedNode.value!.metadata.schema,
         })
         message.success('视图已删除')
         
@@ -1489,6 +1497,7 @@ function handleDropProcedure() {
           connectionId: props.connectionId,
           procedure: selectedNode.value!.metadata.ROUTINE_NAME || selectedNode.value!.title,
           database: selectedNode.value!.metadata.database,
+          schema: selectedNode.value!.metadata.schema,
         })
         message.success('存储过程已删除')
         
@@ -1524,6 +1533,7 @@ function handleDropFunction() {
           connectionId: props.connectionId,
           function: selectedNode.value!.metadata.ROUTINE_NAME || selectedNode.value!.title,
           database: selectedNode.value!.metadata.database,
+          schema: selectedNode.value!.metadata.schema,
         })
         message.success('函数已删除')
         
@@ -1559,6 +1569,7 @@ function handleDropTrigger() {
           connectionId: props.connectionId,
           trigger: selectedNode.value!.metadata.TRIGGER_NAME || selectedNode.value!.title,
           database: selectedNode.value!.metadata.database,
+          schema: selectedNode.value!.metadata.schema,
         })
         message.success('触发器已删除')
         
@@ -1594,6 +1605,7 @@ function handleDropEvent() {
           connectionId: props.connectionId,
           event: selectedNode.value!.metadata.EVENT_NAME || selectedNode.value!.title,
           database: selectedNode.value!.metadata.database,
+          schema: selectedNode.value!.metadata.schema,
         })
         message.success('事件已删除')
         

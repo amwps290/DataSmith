@@ -375,6 +375,7 @@ const props = defineProps<{
   connectionId: string
   database: string
   table: string
+  schema?: string
 }>()
 
 const loading = ref(false)
@@ -466,7 +467,8 @@ async function loadStructure() {
     const columns = await invoke<any[]>('get_table_structure', {
       connectionId: props.connectionId,
       table: props.table,
-      schema: props.database,
+      schema: props.schema || props.database,
+      database: props.database,
     })
     
     tableColumns.value = columns.map(col => ({
@@ -659,6 +661,7 @@ async function loadDDL() {
       connectionId: props.connectionId,
       database: props.database,
       table: props.table,
+      schema: props.schema,
     })
     ddlSql.value = result
   } catch (error: any) {

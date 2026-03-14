@@ -309,7 +309,8 @@ async function handleSearch() {
           const columns = await invoke<any[]>('get_table_structure', {
             connectionId: props.connectionId,
             table: table.name,
-            schema: db.name,
+            schema: table.schema || db.name,
+            database: db.name,
           })
           
           for (const column of columns) {

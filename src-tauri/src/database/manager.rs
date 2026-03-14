@@ -167,7 +167,22 @@ impl ConnectionManager {
             .get(connection_id)
             .ok_or_else(|| DbError::ConnectionFailed("连接不存在".to_string()))?;
         
+        // PostgreSQL 的 get_tables 方法内部会处理数据库切换
         db.get_tables(database).await
+    }
+
+    /// 获取视图列表
+    pub async fn get_views(
+        &self,
+        connection_id: &str,
+        database: Option<&str>,
+    ) -> DbResult<Vec<TableInfo>> {
+        let connections = self.connections.read().await;
+        let db = connections
+            .get(connection_id)
+            .ok_or_else(|| DbError::ConnectionFailed("连接不存在".to_string()))?;
+        
+        db.get_views(database).await
     }
 
     /// 获取表结构
@@ -176,13 +191,14 @@ impl ConnectionManager {
         connection_id: &str,
         table: &str,
         schema: Option<&str>,
+        database: Option<&str>,
     ) -> DbResult<Vec<ColumnInfo>> {
         let connections = self.connections.read().await;
         let db = connections
             .get(connection_id)
             .ok_or_else(|| DbError::ConnectionFailed("连接不存在".to_string()))?;
         
-        db.get_table_structure(table, schema).await
+        db.get_table_structure(table, schema, database).await
     }
     
     /// 获取连接的数据库类型

@@ -69,6 +69,7 @@ const props = defineProps<{
   connectionId: string
   database: string
   table: string
+  schema?: string
 }>()
 
 const emit = defineEmits(['update:modelValue', 'imported'])
@@ -136,6 +137,7 @@ async function doImport() {
         connectionId: props.connectionId,
         table: props.table,
         database: props.database,
+        schema: props.schema,
       })
     }
 
@@ -179,6 +181,7 @@ async function importFromCSV(content: string) {
       connectionId: props.connectionId,
       table: props.table,
       schema: props.database,
+      database: props.database,
     })
     headers = columns.map(col => col.name)
   }

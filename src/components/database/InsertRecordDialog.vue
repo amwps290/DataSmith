@@ -112,6 +112,7 @@ async function loadTableStructure() {
       connectionId: props.connectionId,
       table: props.table,
       schema: props.database,
+      database: props.database,
     })
 
     columns.value = result

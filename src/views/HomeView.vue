@@ -132,12 +132,14 @@
               :connection-id="tab.connectionId"
               :database="tab.database"
               :table="tab.table"
+              :schema="tab.schema"
             />
             <TableDesigner
               v-else-if="tab.type === 'design'"
               :connection-id="tab.connectionId"
               :database="tab.database"
               :table="tab.table"
+              :schema="tab.schema"
             />
           </a-tab-pane>
         </a-tabs>
@@ -333,6 +335,7 @@ interface DataTab {
   connectionId: string
   database: string
   table: string
+  schema?: string
 }
 
 const dataTabs = ref<DataTab[]>([])
@@ -498,6 +501,7 @@ function handleTableSelected(data: any) {
     connectionId: connectionId!,
     database: data.database,
     table: data.table,
+    schema: data.metadata?.schema,
   }
   
   console.log('添加新标签:', newTab)
@@ -530,6 +534,7 @@ function handleDesignTable(data: any) {
     connectionId: connectionId!,
     database: data.database,
     table: data.table,
+    schema: data.schema,
   })
   
   mainTabKey.value = tabKey

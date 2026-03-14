@@ -144,6 +144,7 @@ const props = defineProps<{
   connectionId: string
   database: string
   table: string
+  schema?: string
 }>()
 
 const connectionStore = useConnectionStore()
@@ -165,8 +166,12 @@ const formatTableRef = () => {
   if (dbType.value === 'sqlite') {
     // SQLite 不使用 database.table 格式
     return quoteIdentifier(props.table)
+  } else if (dbType.value === 'postgresql') {
+    // PostgreSQL 使用 schema.table 格式
+    const schemaName = props.schema || 'public'
+    return `${quoteIdentifier(schemaName)}.${quoteIdentifier(props.table)}`
   } else {
-    // MySQL, PostgreSQL 使用 database.table 格式
+    // MySQL 使用 database.table 格式
     return `${quoteIdentifier(props.database)}.${quoteIdentifier(props.table)}`
   }
 }
@@ -224,7 +229,8 @@ async function loadData() {
     const structure = await invoke<any[]>('get_table_structure', {
       connectionId: props.connectionId,
       table: props.table,
-      schema: props.database,
+      schema: props.schema || props.database,
+      database: props.database,
     })
     console.log('表结构获取成功:', structure)
     
@@ -256,6 +262,7 @@ async function loadData() {
     const result = await invoke<QueryResult>('execute_query', {
       connectionId: props.connectionId,
       sql,
+      database: props.database,
     })
     
     console.log('查询结果:', {

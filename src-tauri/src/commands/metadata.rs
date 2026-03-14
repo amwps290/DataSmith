@@ -1,6 +1,25 @@
-use crate::database::{ColumnInfo, DatabaseInfo, TableInfo, QueryResult};
+use crate::database::{ColumnInfo, DatabaseInfo, TableInfo, QueryResult, DatabaseType};
 use crate::AppState;
 use tauri::State;
+
+/// 根据数据库类型生成表引用 SQL
+fn format_table_reference(db_type: DatabaseType, database: &str, table: &str, schema: Option<&str>) -> String {
+    match db_type {
+        DatabaseType::PostgreSQL => {
+            let schema_name = schema.unwrap_or("public");
+            format!("\"{}\".\"{}\"", schema_name, table)
+        }
+        DatabaseType::MySQL => {
+            format!("`{}`.`{}`", database, table)
+        }
+        DatabaseType::SQLite => {
+            format!("\"{}\"", table)
+        }
+        _ => {
+            format!("\"{}\".\"{}\"", database, table)
+        }
+    }
+}
 
 /// 获取数据库列表
 #[tauri::command]
@@ -37,12 +56,13 @@ pub async fn get_table_structure(
     connection_id: String,
     table: String,
     schema: Option<String>,
+    database: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ColumnInfo>, String> {
     let manager = state.connection_manager.lock().await;
     
     manager
-        .get_table_structure(&connection_id, &table, schema.as_deref())
+        .get_table_structure(&connection_id, &table, schema.as_deref(), database.as_deref())
         .await
         .map_err(|e| e.to_string())
 }
@@ -53,6 +73,7 @@ pub async fn view_table_data(
     connection_id: String,
     table: String,
     database: String,
+    schema: Option<String>,
     limit: Option<u32>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
@@ -63,7 +84,32 @@ pub async fn view_table_data(
         None => " LIMIT 1000".to_string(),
     };
     
-    let sql = format!("SELECT * FROM `{}`.`{}`{}", database, table, limit_clause);
+    // 获取数据库类型
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    // 根据数据库类型生成不同的 SQL
+    let sql = match db_type {
+        crate::database::DatabaseType::PostgreSQL => {
+            // PostgreSQL 使用 schema.table 格式
+            let schema_name = schema.unwrap_or_else(|| "public".to_string());
+            format!("SELECT * FROM \"{}\".\"{}\"{}", schema_name, table, limit_clause)
+        }
+        crate::database::DatabaseType::MySQL => {
+            // MySQL 使用 `database`.`table` 格式
+            format!("SELECT * FROM `{}`.`{}`{}", database, table, limit_clause)
+        }
+        crate::database::DatabaseType::SQLite => {
+            // SQLite 直接使用表名
+            format!("SELECT * FROM \"{}\"{}", table, limit_clause)
+        }
+        _ => {
+            // 默认使用标准 SQL
+            format!("SELECT * FROM \"{}\".\"{}\"{}", database, table, limit_clause)
+        }
+    };
     
     manager
         .execute_query(&connection_id, &sql, Some(&database))
@@ -77,11 +123,18 @@ pub async fn truncate_table(
     connection_id: String,
     table: String,
     database: String,
+    schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
     let manager = state.connection_manager.lock().await;
     
-    let sql = format!("TRUNCATE TABLE `{}`.`{}`", database, table);
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    let table_ref = format_table_reference(db_type, &database, &table, schema.as_deref());
+    let sql = format!("TRUNCATE TABLE {}", table_ref);
     
     manager
         .execute_query(&connection_id, &sql, Some(&database))
@@ -95,11 +148,18 @@ pub async fn drop_table(
     connection_id: String,
     table: String,
     database: String,
+    schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
     let manager = state.connection_manager.lock().await;
     
-    let sql = format!("DROP TABLE `{}`.`{}`", database, table);
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    let table_ref = format_table_reference(db_type, &database, &table, schema.as_deref());
+    let sql = format!("DROP TABLE {}", table_ref);
     
     manager
         .execute_query(&connection_id, &sql, Some(&database))
@@ -116,40 +176,10 @@ pub async fn get_views(
 ) -> Result<Vec<TableInfo>, String> {
     let manager = state.connection_manager.lock().await;
     
-    let sql = format!(
-        "SELECT TABLE_NAME, TABLE_TYPE, NULL as ENGINE, NULL as TABLE_ROWS, 
-                NULL as SIZE_MB, TABLE_COMMENT
-         FROM information_schema.TABLES 
-         WHERE TABLE_SCHEMA = '{}' AND TABLE_TYPE = 'VIEW'
-         ORDER BY TABLE_NAME",
-        database.replace("'", "''")
-    );
-    
-    let result = manager
-        .execute_query(&connection_id, &sql, Some(&database))
+    manager
+        .get_views(&connection_id, Some(&database))
         .await
-        .map_err(|e| e.to_string())?;
-    
-    let mut views = Vec::new();
-    for row in result.rows {
-        if let Some(name) = row.get("TABLE_NAME") {
-            if let serde_json::Value::String(table_name) = name {
-                views.push(TableInfo {
-                    name: table_name.clone(),
-                    schema: Some(database.clone()),
-                    table_type: "VIEW".to_string(),
-                    engine: None,
-                    rows: None,
-                    size_mb: None,
-                    comment: row.get("TABLE_COMMENT")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
-                });
-            }
-        }
-    }
-    
-    Ok(views)
+        .map_err(|e| e.to_string())
 }
 
 /// 获取存储过程列表
@@ -268,11 +298,18 @@ pub async fn drop_view(
     connection_id: String,
     view: String,
     database: String,
+    schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
     let manager = state.connection_manager.lock().await;
     
-    let sql = format!("DROP VIEW `{}`.`{}`", database, view);
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    let view_ref = format_table_reference(db_type, &database, &view, schema.as_deref());
+    let sql = format!("DROP VIEW {}", view_ref);
     
     manager
         .execute_query(&connection_id, &sql, Some(&database))
@@ -319,11 +356,28 @@ pub async fn drop_procedure(
     connection_id: String,
     procedure: String,
     database: String,
+    schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
     let manager = state.connection_manager.lock().await;
     
-    let sql = format!("DROP PROCEDURE `{}`.`{}`", database, procedure);
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    let sql = match db_type {
+        DatabaseType::PostgreSQL => {
+            let schema_name = schema.unwrap_or_else(|| "public".to_string());
+            format!("DROP PROCEDURE \"{}\".\"{}\"", schema_name, procedure)
+        }
+        DatabaseType::MySQL => {
+            format!("DROP PROCEDURE `{}`.`{}`", database, procedure)
+        }
+        _ => {
+            format!("DROP PROCEDURE \"{}\"", procedure)
+        }
+    };
     
     manager
         .execute_query(&connection_id, &sql, Some(&database))
@@ -337,11 +391,28 @@ pub async fn drop_function(
     connection_id: String,
     function: String,
     database: String,
+    schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
     let manager = state.connection_manager.lock().await;
     
-    let sql = format!("DROP FUNCTION `{}`.`{}`", database, function);
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    let sql = match db_type {
+        DatabaseType::PostgreSQL => {
+            let schema_name = schema.unwrap_or_else(|| "public".to_string());
+            format!("DROP FUNCTION \"{}\".\"{}\"", schema_name, function)
+        }
+        DatabaseType::MySQL => {
+            format!("DROP FUNCTION `{}`.`{}`", database, function)
+        }
+        _ => {
+            format!("DROP FUNCTION \"{}\"", function)
+        }
+    };
     
     manager
         .execute_query(&connection_id, &sql, Some(&database))
@@ -355,11 +426,28 @@ pub async fn drop_trigger(
     connection_id: String,
     trigger: String,
     database: String,
+    schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
     let manager = state.connection_manager.lock().await;
     
-    let sql = format!("DROP TRIGGER `{}`.`{}`", database, trigger);
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    let sql = match db_type {
+        DatabaseType::PostgreSQL => {
+            let schema_name = schema.unwrap_or_else(|| "public".to_string());
+            format!("DROP TRIGGER \"{}\".\"{}\"", schema_name, trigger)
+        }
+        DatabaseType::MySQL => {
+            format!("DROP TRIGGER `{}`.`{}`", database, trigger)
+        }
+        _ => {
+            format!("DROP TRIGGER \"{}\"", trigger)
+        }
+    };
     
     manager
         .execute_query(&connection_id, &sql, Some(&database))
@@ -373,11 +461,25 @@ pub async fn drop_event(
     connection_id: String,
     event: String,
     database: String,
+    _schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
     let manager = state.connection_manager.lock().await;
     
-    let sql = format!("DROP EVENT `{}`.`{}`", database, event);
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    // 注意：PostgreSQL 不支持 EVENT，这是 MySQL 特有的功能
+    let sql = match db_type {
+        DatabaseType::MySQL => {
+            format!("DROP EVENT `{}`.`{}`", database, event)
+        }
+        _ => {
+            return Err("该数据库类型不支持 EVENT".to_string());
+        }
+    };
     
     manager
         .execute_query(&connection_id, &sql, Some(&database))
@@ -453,11 +555,28 @@ pub async fn get_create_table_ddl(
     connection_id: String,
     database: String,
     table: String,
+    schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let manager = state.connection_manager.lock().await;
     
-    let sql = format!("SHOW CREATE TABLE `{}`.`{}`", database, table);
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    let sql = match db_type {
+        DatabaseType::PostgreSQL => {
+            let schema_name = schema.unwrap_or_else(|| "public".to_string());
+            format!("SELECT 'CREATE TABLE ' || schemaname || '.' || tablename || ' (' || array_to_string(array_agg(column_name || ' ' || data_type), ', ') || ')' as \"Create Table\" FROM pg_tables t JOIN information_schema.columns c ON c.table_name = t.tablename AND c.table_schema = t.schemaname WHERE t.schemaname = '{}' AND t.tablename = '{}' GROUP BY schemaname, tablename", schema_name, table)
+        }
+        DatabaseType::MySQL => {
+            format!("SHOW CREATE TABLE `{}`.`{}`", database, table)
+        }
+        _ => {
+            format!("SHOW CREATE TABLE \"{}\"", table)
+        }
+    };
     
     let result = manager
         .execute_query(&connection_id, &sql, Some(&database))
@@ -539,7 +658,7 @@ pub async fn get_autocomplete_data(
         for table_info in tables_info {
             // 获取表的列信息
             let columns_info = manager
-                .get_table_structure(&connection_id, &table_info.name, Some(db_name))
+                .get_table_structure(&connection_id, &table_info.name, table_info.schema.as_deref(), Some(db_name))
                 .await
                 .unwrap_or_default();
             

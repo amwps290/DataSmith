@@ -209,7 +209,7 @@ impl DatabaseOperations for SqliteDatabase {
         Ok(tables)
     }
 
-    async fn get_table_structure(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
+    async fn get_table_structure(&self, table: &str, _schema: Option<&str>, _database: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
         let pool = self
             .pool
             .as_ref()

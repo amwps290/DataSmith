@@ -317,7 +317,7 @@ impl DatabaseOperations for MySqlDatabase {
         Ok(tables)
     }
 
-    async fn get_table_structure(&self, table: &str, schema: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
+    async fn get_table_structure(&self, table: &str, schema: Option<&str>, _database: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
         let pool = self
             .pool
             .as_ref()

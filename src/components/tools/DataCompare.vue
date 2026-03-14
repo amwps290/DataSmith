@@ -235,12 +235,14 @@ async function handleCompare() {
         connectionId: props.connectionId,
         table: sourceTable.value,
         schema: sourceDatabase.value,
+        database: sourceDatabase.value,
       })
       
       const targetStructure = await invoke<any[]>('get_table_structure', {
         connectionId: props.connectionId,
         table: targetTable.value,
         schema: targetDatabase.value,
+        database: targetDatabase.value,
       })
       
       // 简单比较列数

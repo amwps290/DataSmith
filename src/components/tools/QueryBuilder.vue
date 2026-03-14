@@ -296,6 +296,7 @@ async function loadTableColumns() {
       connectionId: props.connectionId,
       table: mainTable.value,
       schema: selectedDatabase.value,
+      database: selectedDatabase.value,
     })
     columns.value = cols
     selectedColumns.value = []

@@ -163,7 +163,7 @@ impl DatabaseOperations for MongoDatabase {
         Ok(tables)
     }
 
-    async fn get_table_structure(&self, _table: &str, _schema: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
+    async fn get_table_structure(&self, _table: &str, _schema: Option<&str>, _database: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
         // MongoDB 是无模式的文档数据库
         // 我们可以返回一个说明，或者采样一些文档来推断结构
         Ok(vec![])

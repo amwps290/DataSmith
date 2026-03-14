@@ -137,10 +137,21 @@ pub trait DatabaseOperations: Send + Sync {
     async fn get_tables(&self, database: Option<&str>) -> DbResult<Vec<TableInfo>>;
 
     /// 获取表结构
-    async fn get_table_structure(&self, table: &str, schema: Option<&str>) -> DbResult<Vec<ColumnInfo>>;
+    async fn get_table_structure(&self, table: &str, schema: Option<&str>, database: Option<&str>) -> DbResult<Vec<ColumnInfo>>;
 
     /// 获取索引信息
     async fn get_indexes(&self, table: &str, schema: Option<&str>) -> DbResult<Vec<IndexInfo>>;
+    
+    /// 获取视图列表（默认实现返回空列表）
+    async fn get_views(&self, _database: Option<&str>) -> DbResult<Vec<TableInfo>> {
+        Ok(Vec::new())
+    }
+    
+    /// 切换数据库（对于需要重新连接的数据库类型如 PostgreSQL）
+    /// 默认实现直接返回 Ok(())，表示不支持或不需要切换
+    async fn switch_database(&mut self, _database: &str) -> DbResult<()> {
+        Ok(())
+    }
     
     /// 获取 Any 引用，用于向下转型
     fn as_any(&self) -> &dyn std::any::Any;

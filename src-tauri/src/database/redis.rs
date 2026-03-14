@@ -193,7 +193,7 @@ impl DatabaseOperations for RedisDatabase {
         Ok(tables)
     }
 
-    async fn get_table_structure(&self, _table: &str, _schema: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
+    async fn get_table_structure(&self, _table: &str, _schema: Option<&str>, _database: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
         // Redis 键值存储没有表结构
         Ok(vec![])
     }
