@@ -94,59 +94,68 @@ impl DatabaseOperations for SqliteDatabase {
 
         // SQLite 中数据库是单个文件，忽略 database 参数
 
-        // 判断是否为查询语句
-        let is_select = sql.trim().to_uppercase().starts_with("SELECT")
-            || sql.trim().to_uppercase().starts_with("PRAGMA")
-            || sql.trim().to_uppercase().starts_with("EXPLAIN");
-
-        if is_select {
-            // 查询操作
-            let rows = sqlx::query(sql)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| DbError::QueryFailed(e.to_string()))?;
-
-            let mut columns = Vec::new();
-            let mut result_rows = Vec::new();
-
-            if !rows.is_empty() {
-                // 获取列名
-                for column in rows[0].columns() {
-                    columns.push(column.name().to_string());
-                }
-
-                // 转换行数据
-                for row in &rows {
-                    let mut row_map = HashMap::new();
-                    for (idx, column) in row.columns().iter().enumerate() {
-                        let value: Option<String> = row.try_get(idx).ok();
-                        row_map.insert(
-                            column.name().to_string(),
-                            serde_json::Value::String(value.unwrap_or_default()),
-                        );
-                    }
-                    result_rows.push(row_map);
-                }
+        // 智能分割SQL语句
+        let statements = self.split_sql_statements(sql);
+        println!("SQLite 分割后的SQL语句数量: {}", statements.len());
+        
+        if statements.is_empty() {
+            return Ok(QueryResult {
+                columns: vec![],
+                rows: vec![],
+                affected_rows: 0,
+                execution_time_ms: 0,
+            });
+        }
+        
+        // 如果只有一条语句，直接执行
+        if statements.len() == 1 {
+            return self.execute_single_statement_sqlite(pool, &statements[0], start).await;
+        }
+        
+        // 多条语句：依次执行
+        let mut total_affected_rows: u64 = 0;
+        let mut last_query_result: Option<QueryResult> = None;
+        
+        for (idx, stmt) in statements.iter().enumerate() {
+            println!("执行第 {} 条SQL: {}", idx + 1, stmt);
+            
+            // 判断是否为查询语句
+            let is_select = stmt.trim().to_uppercase().starts_with("SELECT")
+                || stmt.trim().to_uppercase().starts_with("PRAGMA")
+                || stmt.trim().to_uppercase().starts_with("EXPLAIN");
+            
+            if is_select {
+                // 查询语句
+                let rows = sqlx::query(stmt)
+                    .fetch_all(pool)
+                    .await
+                    .map_err(|e| DbError::QueryFailed(format!("语句 {} 执行失败: {}", idx + 1, e)))?;
+                
+                // 保存最后一个查询结果
+                last_query_result = Some(self.process_query_result_sqlite(rows, start)?);
+            } else {
+                // 非查询语句
+                let result = sqlx::query(stmt)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| DbError::QueryFailed(format!("语句 {} 执行失败: {}", idx + 1, e)))?;
+                
+                total_affected_rows += result.rows_affected();
             }
-
-            Ok(QueryResult {
-                columns,
-                rows: result_rows,
-                affected_rows: rows.len() as u64,
-                execution_time_ms: start.elapsed().as_millis(),
-            })
+        }
+        
+        // 返回结果：如果有查询结果则返回，否则返回累积的影响行数
+        if let Some(query_result) = last_query_result {
+            let mut result = query_result;
+            result.affected_rows += total_affected_rows;
+            Ok(result)
         } else {
-            // 非查询操作（INSERT, UPDATE, DELETE 等）
-            let result = sqlx::query(sql)
-                .execute(pool)
-                .await
-                .map_err(|e| DbError::QueryFailed(e.to_string()))?;
-
+            let duration = start.elapsed();
             Ok(QueryResult {
                 columns: vec![],
                 rows: vec![],
-                affected_rows: result.rows_affected(),
-                execution_time_ms: start.elapsed().as_millis(),
+                affected_rows: total_affected_rows,
+                execution_time_ms: duration.as_millis(),
             })
         }
     }
@@ -292,6 +301,183 @@ impl DatabaseOperations for SqliteDatabase {
     
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+impl SqliteDatabase {
+    /// 分割SQL语句：智能处理字符串、注释中的分号
+    fn split_sql_statements(&self, sql: &str) -> Vec<String> {
+        let mut statements = Vec::new();
+        let mut current_statement = String::new();
+        let mut chars = sql.chars().peekable();
+        
+        while let Some(ch) = chars.next() {
+            match ch {
+                // 单行注释 --
+                '-' => {
+                    if chars.peek() == Some(&'-') {
+                        // 跳过直到行尾
+                        chars.next(); // 消耗第二个 -
+                        while let Some(&c) = chars.peek() {
+                            if c == '\n' {
+                                chars.next();
+                                break;
+                            }
+                            chars.next();
+                        }
+                    } else {
+                        current_statement.push(ch);
+                    }
+                }
+                // 多行注释 /* */
+                '/' => {
+                    if chars.peek() == Some(&'*') {
+                        chars.next(); // 消耗 *
+                        while let Some(c) = chars.next() {
+                            if c == '*' && chars.peek() == Some(&'/') {
+                                chars.next(); // 消耗 /
+                                break;
+                            }
+                        }
+                    } else {
+                        current_statement.push(ch);
+                    }
+                }
+                // 单引号字符串
+                '\'' => {
+                    current_statement.push(ch);
+                    while let Some(c) = chars.next() {
+                        current_statement.push(c);
+                        if c == '\'' {
+                            // 检查是否是转义的单引号 ''
+                            if chars.peek() == Some(&'\'') {
+                                current_statement.push(chars.next().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                }
+                // 双引号字符串（SQLite中双引号也可用于字符串）
+                '"' => {
+                    current_statement.push(ch);
+                    while let Some(c) = chars.next() {
+                        current_statement.push(c);
+                        if c == '"' {
+                            // 检查是否是转义的双引号 ""
+                            if chars.peek() == Some(&'"') {
+                                current_statement.push(chars.next().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                }
+                // 方括号标识符（SQLite特有）
+                '[' => {
+                    current_statement.push(ch);
+                    while let Some(c) = chars.next() {
+                        current_statement.push(c);
+                        if c == ']' {
+                            break;
+                        }
+                    }
+                }
+                // 分号 - 语句结束
+                ';' => {
+                    let trimmed = current_statement.trim();
+                    if !trimmed.is_empty() {
+                        statements.push(trimmed.to_string());
+                    }
+                    current_statement.clear();
+                }
+                // 其他字符
+                _ => {
+                    current_statement.push(ch);
+                }
+            }
+        }
+        
+        // 处理最后一条语句（没有分号结尾的情况）
+        let trimmed = current_statement.trim();
+        if !trimmed.is_empty() {
+            statements.push(trimmed.to_string());
+        }
+        
+        statements
+    }
+    
+    /// 执行单条SQL语句（SQLite）
+    async fn execute_single_statement_sqlite(
+        &self,
+        pool: &Pool<Sqlite>,
+        sql: &str,
+        start: std::time::Instant,
+    ) -> DbResult<QueryResult> {
+        // 判断是否为查询语句
+        let is_select = sql.trim().to_uppercase().starts_with("SELECT")
+            || sql.trim().to_uppercase().starts_with("PRAGMA")
+            || sql.trim().to_uppercase().starts_with("EXPLAIN");
+
+        if is_select {
+            // 查询操作
+            let rows = sqlx::query(sql)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+            self.process_query_result_sqlite(rows, start)
+        } else {
+            // 非查询操作（INSERT, UPDATE, DELETE 等）
+            let result = sqlx::query(sql)
+                .execute(pool)
+                .await
+                .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+            Ok(QueryResult {
+                columns: vec![],
+                rows: vec![],
+                affected_rows: result.rows_affected(),
+                execution_time_ms: start.elapsed().as_millis(),
+            })
+        }
+    }
+    
+    /// 处理查询结果（SQLite）
+    fn process_query_result_sqlite(
+        &self,
+        rows: Vec<sqlx::sqlite::SqliteRow>,
+        start: std::time::Instant,
+    ) -> DbResult<QueryResult> {
+        let mut columns = Vec::new();
+        let mut result_rows = Vec::new();
+
+        if !rows.is_empty() {
+            // 获取列名
+            for column in rows[0].columns() {
+                columns.push(column.name().to_string());
+            }
+
+            // 转换行数据
+            for row in &rows {
+                let mut row_map = HashMap::new();
+                for (idx, column) in row.columns().iter().enumerate() {
+                    let value: Option<String> = row.try_get(idx).ok();
+                    row_map.insert(
+                        column.name().to_string(),
+                        serde_json::Value::String(value.unwrap_or_default()),
+                    );
+                }
+                result_rows.push(row_map);
+            }
+        }
+
+        Ok(QueryResult {
+            columns,
+            rows: result_rows,
+            affected_rows: rows.len() as u64,
+            execution_time_ms: start.elapsed().as_millis(),
+        })
     }
 }
 

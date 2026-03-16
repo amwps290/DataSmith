@@ -1280,6 +1280,12 @@ function handleImportData() {
 function handleDropDatabase() {
   if (!selectedNode.value || selectedNode.value.type !== 'database') return
   
+  // 根据数据库类型使用不同的引号
+  // MySQL 使用反引号 `, PostgreSQL 使用双引号 "
+  const quoteChar = props.dbType === 'mysql' ? '`' : '"'
+  const dbName = selectedNode.value!.metadata.name
+  const sql = `DROP DATABASE ${quoteChar}${dbName}${quoteChar}`
+  
   Modal.confirm({
     title: '确认删除数据库',
     content: `确定要删除数据库 "${selectedNode.value.title}" 吗？此操作不可恢复！`,
@@ -1290,7 +1296,7 @@ function handleDropDatabase() {
       try {
         await invoke('execute_query', {
           connectionId: props.connectionId,
-          sql: `DROP DATABASE \`${selectedNode.value!.metadata.name}\``,
+          sql: sql,
           database: null,
         })
         message.success('数据库已删除')

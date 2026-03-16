@@ -127,7 +127,7 @@ impl DatabaseOperations for MySqlDatabase {
         println!("执行查询 - 接收到的database参数: {:?}", database);
         println!("执行查询 - 原始SQL: {}", sql);
 
-        // 简单的SQL语句分割：按分号分割并清理注释
+        // 智能分割SQL语句
         let statements = self.split_sql_statements(sql);
         println!("分割后的SQL语句数量: {}", statements.len());
         
@@ -140,92 +140,72 @@ impl DatabaseOperations for MySqlDatabase {
             });
         }
         
-        // 执行第一条有效的SQL语句
-        let sql_to_execute = &statements[0];
-        println!("实际执行的SQL: {}", sql_to_execute);
-
-        // 判断是否为查询语句
-        let is_select = sql_to_execute.trim().to_uppercase().starts_with("SELECT")
-            || sql_to_execute.trim().to_uppercase().starts_with("SHOW")
-            || sql_to_execute.trim().to_uppercase().starts_with("DESCRIBE")
-            || sql_to_execute.trim().to_uppercase().starts_with("EXPLAIN");
-
-        if is_select {
-            // 如果指定了数据库，获取专用连接并设置数据库上下文
-            if let Some(db_name) = database {
-                if !db_name.is_empty() {
-                    let mut conn = pool.acquire()
-                        .await
-                        .map_err(|e| DbError::QueryFailed(format!("获取连接失败: {}", e)))?;
-                    
-                    // 设置数据库上下文
-                    let use_sql = format!("USE `{}`", db_name);
-                    println!("设置数据库上下文: {}", use_sql);
-                    conn.execute(use_sql.as_str())
-                        .await
-                        .map_err(|e| DbError::QueryFailed(format!("切换数据库失败: {}", e)))?;
-                    
-                    // 在同一连接上执行用户的原生SQL
-                    let rows = sqlx::query(sql_to_execute)
-                        .fetch_all(&mut *conn)
-                        .await
-                        .map_err(|e| DbError::QueryFailed(e.to_string()))?;
-                        
-                    return self.process_query_result(rows, start);
-                }
+        // 如果只有一条语句，直接执行
+        if statements.len() == 1 {
+            return self.execute_single_statement(pool, &statements[0], database, start).await;
+        }
+        
+        // 多条语句：在同一连接上依次执行
+        let mut conn = pool.acquire()
+            .await
+            .map_err(|e| DbError::QueryFailed(format!("获取连接失败: {}", e)))?;
+        
+        // 如果指定了数据库，先切换数据库上下文
+        if let Some(db_name) = database {
+            if !db_name.is_empty() {
+                let use_sql = format!("USE `{}`", db_name);
+                println!("设置数据库上下文: {}", use_sql);
+                conn.execute(use_sql.as_str())
+                    .await
+                    .map_err(|e| DbError::QueryFailed(format!("切换数据库失败: {}", e)))?;
             }
+        }
+        
+        // 执行所有语句，累积结果
+        let mut total_affected_rows: u64 = 0;
+        let mut last_query_result: Option<QueryResult> = None;
+        
+        for (idx, stmt) in statements.iter().enumerate() {
+            println!("执行第 {} 条SQL: {}", idx + 1, stmt);
             
-            // 没有指定数据库，直接在池上执行
-            let rows = sqlx::query(sql_to_execute)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+            // 判断是否为查询语句
+            let is_select = stmt.trim().to_uppercase().starts_with("SELECT")
+                || stmt.trim().to_uppercase().starts_with("SHOW")
+                || stmt.trim().to_uppercase().starts_with("DESCRIBE")
+                || stmt.trim().to_uppercase().starts_with("EXPLAIN");
+            
+            if is_select {
+                // 查询语句
+                let rows = sqlx::query(stmt)
+                    .fetch_all(&mut *conn)
+                    .await
+                    .map_err(|e| DbError::QueryFailed(format!("语句 {} 执行失败: {}", idx + 1, e)))?;
                 
-            self.process_query_result(rows, start)
-        } else {
-            // 非查询操作（INSERT, UPDATE, DELETE 等）
-            if let Some(db_name) = database {
-                if !db_name.is_empty() {
-                    let mut conn = pool.acquire()
-                        .await
-                        .map_err(|e| DbError::QueryFailed(format!("获取连接失败: {}", e)))?;
-                    
-                    // 设置数据库上下文
-                    let use_sql = format!("USE `{}`", db_name);
-                    println!("设置数据库上下文: {}", use_sql);
-                    conn.execute(use_sql.as_str())
-                        .await
-                        .map_err(|e| DbError::QueryFailed(format!("切换数据库失败: {}", e)))?;
-                    
-                    // 在同一连接上执行用户的原生SQL
-                    let result = sqlx::query(sql_to_execute)
-                        .execute(&mut *conn)
-                        .await
-                        .map_err(|e| DbError::QueryFailed(e.to_string()))?;
-
-                    let duration = start.elapsed();
-
-                    return Ok(QueryResult {
-                        columns: vec![],
-                        rows: vec![],
-                        affected_rows: result.rows_affected(),
-                        execution_time_ms: duration.as_millis(),
-                    });
-                }
+                // 保存最后一个查询结果
+                last_query_result = Some(self.process_query_result_with_start(rows, start)?);
+            } else {
+                // 非查询语句
+                let result = sqlx::query(stmt)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|e| DbError::QueryFailed(format!("语句 {} 执行失败: {}", idx + 1, e)))?;
+                
+                total_affected_rows += result.rows_affected();
             }
-            
-            // 没有指定数据库，直接执行
-            let result = sqlx::query(sql_to_execute)
-                .execute(pool)
-                .await
-                .map_err(|e| DbError::QueryFailed(e.to_string()))?;
-
+        }
+        
+        // 返回结果：如果有查询结果则返回，否则返回累积的影响行数
+        if let Some(query_result) = last_query_result {
+            // 合并影响行数
+            let mut result = query_result;
+            result.affected_rows += total_affected_rows;
+            Ok(result)
+        } else {
             let duration = start.elapsed();
-
             Ok(QueryResult {
                 columns: vec![],
                 rows: vec![],
-                affected_rows: result.rows_affected(),
+                affected_rows: total_affected_rows,
                 execution_time_ms: duration.as_millis(),
             })
         }
@@ -443,33 +423,103 @@ impl DatabaseOperations for MySqlDatabase {
 }
 
 impl MySqlDatabase {
-    /// 分割SQL语句：按分号分割，简单处理注释
+    /// 分割SQL语句：智能处理字符串、注释中的分号
     fn split_sql_statements(&self, sql: &str) -> Vec<String> {
         let mut statements = Vec::new();
+        let mut current_statement = String::new();
+        let mut chars = sql.chars().peekable();
         
-        // 按行处理，移除单行注释
-        let lines: Vec<&str> = sql.lines().collect();
-        let mut cleaned_lines = Vec::new();
-        
-        for line in lines {
-            let trimmed = line.trim();
-            // 跳过空行和以--开头的注释行
-            if !trimmed.is_empty() && !trimmed.starts_with("--") {
-                cleaned_lines.push(line);
+        while let Some(ch) = chars.next() {
+            match ch {
+                // 单行注释 --
+                '-' => {
+                    if chars.peek() == Some(&'-') {
+                        // 跳过直到行尾
+                        chars.next(); // 消耗第二个 -
+                        while let Some(&c) = chars.peek() {
+                            if c == '\n' {
+                                chars.next();
+                                break;
+                            }
+                            chars.next();
+                        }
+                    } else {
+                        current_statement.push(ch);
+                    }
+                }
+                // 多行注释 /* */
+                '/' => {
+                    if chars.peek() == Some(&'*') {
+                        chars.next(); // 消耗 *
+                        while let Some(c) = chars.next() {
+                            if c == '*' && chars.peek() == Some(&'/') {
+                                chars.next(); // 消耗 /
+                                break;
+                            }
+                        }
+                    } else {
+                        current_statement.push(ch);
+                    }
+                }
+                // 单引号字符串
+                '\'' => {
+                    current_statement.push(ch);
+                    while let Some(c) = chars.next() {
+                        current_statement.push(c);
+                        if c == '\'' {
+                            // 检查是否是转义的单引号 ''
+                            if chars.peek() == Some(&'\'') {
+                                current_statement.push(chars.next().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                }
+                // 双引号字符串
+                '"' => {
+                    current_statement.push(ch);
+                    while let Some(c) = chars.next() {
+                        current_statement.push(c);
+                        if c == '"' {
+                            // 检查是否是转义的双引号 ""
+                            if chars.peek() == Some(&'"') {
+                                current_statement.push(chars.next().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                }
+                // 反引号标识符
+                '`' => {
+                    current_statement.push(ch);
+                    while let Some(c) = chars.next() {
+                        current_statement.push(c);
+                        if c == '`' {
+                            break;
+                        }
+                    }
+                }
+                // 分号 - 语句结束
+                ';' => {
+                    let trimmed = current_statement.trim();
+                    if !trimmed.is_empty() {
+                        statements.push(trimmed.to_string());
+                    }
+                    current_statement.clear();
+                }
+                // 其他字符
+                _ => {
+                    current_statement.push(ch);
+                }
             }
         }
         
-        // 重新组合成字符串
-        let cleaned_sql = cleaned_lines.join("\n");
-        
-        // 按分号分割语句
-        let parts: Vec<&str> = cleaned_sql.split(';').collect();
-        
-        for part in parts {
-            let trimmed = part.trim();
-            if !trimmed.is_empty() {
-                statements.push(trimmed.to_string());
-            }
+        // 处理最后一条语句（没有分号结尾的情况）
+        let trimmed = current_statement.trim();
+        if !trimmed.is_empty() {
+            statements.push(trimmed.to_string());
         }
         
         statements
@@ -541,5 +591,109 @@ impl MySqlDatabase {
             affected_rows: rows.len() as u64,
             execution_time_ms: duration.as_millis(),
         })
+    }
+
+    /// 处理查询结果（带自定义开始时间）
+    fn process_query_result_with_start(&self, rows: Vec<sqlx::mysql::MySqlRow>, start: std::time::Instant) -> DbResult<QueryResult> {
+        self.process_query_result(rows, start)
+    }
+
+    /// 执行单条SQL语句
+    async fn execute_single_statement(
+        &self,
+        pool: &sqlx::Pool<sqlx::MySql>,
+        sql: &str,
+        database: Option<&str>,
+        start: std::time::Instant,
+    ) -> DbResult<QueryResult> {
+        use sqlx::Executor;
+        
+        println!("执行单条SQL: {}", sql);
+
+        // 判断是否为查询语句
+        let is_select = sql.trim().to_uppercase().starts_with("SELECT")
+            || sql.trim().to_uppercase().starts_with("SHOW")
+            || sql.trim().to_uppercase().starts_with("DESCRIBE")
+            || sql.trim().to_uppercase().starts_with("EXPLAIN");
+
+        if is_select {
+            // 如果指定了数据库，获取专用连接并设置数据库上下文
+            if let Some(db_name) = database {
+                if !db_name.is_empty() {
+                    let mut conn = pool.acquire()
+                        .await
+                        .map_err(|e| DbError::QueryFailed(format!("获取连接失败: {}", e)))?;
+                    
+                    // 设置数据库上下文
+                    let use_sql = format!("USE `{}`", db_name);
+                    println!("设置数据库上下文: {}", use_sql);
+                    conn.execute(use_sql.as_str())
+                        .await
+                        .map_err(|e| DbError::QueryFailed(format!("切换数据库失败: {}", e)))?;
+                    
+                    // 在同一连接上执行用户的原生SQL
+                    let rows = sqlx::query(sql)
+                        .fetch_all(&mut *conn)
+                        .await
+                        .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+                        
+                    return self.process_query_result(rows, start);
+                }
+            }
+            
+            // 没有指定数据库，直接在池上执行
+            let rows = sqlx::query(sql)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+                
+            self.process_query_result(rows, start)
+        } else {
+            // 非查询操作（INSERT, UPDATE, DELETE 等）
+            if let Some(db_name) = database {
+                if !db_name.is_empty() {
+                    let mut conn = pool.acquire()
+                        .await
+                        .map_err(|e| DbError::QueryFailed(format!("获取连接失败: {}", e)))?;
+                    
+                    // 设置数据库上下文
+                    let use_sql = format!("USE `{}`", db_name);
+                    println!("设置数据库上下文: {}", use_sql);
+                    conn.execute(use_sql.as_str())
+                        .await
+                        .map_err(|e| DbError::QueryFailed(format!("切换数据库失败: {}", e)))?;
+                    
+                    // 在同一连接上执行用户的原生SQL
+                    let result = sqlx::query(sql)
+                        .execute(&mut *conn)
+                        .await
+                        .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+                    let duration = start.elapsed();
+
+                    return Ok(QueryResult {
+                        columns: vec![],
+                        rows: vec![],
+                        affected_rows: result.rows_affected(),
+                        execution_time_ms: duration.as_millis(),
+                    });
+                }
+            }
+            
+            // 没有指定数据库，直接执行
+            let result = sqlx::query(sql)
+                .execute(pool)
+                .await
+                .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+            let duration = start.elapsed();
+
+            Ok(QueryResult {
+                columns: vec![],
+                rows: vec![],
+                affected_rows: result.rows_affected(),
+                execution_time_ms: duration.as_millis(),
+            })
+        }
     }
 }
