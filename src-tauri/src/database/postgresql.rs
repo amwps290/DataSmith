@@ -443,9 +443,9 @@ impl DatabaseOperations for PostgreSqlDatabase {
             .ok_or_else(|| DbError::ConnectionFailed("未连接到数据库".to_string()))?;
 
         let rows = sqlx::query(
-            "SELECT datname, pg_encoding_to_char(encoding) AS encoding, datcollate 
-             FROM pg_database 
-             WHERE datistemplate = false AND datname NOT IN ('postgres')
+            "SELECT datname, pg_encoding_to_char(encoding) AS encoding, datcollate
+             FROM pg_database
+             WHERE datistemplate = false
              ORDER BY datname"
         )
         .fetch_all(pool)
