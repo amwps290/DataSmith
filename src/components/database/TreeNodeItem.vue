@@ -70,6 +70,8 @@ import {
   ApiOutlined,
   BlockOutlined,
   ClusterOutlined,
+  KeyOutlined,
+  FieldStringOutlined,
 } from '@ant-design/icons-vue'
 
 interface TreeNode {
@@ -121,6 +123,10 @@ const handleContextMenu = (e: MouseEvent) => {
 }
 
 const getIcon = (type: string) => {
+  if (type === 'column') {
+    return props.node.metadata?.is_primary_key ? KeyOutlined : FieldStringOutlined
+  }
+  
   const iconMap: Record<string, any> = {
     connection: ClusterOutlined, 
     database: DatabaseOutlined,  
@@ -246,6 +252,8 @@ const getIcon = (type: string) => {
 .icon-database { color: #fa8c16; }
 .icon-table { color: #52c41a; }
 .icon-schema { color: #722ed1; }
+.icon-column { color: #8c8c8c; }
+.icon-column.anticon-key { color: #ffc53d; }
 
 .tree-node-content.selected .tree-node-icon {
   color: inherit;

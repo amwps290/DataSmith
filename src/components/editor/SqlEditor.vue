@@ -27,6 +27,36 @@
                   <a-tag color="processing">
                     {{ queryResults[currentResultIndex]?.execution_time_ms || 0 }} ms
                   </a-tag>
+                  
+                  <!-- 分页控制 -->
+                  <a-divider type="vertical" />
+                  <a-button 
+                    size="small" 
+                    :disabled="currentPage <= 1 || executing"
+                    @click="handlePageChange(currentPage - 1)"
+                  >
+                    上一页
+                  </a-button>
+                  <span class="page-indicator">第 {{ currentPage }} 页</span>
+                  <a-button 
+                    size="small" 
+                    :disabled="(currentResult?.rows.length || 0) < pageSize || executing"
+                    @click="handlePageChange(currentPage + 1)"
+                  >
+                    下一页
+                  </a-button>
+                  <a-select 
+                    v-model:value="pageSize" 
+                    size="small" 
+                    style="width: 100px"
+                    @change="handlePageChange(1)"
+                  >
+                    <a-select-option :value="100">100 条/页</a-select-option>
+                    <a-select-option :value="200">200 条/页</a-select-option>
+                    <a-select-option :value="500">500 条/页</a-select-option>
+                    <a-select-option :value="1000">1000 条/页</a-select-option>
+                  </a-select>
+
                   <a-dropdown v-if="queryResults.length > 1">
                     <a-button size="small">
                       结果集 {{ currentResultIndex + 1 }}/{{ queryResults.length }}
@@ -50,7 +80,7 @@
                 :columns="resultColumns"
                 :data-source="currentResult.rows"
                 :scroll="{ x: 'max-content', y: resultTableHeight }"
-                :pagination="{ pageSize: 100, showSizeChanger: true }"
+                :pagination="false"
                 size="small"
                 bordered
               />
@@ -177,6 +207,9 @@ const resultTabKey = ref('result')
 const showHistory = ref(false)
 const showSaveDialog = ref(false)
 const showSnippets = ref(false)
+
+const currentPage = ref(1)
+const pageSize = ref(200)
 
 const selectedDatabase = ref(props.initialDatabase || '')
 const availableDatabases = ref<any[]>([])
@@ -390,29 +423,41 @@ async function handleOpenFile() {
 }
 
 async function executeQuery() {
+  await handlePageChange(1)
+}
+
+async function handlePageChange(page: number) {
   const connId = props.connectionId || connectionStore.activeConnectionId
   if (!connId) return message.warning('请先选择一个数据库连接')
   const sql = editor?.getValue().trim()
   if (!sql) return message.warning('请输入 SQL 语句')
 
   executing.value = true
-  queryResults.value = []
-  currentResultIndex.value = 0
+  // 如果是第一页，清空之前的结果
+  if (page === 1) {
+    queryResults.value = []
+    currentResultIndex.value = 0
+  }
+  currentPage.value = page
   resultTabKey.value = 'result'
 
-  addMessage('info', `执行查询...${selectedDatabase.value ? ' (数据库: ' + selectedDatabase.value + ')' : ''}`)
+  addMessage('info', `执行查询 (第 ${page} 页)...${selectedDatabase.value ? ' (数据库: ' + selectedDatabase.value + ')' : ''}`)
 
   try {
-    const result = await invoke<QueryResult>('execute_query', {
+    const result = await invoke<QueryResult>('execute_query_paged', {
       connectionId: connId,
       sql,
       database: selectedDatabase.value || null,
+      page,
+      pageSize: pageSize.value,
     })
+    
+    // 目前只处理单结果集的分页
     queryResults.value = [result]
-    addMessage('success', `查询成功！影响 ${result.affected_rows} 行，耗时 ${result.execution_time_ms} ms`)
-    saveToHistory(sql)
+    addMessage('success', `第 ${page} 页查询成功！影响 ${result.affected_rows} 行，耗时 ${result.execution_time_ms} ms`)
+    if (page === 1) saveToHistory(sql)
   } catch (error: any) {
-    queryResults.value = []
+    if (page === 1) queryResults.value = []
     addMessage('error', `查询失败: ${error}`)
     message.error(`查询失败: ${error}`)
   } finally {
@@ -661,6 +706,19 @@ defineExpose({
 .result-info {
   margin-bottom: 12px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.page-indicator {
+  font-size: 13px;
+  color: #595959;
+  font-weight: 500;
+  margin: 0 8px;
+}
+
+.dark-mode .page-indicator {
+  color: #d9d9d9;
 }
 
 .message-time {

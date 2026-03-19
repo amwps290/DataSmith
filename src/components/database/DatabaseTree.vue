@@ -84,6 +84,10 @@
             </a-menu-item>
             <a-menu-item key="view-structure">
               <ProfileOutlined />
+              查看结构
+            </a-menu-item>
+            <a-menu-item key="design-table">
+              <EditOutlined />
               设计表
             </a-menu-item>
             <a-menu-divider />
@@ -311,7 +315,7 @@ const props = defineProps<{
   dbType?: string
 }>()
 
-const emit = defineEmits(['table-selected', 'database-selected', 'new-query', 'design-table'])
+const emit = defineEmits(['table-selected', 'database-selected', 'new-query', 'design-table', 'view-structure'])
 
 // 判断当前数据库是否支持 SQL
 const isSqlSupported = computed(() => {
@@ -525,14 +529,14 @@ async function onLoadData(treeNode: TreeNode): Promise<void> {
           title: '表',
           type: 'tables',
           isLeaf: false,
-          metadata: { database: treeNode.metadata.name },
+          metadata: { database: treeNode.metadata.database },
         },
         {
           key: `${treeNode.key}-views`,
           title: '视图',
           type: 'views',
           isLeaf: false,
-          metadata: { database: treeNode.metadata.name },
+          metadata: { database: treeNode.metadata.database },
         },
       ]
 
@@ -703,7 +707,7 @@ async function onLoadData(treeNode: TreeNode): Promise<void> {
         key: `${treeNode.key}-${table.name}`,
         title: table.name,
         type: 'table',
-        isLeaf: true,
+        isLeaf: false,
         metadata: {
           ...table,
           database: treeNode.metadata.database,
@@ -747,7 +751,7 @@ async function onLoadData(treeNode: TreeNode): Promise<void> {
         key: `${treeNode.key}-${view.name}`,
         title: view.name,
         type: 'view',
-        isLeaf: true,
+        isLeaf: false,
         metadata: {
           ...view,
           database: treeNode.metadata.database,
@@ -1049,7 +1053,7 @@ async function onLoadData(treeNode: TreeNode): Promise<void> {
         key: `${treeNode.key}-${table.name}`,
         title: table.name,
         type: 'table',
-        isLeaf: true,
+        isLeaf: false,
         metadata: { ...table, database: treeNode.metadata.database },
       }))
       
@@ -1095,7 +1099,7 @@ async function onLoadData(treeNode: TreeNode): Promise<void> {
         key: `${treeNode.key}-${view.name}`,
         title: view.name,
         type: 'view',
-        isLeaf: true,
+        isLeaf: false,
         metadata: { ...view, database: treeNode.metadata.database },
       }))
       
@@ -1212,34 +1216,55 @@ async function onLoadData(treeNode: TreeNode): Promise<void> {
     }
     return
   }
-  // 加载事件列表
-  if (treeNode.type === 'events') {
+  // 加载表或视图下的字段列表
+  if (treeNode.type === 'table' || treeNode.type === 'view') {
+    console.log(`=== 开始加载 ${treeNode.type} 字段列表 ===`)
     try {
-      const events = await invoke<any[]>('get_events', {
+      const columns = await invoke<any[]>('get_table_structure', {
         connectionId: props.connectionId,
+        table: treeNode.metadata.name || treeNode.title,
         database: treeNode.metadata.database,
+        schema: treeNode.metadata.schema,
       })
 
-      treeNode.children = events.map((event) => ({
-        key: `${treeNode.key}-${event.EVENT_NAME}`,
-        title: event.EVENT_NAME,
-        type: 'event',
-        isLeaf: true,
-        metadata: { ...event, database: treeNode.metadata.database },
-      }))
-      
-      if (events.length === 0) {
-        treeNode.children = [{
-          key: `${treeNode.key}-empty`,
-          title: '(无事件)',
+      const children: TreeNode[] = columns.map((col) => {
+        // 构造字段标题，包含类型和主键标识
+        let title = col.name
+        if (col.data_type) title += ` : ${col.data_type}`
+        if (col.is_primary_key) title += ' [PK]'
+        
+        return {
+          key: `${treeNode.key}-col-${col.name}`,
+          title: title,
+          type: 'column',
+          isLeaf: true,
+          metadata: {
+            ...col,
+            database: treeNode.metadata.database,
+            table: treeNode.metadata.name || treeNode.title,
+            schema: treeNode.metadata.schema
+          },
+        }
+      })
+
+      if (columns.length === 0) {
+        children.push({
+          key: `${treeNode.key}-col-empty`,
+          title: '(无字段)',
           type: 'empty',
           isLeaf: true,
           metadata: {},
-        }]
+        })
       }
+
+      updateNodeInTree(treeData.value, treeNode.key, (node) => {
+        node.children = children
+      })
+      treeData.value = [...treeData.value]
+      console.log(`=== ${treeNode.type} 字段列表加载完成 ===`)
     } catch (error: any) {
-      message.error(`加载事件列表失败: ${error}`)
-      treeNode.children = []
+      console.error(`加载字段列表失败:`, error)
+      message.error(`加载字段列表失败: ${error}`)
     }
     return
   }
@@ -1476,19 +1501,6 @@ async function handleViewData() {
   }
 }
 
-// 查看表结构（打开设计器）
-async function handleViewStructure() {
-  if (!selectedNode.value || !props.connectionId) return
-  
-  // 触发设计表事件
-  emit('design-table', {
-    database: selectedNode.value.metadata.database,
-    table: selectedNode.value.metadata.name || selectedNode.value.title,
-    schema: selectedNode.value.metadata.schema,
-    connectionId: props.connectionId,
-  })
-}
-
 // 处理菜单点击
 async function handleMenuClick({ key }: { key: string | number }) {
   contextMenuVisible.value = false
@@ -1527,7 +1539,20 @@ async function handleMenuClick({ key }: { key: string | number }) {
       }
       break
     case 'view-structure':
-      await handleViewStructure()
+      emit('view-structure', {
+        database: selectedNode.value.metadata.database,
+        table: selectedNode.value.metadata.name || selectedNode.value.title,
+        schema: selectedNode.value.metadata.schema,
+        connectionId: props.connectionId,
+      })
+      break
+    case 'design-table':
+      emit('design-table', {
+        database: selectedNode.value.metadata.database,
+        table: selectedNode.value.metadata.name || selectedNode.value.title,
+        schema: selectedNode.value.metadata.schema,
+        connectionId: props.connectionId,
+      })
       break
     case 'insert-record':
       handleInsertRecord()

@@ -84,6 +84,7 @@
               @database-selected="(data) => emit('database-selected', { ...data, connectionId: conn.id })"
               @new-query="(data) => emit('new-query', data)"
               @design-table="(data) => emit('design-table', { ...data, connectionId: conn.id })"
+              @view-structure="(data) => emit('view-structure', { ...data, connectionId: conn.id })"
             />
           </div>
         </div>
@@ -147,7 +148,7 @@ import type { ConnectionConfig } from '@/types/database'
 import DatabaseTree from '@/components/database/DatabaseTree.vue'
 import CreateDatabaseDialog from '@/components/database/CreateDatabaseDialog.vue'
 
-const emit = defineEmits(['add-connection', 'edit-connection', 'table-selected', 'database-selected', 'new-query', 'design-table'])
+const emit = defineEmits(['add-connection', 'edit-connection', 'table-selected', 'database-selected', 'new-query', 'design-table', 'view-structure'])
 
 const connectionStore = useConnectionStore()
 const searchText = ref('')

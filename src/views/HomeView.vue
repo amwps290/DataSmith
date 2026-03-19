@@ -83,6 +83,7 @@
             @database-selected="handleDatabaseSelected"
             @new-query="handleNewQuery"
             @design-table="handleDesignTable"
+            @view-structure="handleViewStructure"
           />
         </div>
       </div>
@@ -197,6 +198,7 @@
                 :database="tab.database!"
                 :table="tab.table!"
                 :schema="tab.schema"
+                :read-only="tab.readOnly"
               />
               <RedisEditor
                 v-else-if="tab.type === 'redis'"
@@ -340,6 +342,7 @@ interface DataTab {
   key: string; title: string; type: 'data' | 'design' | 'query' | 'redis';
   connectionId?: string; database?: string; table?: string; schema?: string;
   content?: string; filePath?: string; closable?: boolean;
+  readOnly?: boolean;
 }
 const dataTabs = ref<DataTab[]>([])
 
@@ -363,6 +366,50 @@ function setSqlEditorRef(el: any, key: string) { if (el) sqlEditorRefs[key] = el
 function handleContentChange(key: string, val: string) { const t = dataTabs.value.find(t => t.key === key); if (t) t.content = val; }
 function handleFileSaved(key: string, path: string, title: string) {
   const t = dataTabs.value.find(t => t.key === key); if (t) { t.filePath = path; t.title = title; }
+}
+
+// 查看表结构
+function handleViewStructure(data: { connectionId: string, database: string, table: string, schema?: string }) {
+  const tabKey = `structure-${data.connectionId}-${data.database}-${data.table}`
+  const existingTab = dataTabs.value.find(t => t.key === tabKey)
+  
+  if (existingTab) {
+    mainTabKey.value = tabKey
+  } else {
+    dataTabs.value.push({
+      key: tabKey,
+      title: `结构: ${data.table}`,
+      type: 'design',
+      connectionId: data.connectionId,
+      database: data.database,
+      table: data.table,
+      schema: data.schema,
+      readOnly: true
+    })
+    mainTabKey.value = tabKey
+  }
+}
+
+// 设计表
+function handleDesignTable(data: { connectionId: string, database: string, table: string, schema?: string }) {
+  const tabKey = `design-${data.connectionId}-${data.database}-${data.table}`
+  const existingTab = dataTabs.value.find(t => t.key === tabKey)
+  
+  if (existingTab) {
+    mainTabKey.value = tabKey
+  } else {
+    dataTabs.value.push({
+      key: tabKey,
+      title: `设计: ${data.table}`,
+      type: 'design',
+      connectionId: data.connectionId,
+      database: data.database,
+      table: data.table,
+      schema: data.schema,
+      readOnly: false
+    })
+    mainTabKey.value = tabKey
+  }
 }
 
 const contextMenuVisible = ref(false)
@@ -398,14 +445,7 @@ function closeTab(key: string) {
 function handleTableSelected(d: any) {
   const id = d.connectionId || connectionStore.activeConnectionId, key = `table-${id}-${d.database}-${d.table}`
   if (dataTabs.value.some(t => t.key === key)) { mainTabKey.value = key; return; }
-  dataTabs.value.push({ key, title: d.table, type: 'data', connectionId: id!, database: d.database, table: d.table, schema: d.metadata?.schema })
-  mainTabKey.value = key
-}
-
-function handleDesignTable(d: any) {
-  const id = d.connectionId || connectionStore.activeConnectionId, key = `design-${id}-${d.database}-${d.table}`
-  if (dataTabs.value.some(t => t.key === key)) { mainTabKey.value = key; return; }
-  dataTabs.value.push({ key, title: `设计: ${d.table}`, type: 'design', connectionId: id!, database: d.database, table: d.table, schema: d.schema })
+  dataTabs.value.push({ key, title: d.table, type: 'data', connectionId: id!, database: d.database, table: d.table, schema: d.schema || d.metadata?.schema })
   mainTabKey.value = key
 }
 

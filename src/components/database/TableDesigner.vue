@@ -2,23 +2,20 @@
   <div class="table-designer">
     <div class="designer-toolbar">
       <a-space>
-        <a-button :icon="h(SaveOutlined)" @click="saveChanges" type="primary" :loading="saving">
-          保存更改
-        </a-button>
+        <template v-if="!readOnly">
+          <a-button :icon="h(SaveOutlined)" @click="saveChanges" type="primary" :loading="saving">
+            保存更改
+          </a-button>
+          <a-button :icon="h(PlusOutlined)" @click="addColumn">
+            添加列
+          </a-button>
+        </template>
         <a-button :icon="h(ReloadOutlined)" @click="loadStructure" :loading="loading">
           刷新
         </a-button>
-        <a-button :icon="h(PlusOutlined)" @click="addColumn">
-          添加列
-        </a-button>
         <a-divider type="vertical" />
-        <a-button :icon="h(CodeOutlined)" @click="showDDL = true">
-          查看DDL
-        </a-button>
+        <a-tag color="blue">{{ database }}{{ schema ? '.' + schema : '' }}.{{ table }}</a-tag>
       </a-space>
-      <div class="toolbar-info">
-        <a-tag color="blue">{{ database }}.{{ table }}</a-tag>
-      </div>
     </div>
 
     <div class="designer-content">
@@ -30,116 +27,133 @@
             :data-source="tableColumns"
             :loading="loading"
             :pagination="false"
-            :scroll="{ x: 'max-content', y: 'calc(100vh - 350px)' }"
+            :scroll="{ x: 'max-content', y: 'calc(100vh - 250px)' }"
             size="small"
             bordered
             row-key="name"
           >
             <template #bodyCell="{ column, record, index }">
-              <!-- 列名 -->
-              <template v-if="column.dataIndex === 'name'">
-                <a-input
-                  v-model:value="record.name"
-                  size="small"
-                  placeholder="列名"
-                  @change="record._modified = true"
-                />
+              <!-- 只读模式下的单元格渲染 -->
+              <template v-if="readOnly && column.dataIndex !== 'operation'">
+                <span v-if="column.dataIndex === 'nullable'">
+                  <a-checkbox :checked="record.nullable" disabled />
+                </span>
+                <span v-else-if="column.dataIndex === 'is_primary_key'">
+                  <a-checkbox :checked="record.is_primary_key" disabled />
+                </span>
+                <span v-else-if="column.dataIndex === 'is_auto_increment'">
+                  <a-checkbox :checked="record.is_auto_increment" disabled />
+                </span>
+                <span v-else>{{ record[column.dataIndex] }}</span>
               </template>
-              
-              <!-- 数据类型 -->
-              <template v-else-if="column.dataIndex === 'data_type'">
-                <a-select
-                  v-model:value="record.data_type"
-                  size="small"
-                  style="width: 100%"
-                  @change="record._modified = true"
-                >
-                  <a-select-option v-for="type in dataTypes" :key="type" :value="type">
-                    {{ type }}
-                  </a-select-option>
-                </a-select>
-              </template>
-              
-              <!-- 长度 -->
-              <template v-else-if="column.dataIndex === 'length'">
-                <a-input-number
-                  v-model:value="record.length"
-                  size="small"
-                  :min="1"
-                  style="width: 100%"
-                  @change="record._modified = true"
-                />
-              </template>
-              
-              <!-- 可空 -->
-              <template v-else-if="column.dataIndex === 'nullable'">
-                <a-checkbox
-                  v-model:checked="record.nullable"
-                  @change="record._modified = true"
-                />
-              </template>
-              
-              <!-- 主键 -->
-              <template v-else-if="column.dataIndex === 'is_primary_key'">
-                <a-checkbox
-                  v-model:checked="record.is_primary_key"
-                  @change="handlePrimaryKeyChange(record)"
-                />
-              </template>
-              
-              <!-- 自增 -->
-              <template v-else-if="column.dataIndex === 'is_auto_increment'">
-                <a-checkbox
-                  v-model:checked="record.is_auto_increment"
-                  @change="record._modified = true"
-                />
-              </template>
-              
-              <!-- 默认值 -->
-              <template v-else-if="column.dataIndex === 'default_value'">
-                <a-input
-                  v-model:value="record.default_value"
-                  size="small"
-                  placeholder="NULL"
-                  @change="record._modified = true"
-                />
-              </template>
-              
-              <!-- 注释 -->
-              <template v-else-if="column.dataIndex === 'comment'">
-                <a-input
-                  v-model:value="record.comment"
-                  size="small"
-                  placeholder="列注释"
-                  @change="record._modified = true"
-                />
-              </template>
-              
-              <!-- 操作 -->
-              <template v-else-if="column.dataIndex === 'operation'">
-                <a-space>
-                  <a-button
-                    type="text"
+
+              <!-- 编辑模式下的单元格渲染 -->
+              <template v-else-if="!readOnly">
+                <!-- 列名 -->
+                <template v-if="column.dataIndex === 'name'">
+                  <a-input
+                    v-model:value="record.name"
                     size="small"
-                    danger
-                    :icon="h(DeleteOutlined)"
-                    @click="removeColumn(index)"
+                    placeholder="列名"
+                    @change="record._modified = true"
                   />
-                  <a-button
-                    type="text"
+                </template>
+                
+                <!-- 数据类型 -->
+                <template v-else-if="column.dataIndex === 'data_type'">
+                  <a-select
+                    v-model:value="record.data_type"
                     size="small"
-                    :icon="h(ArrowUpOutlined)"
-                    @click="moveColumn(index, -1)"
-                    :disabled="index === 0"
-                  />
-                  <a-button
-                    type="text"
+                    style="width: 100%"
+                    @change="record._modified = true"
+                  >
+                    <a-select-option v-for="type in dataTypes" :key="type" :value="type">
+                      {{ type }}
+                    </a-select-option>
+                  </a-select>
+                </template>
+                
+                <!-- 长度 -->
+                <template v-else-if="column.dataIndex === 'length'">
+                  <a-input-number
+                    v-model:value="record.length"
                     size="small"
-                    :icon="h(ArrowDownOutlined)"
-                    @click="moveColumn(index, 1)"
-                    :disabled="index === tableColumns.length - 1"
+                    :min="1"
+                    style="width: 100%"
+                    @change="record._modified = true"
                   />
-                </a-space>
+                </template>
+                
+                <!-- 可空 -->
+                <template v-else-if="column.dataIndex === 'nullable'">
+                  <a-checkbox
+                    v-model:checked="record.nullable"
+                    @change="record._modified = true"
+                  />
+                </template>
+                
+                <!-- 主键 -->
+                <template v-else-if="column.dataIndex === 'is_primary_key'">
+                  <a-checkbox
+                    v-model:checked="record.is_primary_key"
+                    @change="handlePrimaryKeyChange(record)"
+                  />
+                </template>
+                
+                <!-- 自增 -->
+                <template v-else-if="column.dataIndex === 'is_auto_increment'">
+                  <a-checkbox
+                    v-model:checked="record.is_auto_increment"
+                    @change="record._modified = true"
+                  />
+                </template>
+                
+                <!-- 默认值 -->
+                <template v-else-if="column.dataIndex === 'default_value'">
+                  <a-input
+                    v-model:value="record.default_value"
+                    size="small"
+                    placeholder="NULL"
+                    @change="record._modified = true"
+                  />
+                </template>
+                
+                <!-- 注释 -->
+                <template v-else-if="column.dataIndex === 'comment'">
+                  <a-input
+                    v-model:value="record.comment"
+                    size="small"
+                    placeholder="列注释"
+                    @change="record._modified = true"
+                  />
+                </template>
+                
+                <!-- 操作 -->
+                <template v-else-if="column.dataIndex === 'operation'">
+                  <a-space>
+                    <a-button
+                      type="text"
+                      size="small"
+                      danger
+                      :icon="h(DeleteOutlined)"
+                      @click="removeColumn(index)"
+                    />
+                    <a-button
+                      type="text"
+                      size="small"
+                      :icon="h(ArrowUpOutlined)"
+                      @click="moveColumn(index, -1)"
+                      :disabled="index === 0"
+                    />
+                    <a-button
+                      type="text"
+                      size="small"
+                      :icon="h(ArrowDownOutlined)"
+                      @click="moveColumn(index, 1)"
+                      :disabled="index === tableColumns.length - 1"
+                    />
+                  </a-space>
+                </template>
               </template>
             </template>
           </a-table>
@@ -148,14 +162,14 @@
         <!-- 索引 -->
         <a-tab-pane key="indexes" tab="索引">
           <div style="padding: 16px;">
-            <a-space style="margin-bottom: 16px;">
+            <a-space v-if="!readOnly" style="margin-bottom: 16px;">
               <a-button :icon="h(PlusOutlined)" @click="addIndex" type="primary">
                 添加索引
               </a-button>
             </a-space>
             
             <a-table
-              :columns="indexColumns"
+              :columns="readOnly ? indexColumns.filter(c => c.dataIndex !== 'operation') : indexColumns"
               :data-source="tableIndexes"
               :loading="loading"
               :pagination="false"
@@ -180,17 +194,29 @@
           </div>
         </a-tab-pane>
 
+        <!-- DDL -->
+        <a-tab-pane key="ddl" tab="DDL">
+          <div class="ddl-container" ref="ddlEditorContainer">
+            <a-spin :spinning="loadingDDL" />
+          </div>
+          <div class="ddl-actions">
+            <a-button :icon="h(CopyOutlined)" @click="copyDDL" size="small">
+              复制 DDL
+            </a-button>
+          </div>
+        </a-tab-pane>
+
         <!-- 外键 -->
-        <a-tab-pane key="foreign_keys" tab="外键">
+        <a-tab-pane key="foreign_keys" tab="外键" v-if="tableForeignKeys.length > 0 || !readOnly">
           <div style="padding: 16px;">
-            <a-space style="margin-bottom: 16px;">
+            <a-space v-if="!readOnly" style="margin-bottom: 16px;">
               <a-button :icon="h(PlusOutlined)" @click="addForeignKey" type="primary">
                 添加外键
               </a-button>
             </a-space>
             
             <a-table
-              :columns="foreignKeyColumns"
+              :columns="readOnly ? foreignKeyColumns.filter(c => c.dataIndex !== 'operation') : foreignKeyColumns"
               :data-source="tableForeignKeys"
               :loading="loading"
               :pagination="false"
@@ -216,7 +242,7 @@
         </a-tab-pane>
 
         <!-- 表选项 -->
-        <a-tab-pane key="options" tab="表选项">
+        <a-tab-pane key="options" tab="表选项" v-if="!readOnly">
           <div style="padding: 16px;">
             <a-form :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
               <a-form-item label="表名">
@@ -250,28 +276,6 @@
         </a-tab-pane>
       </a-tabs>
     </div>
-
-    <!-- DDL预览对话框 -->
-    <a-modal
-      v-model:open="showDDL"
-      title="DDL语句"
-      :width="800"
-      :footer="null"
-    >
-      <a-spin :spinning="loadingDDL">
-        <div v-if="ddlSql" style="position: relative;">
-          <a-button
-            :icon="h(CopyOutlined)"
-            size="small"
-            style="position: absolute; right: 8px; top: 8px; z-index: 1;"
-            @click="copyDDL"
-          >
-            复制
-          </a-button>
-          <pre class="ddl-content">{{ ddlSql }}</pre>
-        </div>
-      </a-spin>
-    </a-modal>
     
     <!-- 添加索引对话框 -->
     <a-modal
@@ -357,7 +361,8 @@
 </template>
 
 <script setup lang="ts">
-import { h, reactive, ref, onMounted, watch } from 'vue'
+import { h, reactive, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import * as monaco from 'monaco-editor'
 import {
   SaveOutlined,
   ReloadOutlined,
@@ -365,27 +370,31 @@ import {
   DeleteOutlined,
   ArrowUpOutlined,
   ArrowDownOutlined,
-  CodeOutlined,
   CopyOutlined,
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useAppStore } from '@/stores/app'
 
 const props = defineProps<{
   connectionId: string
   database: string
   table: string
   schema?: string
+  readOnly?: boolean
 }>()
 
+const appStore = useAppStore()
 const loading = ref(false)
 const saving = ref(false)
 const activeTab = ref('columns')
-const showDDL = ref(false)
 const loadingDDL = ref(false)
 const ddlSql = ref('')
 const showAddIndexDialog = ref(false)
 const showAddForeignKeyDialog = ref(false)
+
+const ddlEditorContainer = ref<HTMLElement>()
+let ddlEditor: monaco.editor.IStandaloneCodeEditor | null = null
 
 // 表列定义
 const tableColumns = ref<any[]>([])
@@ -459,17 +468,52 @@ const newForeignKey = reactive({
   onUpdate: 'CASCADE',
 })
 
+// 初始化 DDL 编辑器
+async function initDdlEditor() {
+  if (ddlEditor) return
+  
+  await nextTick()
+  if (!ddlEditorContainer.value) return
+  
+  ddlEditor = monaco.editor.create(ddlEditorContainer.value, {
+    value: ddlSql.value || '-- 正在加载 DDL...\n',
+    language: 'sql',
+    theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs',
+    readOnly: true,
+    automaticLayout: true,
+    minimap: { enabled: false },
+    scrollBeyondLastLine: false,
+    fontSize: 13,
+    lineNumbers: 'on',
+  })
+}
+
 // 加载表结构
 async function loadStructure() {
   loading.value = true
   try {
-    // 加载列定义
-    const columns = await invoke<any[]>('get_table_structure', {
+    const columnsPromise = invoke<any[]>('get_table_structure', {
       connectionId: props.connectionId,
       table: props.table,
       schema: props.schema || props.database,
       database: props.database,
     })
+    
+    const indexesPromise = invoke<any[]>('get_table_indexes', {
+      connectionId: props.connectionId,
+      database: props.database,
+      table: props.table,
+      schema: props.schema,
+    })
+
+    const foreignKeysPromise = invoke<any[]>('get_table_foreign_keys', {
+      connectionId: props.connectionId,
+      database: props.database,
+      table: props.table,
+      schema: props.schema,
+    })
+
+    const [columns, indexes, foreignKeys] = await Promise.all([columnsPromise, indexesPromise, foreignKeysPromise])
     
     tableColumns.value = columns.map(col => ({
       ...col,
@@ -479,30 +523,11 @@ async function loadStructure() {
       _isNew: false,
     }))
     
-    // 加载索引
-    try {
-      const indexes = await invoke<any[]>('get_table_indexes', {
-        connectionId: props.connectionId,
-        database: props.database,
-        table: props.table,
-      })
-      tableIndexes.value = indexes
-    } catch (error) {
-      console.error('加载索引失败:', error)
-      tableIndexes.value = []
-    }
+    tableIndexes.value = indexes
+    tableForeignKeys.value = foreignKeys
     
-    // 加载外键
-    try {
-      const foreignKeys = await invoke<any[]>('get_table_foreign_keys', {
-        connectionId: props.connectionId,
-        database: props.database,
-        table: props.table,
-      })
-      tableForeignKeys.value = foreignKeys
-    } catch (error) {
-      console.error('加载外键失败:', error)
-      tableForeignKeys.value = []
+    if (activeTab.value === 'ddl') {
+      loadDDL()
     }
     
     message.success('表结构加载成功')
@@ -581,10 +606,8 @@ function handlePrimaryKeyChange(record: any) {
 async function saveChanges() {
   saving.value = true
   try {
-    // 构建ALTER TABLE语句
     const alterStatements: string[] = []
     
-    // 处理列的修改和新增
     for (const col of tableColumns.value) {
       if (!col._modified) continue
       
@@ -602,7 +625,6 @@ async function saveChanges() {
       return
     }
     
-    // 执行ALTER TABLE
     const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` ${alterStatements.join(', ')}`
     
     await invoke('execute_query', {
@@ -611,8 +633,6 @@ async function saveChanges() {
     })
     
     message.success('表结构已保存')
-    
-    // 重新加载
     await loadStructure()
   } catch (error: any) {
     message.error(`保存失败: ${error}`)
@@ -624,32 +644,19 @@ async function saveChanges() {
 // 构建列定义
 function buildColumnDefinition(col: any): string {
   let def = `\`${col.name}\``
-  
-  // 数据类型
   if (col.length && ['VARCHAR', 'CHAR'].includes(col.data_type)) {
     def += ` ${col.data_type}(${col.length})`
   } else {
     def += ` ${col.data_type}`
   }
-  
-  // 可空
   def += col.nullable ? ' NULL' : ' NOT NULL'
-  
-  // 自增
-  if (col.is_auto_increment) {
-    def += ' AUTO_INCREMENT'
-  }
-  
-  // 默认值
+  if (col.is_auto_increment) def += ' AUTO_INCREMENT'
   if (col.default_value !== null && col.default_value !== undefined && col.default_value !== '') {
     def += ` DEFAULT '${col.default_value}'`
   }
-  
-  // 注释
   if (col.comment) {
     def += ` COMMENT '${col.comment.replace(/'/g, "''")}'`
   }
-  
   return def
 }
 
@@ -663,9 +670,21 @@ async function loadDDL() {
       table: props.table,
       schema: props.schema,
     })
-    ddlSql.value = result
+    // 处理可能出现的字面量 \n
+    const formattedResult = result.replace(/\\n/g, '\n')
+    ddlSql.value = formattedResult
+    
+    if (!ddlEditor) {
+      await initDdlEditor()
+    }
+    
+    if (ddlEditor) {
+      ddlEditor.setValue(formattedResult)
+      nextTick(() => ddlEditor?.layout())
+    }
   } catch (error: any) {
     message.error(`获取DDL失败: ${error}`)
+    if (ddlEditor) ddlEditor.setValue(`-- 获取 DDL 失败: ${error}`)
   } finally {
     loadingDDL.value = false
   }
@@ -720,12 +739,10 @@ async function removeIndex(record: any) {
     async onOk() {
       try {
         const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` DROP INDEX \`${record.index_name}\``
-        
         await invoke('execute_query', {
           connectionId: props.connectionId,
           sql,
         })
-        
         message.success('索引已删除')
         await loadStructure()
       } catch (error: any) {
@@ -785,12 +802,10 @@ async function removeForeignKey(record: any) {
     async onOk() {
       try {
         const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` DROP FOREIGN KEY \`${record.constraint_name}\``
-        
         await invoke('execute_query', {
           connectionId: props.connectionId,
           sql,
         })
-        
         message.success('外键已删除')
         await loadStructure()
       } catch (error: any) {
@@ -805,11 +820,20 @@ onMounted(() => {
   loadStructure()
 })
 
-// 监听DDL对话框打开
-watch(showDDL, (visible) => {
-  if (visible) {
+onUnmounted(() => {
+  if (ddlEditor) ddlEditor.dispose()
+})
+
+// 监听 Tab 切换
+watch(activeTab, (tab) => {
+  if (tab === 'ddl') {
     loadDDL()
   }
+})
+
+// 监听主题变化
+watch(() => appStore.theme, (newTheme) => {
+  if (ddlEditor) monaco.editor.setTheme(newTheme === 'dark' ? 'vs-dark' : 'vs')
 })
 
 // 监听表变化
@@ -819,54 +843,14 @@ watch(() => props.table, () => {
 </script>
 
 <style scoped>
-.table-designer {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.designer-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px;
-  border-bottom: 1px solid #e8e8e8;
-  background: #fafafa;
-}
-
-.dark-mode .designer-toolbar {
-  background: #1f1f1f;
-  border-bottom-color: #303030;
-}
-
-.toolbar-info {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  user-select: none;
-}
-
-.designer-content {
-  flex: 1;
-  overflow: auto;
-}
-
-.ddl-content {
-  background: #f5f5f5;
-  padding: 16px;
-  border-radius: 4px;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 500px;
-  overflow: auto;
-}
-
-.dark-mode .ddl-content {
-  background: #262626;
-  color: #e8e8e8;
-}
+.table-designer { height: 100%; display: flex; flex-direction: column; }
+.designer-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #e8e8e8; background: #fafafa; }
+.dark-mode .designer-toolbar { background: #1f1f1f; border-bottom-color: #303030; }
+.toolbar-info { display: flex; gap: 12px; align-items: center; user-select: none; }
+.designer-content { flex: 1; overflow: hidden; }
+.designer-content :deep(.ant-tabs) { height: 100%; }
+.designer-content :deep(.ant-tabs-content) { height: 100%; }
+.ddl-container { height: calc(100vh - 300px); border: 1px solid #e8e8e8; margin: 16px; position: relative; }
+.dark-mode .ddl-container { border-color: #303030; }
+.ddl-actions { margin: 0 16px 16px 16px; }
 </style>
-

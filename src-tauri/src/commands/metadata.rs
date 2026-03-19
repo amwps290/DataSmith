@@ -493,28 +493,100 @@ pub async fn get_table_indexes(
     connection_id: String,
     database: String,
     table: String,
+    schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let manager = state.connection_manager.lock().await;
     
-    let sql = format!(
-        "SELECT DISTINCT INDEX_NAME as index_name, COLUMN_NAME as column_name, 
-                INDEX_TYPE as index_type, NON_UNIQUE as non_unique
-         FROM information_schema.STATISTICS 
-         WHERE TABLE_SCHEMA = '{}' AND TABLE_NAME = '{}'
-         ORDER BY INDEX_NAME, SEQ_IN_INDEX",
-        database.replace("'", "''"),
-        table.replace("'", "''")
-    );
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let sql = match db_type {
+        DatabaseType::MySQL => {
+            format!(
+                "SELECT DISTINCT INDEX_NAME as index_name, COLUMN_NAME as column_name, 
+                        INDEX_TYPE as index_type, NON_UNIQUE as non_unique
+                 FROM information_schema.STATISTICS 
+                 WHERE TABLE_SCHEMA = '{}' AND TABLE_NAME = '{}'
+                 ORDER BY INDEX_NAME, SEQ_IN_INDEX",
+                database.replace("'", "''"),
+                table.replace("'", "''")
+            )
+        },
+        DatabaseType::PostgreSQL => {
+            let schema_name = schema.unwrap_or_else(|| "public".to_string());
+            format!(
+                "SELECT
+                    i.relname as index_name,
+                    a.attname as column_name,
+                    t.relname as table_name,
+                    ix.indisunique as is_unique,
+                    am.amname as index_type
+                FROM
+                    pg_class t,
+                    pg_class i,
+                    pg_index ix,
+                    pg_attribute a,
+                    pg_am am,
+                    pg_namespace n
+                WHERE
+                    t.oid = ix.indrelid
+                    AND i.oid = ix.indexrelid
+                    AND a.attrelid = t.oid
+                    AND a.attnum = ANY(ix.indkey)
+                    AND t.relkind = 'r'
+                    AND i.relam = am.oid
+                    AND t.relnamespace = n.oid
+                    AND n.nspname = '{}'
+                    AND t.relname = '{}'
+                ORDER BY
+                    t.relname,
+                    i.relname",
+                schema_name.replace("'", "''"),
+                table.replace("'", "''")
+            )
+        },
+        DatabaseType::SQLite => {
+            format!("PRAGMA index_list('{}')", table.replace("'", "''"))
+        },
+        _ => return Ok(Vec::new()),
+    };
     
     let result = manager
         .execute_query(&connection_id, &sql, Some(&database))
         .await
         .map_err(|e| e.to_string())?;
     
-    Ok(result.rows.into_iter().map(|row| serde_json::Value::Object(
-        row.into_iter().collect()
-    )).collect())
+    // 统一字段名以适配前端
+    let processed_rows = result.rows.into_iter().map(|row| {
+        let mut new_row = std::collections::HashMap::new();
+        match db_type {
+            DatabaseType::PostgreSQL => {
+                new_row.insert("index_name".to_string(), row.get("index_name").cloned().unwrap_or(serde_json::Value::Null));
+                new_row.insert("column_name".to_string(), row.get("column_name").cloned().unwrap_or(serde_json::Value::Null));
+                new_row.insert("index_type".to_string(), row.get("index_type").cloned().unwrap_or(serde_json::Value::Null));
+                let is_unique = row.get("is_unique").and_then(|v| v.as_bool()).unwrap_or(false);
+                new_row.insert("non_unique".to_string(), serde_json::Value::Number(serde_json::Number::from(!is_unique as u8)));
+            },
+            DatabaseType::SQLite => {
+                new_row.insert("index_name".to_string(), row.get("name").cloned().unwrap_or(serde_json::Value::Null));
+                new_row.insert("non_unique".to_string(), serde_json::Value::Number(serde_json::Number::from(!row.get("unique").and_then(|v| v.as_bool()).unwrap_or(false) as u8)));
+                new_row.insert("index_type".to_string(), serde_json::Value::String("B-TREE".to_string()));
+                new_row.insert("column_name".to_string(), serde_json::Value::String("-".to_string())); // SQLite 需额外查询列
+            },
+            _ => {
+                // MySQL 保持原样
+                for (k, v) in row {
+                    new_row.insert(k, v);
+                }
+            }
+        }
+        serde_json::Value::Object(new_row.into_iter().collect())
+    }).collect();
+
+    Ok(processed_rows)
 }
 
 /// 获取表外键
@@ -523,30 +595,85 @@ pub async fn get_table_foreign_keys(
     connection_id: String,
     database: String,
     table: String,
+    schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let manager = state.connection_manager.lock().await;
     
-    let sql = format!(
-        "SELECT CONSTRAINT_NAME as constraint_name, COLUMN_NAME as column_name,
-                REFERENCED_TABLE_NAME as referenced_table_name,
-                REFERENCED_COLUMN_NAME as referenced_column_name
-         FROM information_schema.KEY_COLUMN_USAGE 
-         WHERE TABLE_SCHEMA = '{}' AND TABLE_NAME = '{}'
-               AND REFERENCED_TABLE_NAME IS NOT NULL
-         ORDER BY CONSTRAINT_NAME",
-        database.replace("'", "''"),
-        table.replace("'", "''")
-    );
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let sql = match db_type {
+        DatabaseType::MySQL => {
+            format!(
+                "SELECT CONSTRAINT_NAME as constraint_name, COLUMN_NAME as column_name,
+                        REFERENCED_TABLE_NAME as referenced_table_name,
+                        REFERENCED_COLUMN_NAME as referenced_column_name
+                 FROM information_schema.KEY_COLUMN_USAGE 
+                 WHERE TABLE_SCHEMA = '{}' AND TABLE_NAME = '{}'
+                       AND REFERENCED_TABLE_NAME IS NOT NULL
+                 ORDER BY CONSTRAINT_NAME",
+                database.replace("'", "''"),
+                table.replace("'", "''")
+            )
+        },
+        DatabaseType::PostgreSQL => {
+            let schema_name = schema.unwrap_or_else(|| "public".to_string());
+            format!(
+                "SELECT
+                    tc.constraint_name, 
+                    kcu.column_name, 
+                    ccu.table_name AS referenced_table_name,
+                    ccu.column_name AS referenced_column_name 
+                FROM 
+                    information_schema.table_constraints AS tc 
+                    JOIN information_schema.key_column_usage AS kcu
+                      ON tc.constraint_name = kcu.constraint_name
+                      AND tc.table_schema = kcu.table_schema
+                    JOIN information_schema.constraint_column_usage AS ccu
+                      ON ccu.constraint_name = tc.constraint_name
+                      AND ccu.table_schema = tc.table_schema
+                WHERE tc.constraint_type = 'FOREIGN KEY' 
+                    AND tc.table_schema = '{}'
+                    AND tc.table_name = '{}'",
+                schema_name.replace("'", "''"),
+                table.replace("'", "''")
+            )
+        },
+        DatabaseType::SQLite => {
+            format!("PRAGMA foreign_key_list('{}')", table.replace("'", "''"))
+        },
+        _ => return Ok(Vec::new()),
+    };
     
     let result = manager
         .execute_query(&connection_id, &sql, Some(&database))
         .await
         .map_err(|e| e.to_string())?;
     
-    Ok(result.rows.into_iter().map(|row| serde_json::Value::Object(
-        row.into_iter().collect()
-    )).collect())
+    // 统一字段名以适配前端
+    let processed_rows = result.rows.into_iter().map(|row| {
+        let mut new_row = std::collections::HashMap::new();
+        match db_type {
+            DatabaseType::SQLite => {
+                new_row.insert("constraint_name".to_string(), serde_json::Value::String(format!("fk_{}_{}", table, row.get("from").and_then(|v| v.as_str()).unwrap_or("col"))));
+                new_row.insert("column_name".to_string(), row.get("from").cloned().unwrap_or(serde_json::Value::Null));
+                new_row.insert("referenced_table_name".to_string(), row.get("table").cloned().unwrap_or(serde_json::Value::Null));
+                new_row.insert("referenced_column_name".to_string(), row.get("to").cloned().unwrap_or(serde_json::Value::Null));
+            },
+            _ => {
+                // MySQL 和 PostgreSQL 的字段名基本一致或已在 SQL 中 alias
+                for (k, v) in row {
+                    new_row.insert(k, v);
+                }
+            }
+        }
+        serde_json::Value::Object(new_row.into_iter().collect())
+    }).collect();
+
+    Ok(processed_rows)
 }
 
 /// 获取创建表的DDL语句
@@ -560,41 +687,106 @@ pub async fn get_create_table_ddl(
 ) -> Result<String, String> {
     let manager = state.connection_manager.lock().await;
     
+    println!("=== 获取 DDL: {}.{}.{:?} ===", database, table, schema);
+
     let db_type = manager
         .get_database_type(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
     
-    let sql = match db_type {
+    match db_type {
         DatabaseType::PostgreSQL => {
-            let schema_name = schema.unwrap_or_else(|| "public".to_string());
-            format!("SELECT 'CREATE TABLE ' || schemaname || '.' || tablename || ' (' || array_to_string(array_agg(column_name || ' ' || data_type), ', ') || ')' as \"Create Table\" FROM pg_tables t JOIN information_schema.columns c ON c.table_name = t.tablename AND c.table_schema = t.schemaname WHERE t.schemaname = '{}' AND t.tablename = '{}' GROUP BY schemaname, tablename", schema_name, table)
-        }
-        DatabaseType::MySQL => {
-            format!("SHOW CREATE TABLE `{}`.`{}`", database, table)
-        }
-        _ => {
-            format!("SHOW CREATE TABLE \"{}\"", table)
-        }
-    };
-    
-    let result = manager
-        .execute_query(&connection_id, &sql, Some(&database))
-        .await
-        .map_err(|e| e.to_string())?;
-    
-    if let Some(row) = result.rows.first() {
-        // MySQL 返回的列名通常是 "Create Table"
-        for (key, value) in row {
-            if key.to_lowercase().contains("create") {
-                if let serde_json::Value::String(ddl) = value {
-                    return Ok(ddl.clone());
+            let schema_name = schema.clone().unwrap_or_else(|| "public".to_string());
+            
+            // 1. 首先尝试检查是否为视图
+            let view_sql = format!(
+                "SELECT pg_get_viewdef(c.oid, true) as ddl 
+                 FROM pg_class c 
+                 JOIN pg_namespace n ON n.oid = c.relnamespace 
+                 WHERE n.nspname = '{}' AND c.relname = '{}' AND c.relkind = 'v'",
+                schema_name.replace("'", "''"), table.replace("'", "''")
+            );
+            
+            if let Ok(result) = manager.execute_query(&connection_id, &view_sql, Some(&database)).await {
+                if let Some(row) = result.rows.first() {
+                    if let Some(serde_json::Value::String(definition)) = row.get("ddl") {
+                        println!("识别为视图 DDL");
+                        return Ok(format!("CREATE OR REPLACE VIEW {}.{} AS\n{}", schema_name, table, definition));
+                    }
+                }
+            }
+
+            // 2. 如果不是视图，尝试拼接表 DDL
+            let table_sql = format!(
+                "SELECT 'CREATE TABLE ' || quote_ident(table_schema) || '.' || quote_ident(table_name) || ' (\\n' || 
+                string_agg('  ' || quote_ident(column_name) || ' ' || 
+                (CASE 
+                    WHEN data_type = 'character varying' THEN 'varchar' || (CASE WHEN character_maximum_length IS NOT NULL THEN '(' || character_maximum_length || ')' ELSE '' END)
+                    WHEN data_type = 'character' THEN 'char' || (CASE WHEN character_maximum_length IS NOT NULL THEN '(' || character_maximum_length || ')' ELSE '' END)
+                    WHEN data_type = 'numeric' THEN 'numeric' || (CASE WHEN numeric_precision IS NOT NULL THEN '(' || numeric_precision || ',' || numeric_scale || ')' ELSE '' END)
+                    WHEN data_type = 'USER-DEFINED' THEN udt_name
+                    ELSE data_type 
+                END) || 
+                (CASE WHEN is_nullable = 'NO' THEN ' NOT NULL' ELSE '' END) ||
+                (CASE WHEN column_default IS NOT NULL THEN ' DEFAULT ' || column_default ELSE '' END), ',\\n') || 
+                '\\n);' as ddl 
+                FROM information_schema.columns 
+                WHERE table_schema = '{}' AND table_name = '{}' 
+                GROUP BY table_schema, table_name", 
+                schema_name.replace("'", "''"), table.replace("'", "''")
+            );
+
+            match manager.execute_query(&connection_id, &table_sql, Some(&database)).await {
+                Ok(result) => {
+                    if let Some(row) = result.rows.first() {
+                        if let Some(serde_json::Value::String(ddl)) = row.get("ddl") {
+                            println!("生成表 DDL 成功");
+                            return Ok(ddl.clone());
+                        }
+                    }
+                    println!("查询返回空结果 (表不存在或无列)");
+                    Err(format!("未找到表 {}.{} 的列信息", schema_name, table))
+                },
+                Err(e) => {
+                    println!("查询 DDL 报错: {}", e);
+                    Err(format!("获取 DDL 失败: {}", e))
                 }
             }
         }
+        DatabaseType::MySQL => {
+            let sql = format!("SHOW CREATE TABLE `{}`.`{}`", database, table);
+            let result = manager
+                .execute_query(&connection_id, &sql, Some(&database))
+                .await
+                .map_err(|e| e.to_string())?;
+            
+            if let Some(row) = result.rows.first() {
+                for (key, value) in row {
+                    if key.to_lowercase().contains("create") {
+                        if let serde_json::Value::String(ddl) = value {
+                            return Ok(ddl.clone());
+                        }
+                    }
+                }
+            }
+            Err("获取 MySQL DDL 失败".to_string())
+        }
+        DatabaseType::SQLite => {
+            let sql = format!("SELECT sql as ddl FROM sqlite_master WHERE name = '{}'", table.replace("'", "''"));
+            let result = manager
+                .execute_query(&connection_id, &sql, Some(&database))
+                .await
+                .map_err(|e| e.to_string())?;
+            
+            if let Some(row) = result.rows.first() {
+                if let Some(serde_json::Value::String(ddl)) = row.get("ddl") {
+                    return Ok(ddl.clone());
+                }
+            }
+            Err("获取 SQLite DDL 失败".to_string())
+        }
+        _ => Err("暂不支持该数据库类型的 DDL 获取".to_string())
     }
-    
-    Err("未找到DDL语句".to_string())
 }
 
 /// 自动补全数据结构
