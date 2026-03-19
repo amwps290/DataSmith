@@ -470,18 +470,24 @@ function stopExecution() {
   addMessage('info', '已停止执行')
 }
 
-function formatSql() {
+async function formatSql() {
   if (!editor) return
   const sql = editor.getValue()
-  const formatted = sql
-    .replace(/\bSELECT\b/gi, '\nSELECT')
-    .replace(/\bFROM\b/gi, '\nFROM')
-    .replace(/\bWHERE\b/gi, '\nWHERE')
-    .replace(/\bORDER BY\b/gi, '\nORDER BY')
-    .replace(/\bGROUP BY\b/gi, '\nGROUP BY')
-    .trim()
-  editor.setValue(formatted)
-  message.success('SQL 已格式化')
+  if (!sql.trim()) return
+
+  const connId = props.connectionId || connectionStore.activeConnectionId
+  if (!connId) return message.warning('请先选择一个数据库连接')
+
+  try {
+    const formatted = await invoke<string>('beautify_sql', {
+      connectionId: connId,
+      sql,
+    })
+    editor.setValue(formatted)
+    message.success('SQL 已格式化')
+  } catch (error: any) {
+    message.error(`格式化失败: ${error}`)
+  }
 }
 
 function clearEditor() {

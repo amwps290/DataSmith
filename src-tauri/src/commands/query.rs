@@ -3,6 +3,23 @@ use crate::utils::sql_formatter::SqlFormatter;
 use crate::AppState;
 use tauri::State;
 
+/// 格式化 SQL
+#[tauri::command]
+pub async fn beautify_sql(
+    connection_id: String,
+    sql: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let manager = state.connection_manager.lock().await;
+    
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+        
+    Ok(SqlFormatter::beautify(&sql, &db_type))
+}
+
 /// 执行 SQL 查询
 #[tauri::command]
 pub async fn execute_query(

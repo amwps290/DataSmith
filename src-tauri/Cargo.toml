@@ -61,6 +61,7 @@ rust_xlsxwriter = "0.64"
 
 # SQL 解析
 sqlparser = "0.43"
+sqlformat = "0.2"
 
 # 工具库
 regex = "1.10"

@@ -1,11 +1,23 @@
 use crate::database::DatabaseType;
+use sqlformat::{format, FormatOptions, Indent, QueryParams};
 
-/// SQL 格式化工具，用于适配不同数据库的 SQL 语法
+/// SQL 格式化工具
 pub struct SqlFormatter;
 
 impl SqlFormatter {
-    /// 格式化 SELECT 语句
-    #[allow(dead_code)]
+    /// 美化 SQL 代码
+    pub fn beautify(sql: &str, _db_type: &DatabaseType) -> String {
+        let options = FormatOptions {
+            indent: Indent::Spaces(2),
+            uppercase: true,
+            lines_between_queries: 2,
+        };
+
+        // sqlformat 0.2.x 版本目前采用统一的标准格式化逻辑
+        format(sql, &QueryParams::None, options)
+    }
+
+    /// 格式化 SELECT 语句 (用于自动生成)
     pub fn format_select(
         db_type: &DatabaseType,
         database: &str,
@@ -26,7 +38,8 @@ impl SqlFormatter {
             sql.push_str(&format!(" LIMIT {}", lim));
         }
         
-        sql
+        // 自动生成的 SQL 也可以跑一遍美化
+        Self::beautify(&sql, db_type)
     }
     
     /// 格式化 UPDATE 语句
@@ -47,10 +60,11 @@ impl SqlFormatter {
             "NULL".to_string()
         };
         
-        format!(
+        let sql = format!(
             "UPDATE {} SET {} = {} WHERE {}",
             table_ref, column_ref, value_str, where_clause
-        )
+        );
+        Self::beautify(&sql, db_type)
     }
     
     /// 格式化 INSERT 语句
@@ -68,12 +82,13 @@ impl SqlFormatter {
             .map(|col| Self::quote_identifier(db_type, col))
             .collect();
         
-        format!(
+        let sql = format!(
             "INSERT INTO {} ({}) VALUES ({})",
             table_ref,
             quoted_columns.join(", "),
             values.join(", ")
-        )
+        );
+        Self::beautify(&sql, db_type)
     }
     
     /// 格式化 DELETE 语句
@@ -85,18 +100,17 @@ impl SqlFormatter {
         where_clause: &str,
     ) -> String {
         let table_ref = Self::format_table_ref(db_type, database, table, schema);
-        format!("DELETE FROM {} WHERE {}", table_ref, where_clause)
+        let sql = format!("DELETE FROM {} WHERE {}", table_ref, where_clause);
+        Self::beautify(&sql, db_type)
     }
     
     /// 格式化表引用（database.table 或 table）
     fn format_table_ref(db_type: &DatabaseType, database: &str, table: &str, schema: Option<&str>) -> String {
         match db_type {
             DatabaseType::SQLite => {
-                // SQLite 不使用 database.table 格式，只使用表名
                 Self::quote_identifier(db_type, table)
             }
             DatabaseType::MySQL => {
-                // MySQL 使用 `database`.`table`
                 format!(
                     "{}.{}",
                     Self::quote_identifier(db_type, database),
@@ -104,9 +118,6 @@ impl SqlFormatter {
                 )
             }
             DatabaseType::PostgreSQL => {
-                // PostgreSQL 使用 schema.table 格式
-                // 如果提供了 schema 参数，使用 schema.table
-                // 否则默认使用 public schema
                 let schema_name = schema.unwrap_or("public");
                 format!(
                     "{}.{}",
@@ -114,9 +125,7 @@ impl SqlFormatter {
                     Self::quote_identifier(db_type, table)
                 )
             }
-            // 为未来的数据库类型预留
             _ => {
-                // 默认使用 MySQL 风格
                 format!(
                     "{}.{}",
                     Self::quote_identifier(db_type, database),
@@ -129,24 +138,15 @@ impl SqlFormatter {
     /// 根据数据库类型引用标识符（列名、表名等）
     pub fn quote_identifier(db_type: &DatabaseType, identifier: &str) -> String {
         match db_type {
-            DatabaseType::SQLite => {
-                // SQLite 使用双引号
+            DatabaseType::SQLite | DatabaseType::PostgreSQL => {
                 format!("\"{}\"", identifier)
             }
             DatabaseType::MySQL => {
-                // MySQL 使用反引号
                 format!("`{}`", identifier)
             }
-            DatabaseType::PostgreSQL => {
-                // PostgreSQL 使用双引号
-                format!("\"{}\"", identifier)
-            }
-            // 为未来的数据库类型预留
             _ => {
-                // 默认使用反引号
                 format!("`{}`", identifier)
             }
         }
     }
 }
-

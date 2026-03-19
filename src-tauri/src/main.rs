@@ -39,6 +39,7 @@ fn main() {
             commands::connection::create_connection,
             commands::connection::disconnect_database,
             commands::query::execute_query,
+            commands::query::beautify_sql,
             commands::query::execute_query_paged,
             commands::query::execute_query_batch,
             commands::query::update_table_data,
