@@ -610,6 +610,7 @@ pub struct AutoCompleteData {
 #[derive(Debug, Clone, Serialize)]
 pub struct TableSuggestion {
     pub name: String,
+    pub schema: Option<String>,
     pub database: String,
     pub columns: Vec<ColumnSuggestion>,
 }
@@ -672,6 +673,7 @@ pub async fn get_autocomplete_data(
             
             tables.push(TableSuggestion {
                 name: table_info.name,
+                schema: table_info.schema,
                 database: db_name.clone(),
                 columns,
             });

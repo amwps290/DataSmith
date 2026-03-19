@@ -119,7 +119,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch, ref, computed } from 'vue'
 import * as monaco from 'monaco-editor'
-import { registerSqlCompletionProvider, type SqlCompletionProvider } from '@/services/sqlAutocomplete'
+import { getSqlAutocompleteManager } from '@/services/sqlAutocomplete'
 import { save, open } from '@tauri-apps/plugin-dialog'
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs'
 
@@ -161,7 +161,9 @@ const appStore = useAppStore()
 
 const editorContainer = ref<HTMLElement>()
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
-let completionProvider: SqlCompletionProvider | null = null
+
+// 获取补全管理器单例
+const autocompleteManager = getSqlAutocompleteManager()
 
 // 布局相关
 const editorHeight = ref(300) 
@@ -242,6 +244,20 @@ function startSplitResize(e: MouseEvent) {
   document.addEventListener('mouseup', stopResize)
 }
 
+// 更新补全上下文
+function updateAutocompleteContext() {
+  const model = editor?.getModel()
+  const connId = props.connectionId || connectionStore.activeConnectionId
+  if (model && connId) {
+    const conn = connectionStore.connections.find(c => c.id === connId)
+    autocompleteManager.bindModel(model, {
+      connectionId: connId,
+      database: selectedDatabase.value || null,
+      dbType: conn?.db_type || null
+    })
+  }
+}
+
 async function loadAvailableDatabases() {
   const connId = props.connectionId || connectionStore.activeConnectionId
   if (!connId) return (availableDatabases.value = [])
@@ -260,7 +276,7 @@ async function loadAvailableDatabases() {
 
 function handleDatabaseChange(dbName: string) {
   selectedDatabase.value = dbName
-  if (completionProvider) completionProvider.setCurrentDatabase(dbName || null)
+  updateAutocompleteContext()
 }
 
 onMounted(() => {
@@ -283,12 +299,8 @@ onMounted(() => {
     tabCompletion: 'on',
   })
 
-  completionProvider = registerSqlCompletionProvider()
-  const connId = props.connectionId || connectionStore.activeConnectionId
-  if (connId) {
-    completionProvider.setConnectionId(connId)
-    if (selectedDatabase.value) completionProvider.setCurrentDatabase(selectedDatabase.value)
-  }
+  // 绑定模型到补全管理器
+  updateAutocompleteContext()
 
   editor.onDidChangeModelContent(() => {
     emit('contentChange', editor?.getValue() || '')
@@ -304,6 +316,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  const model = editor?.getModel()
+  if (model) {
+    autocompleteManager.unbindModel(model)
+  }
   editor?.dispose()
   window.removeEventListener('resize', calculateResultHeight)
 })
@@ -313,8 +329,10 @@ watch(() => appStore.theme, (newTheme) => {
 })
 
 watch(() => props.connectionId || connectionStore.activeConnectionId, (newId) => {
-  if (completionProvider && newId) completionProvider.setConnectionId(newId)
-  if (newId) loadAvailableDatabases()
+  if (newId) {
+    updateAutocompleteContext()
+    loadAvailableDatabases()
+  }
 })
 
 async function handleSaveMenuClick(key: string) {
