@@ -13,10 +13,22 @@ pub async fn execute_query(
 ) -> Result<QueryResult, String> {
     let manager = state.connection_manager.lock().await;
     
-    manager
+    println!("=== 执行查询 (ID: {}) ===", connection_id);
+    println!("数据库: {:?}", database);
+    println!("SQL: {}", sql.replace('\n', " ").trim());
+    
+    let result = manager
         .execute_query(&connection_id, &sql, database.as_deref())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            println!("查询执行报错: {}", e);
+            e.to_string()
+        })?;
+        
+    println!("查询成功: 返回 {} 行数据", result.rows.len());
+    println!("===============================");
+    
+    Ok(result)
 }
 
 /// 分页执行 SQL 查询
