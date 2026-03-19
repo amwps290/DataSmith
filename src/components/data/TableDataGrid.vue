@@ -191,9 +191,10 @@ const tableHeight = ref(400) // 默认高度
 
 // 动态计算表格高度
 function updateTableHeight() {
-  // 窗口高度 - header - tabs - toolbar - pagination - padding
-  const height = window.innerHeight - 64 - 40 - 56 - 64 - 40
-  tableHeight.value = Math.max(height, 300)
+  // 窗口高度 - header(64) - tabs(40) - toolbar(56) - pagination(48) - padding/margin(40)
+  const occupiedHeight = 64 + 40 + 56 + 48 + 40
+  const height = window.innerHeight - occupiedHeight
+  tableHeight.value = Math.max(height, 200)
 }
 
 onMounted(() => {
@@ -654,6 +655,7 @@ watch(
   height: 100%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .grid-toolbar {
@@ -663,6 +665,7 @@ watch(
   padding: 12px;
   border-bottom: 1px solid #e8e8e8;
   background: #fafafa;
+  flex-shrink: 0;
 }
 
 .dark-mode .grid-toolbar {
@@ -757,7 +760,68 @@ watch(
   font-style: italic;
 }
 
-/* 表格优化 */
+/* 表格高度自适应与分页固定底部 */
+.data-table {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+:deep(.ant-table-wrapper) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+:deep(.ant-spin-nested-loading) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+:deep(.ant-spin-container) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+:deep(.ant-table) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+:deep(.ant-table-container) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+:deep(.ant-table-content) {
+  flex: 1;
+}
+
+/* 分页组件固定在底部 */
+:deep(.ant-pagination.ant-table-pagination) {
+  margin: 0 !important;
+  padding: 12px 16px !important;
+  background: #fafafa;
+  border-top: 1px solid #f0f0f0;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.dark-mode :deep(.ant-pagination.ant-table-pagination) {
+  background: #1f1f1f;
+  border-top-color: #303030;
+}
+
+/* 表格样式优化 */
 :deep(.ant-table-thead > tr > th) {
   background: #fafafa;
   font-weight: 600;
