@@ -16,9 +16,10 @@
       <div class="search-wrapper">
         <a-input
           v-model:value="searchText"
-          placeholder="搜索连接..."
+          placeholder="搜索连接或数据库对象..."
           size="small"
           :bordered="false"
+          allow-clear
           class="compact-search"
         >
           <template #prefix><SearchOutlined style="color: #bfbfbf" /></template>
@@ -80,6 +81,7 @@
               :ref="el => { if (el) databaseTreeRefs.set(conn.id, el) }"
               :connection-id="conn.id"
               :db-type="conn.db_type"
+              :search-value="searchText"
               @table-selected="(data) => emit('table-selected', { ...data, connectionId: conn.id })"
               @database-selected="(data) => emit('database-selected', { ...data, connectionId: conn.id })"
               @new-query="(data) => emit('new-query', data)"
@@ -169,8 +171,16 @@ const canCreateDatabase = computed(() => {
 const filteredConnections = computed(() => {
   const list = connectionStore.connections
   if (!searchText.value) return list
+  
   const text = searchText.value.toLowerCase()
-  return list.filter(c => c.name.toLowerCase().includes(text) || c.host.toLowerCase().includes(text))
+  return list.filter(c => {
+    // 如果连接名或主机名匹配，直接显示
+    const isMatched = c.name.toLowerCase().includes(text) || c.host.toLowerCase().includes(text)
+    if (isMatched) return true
+    
+    // 如果连接已建立，我们也保留它，让下层的 DatabaseTree 去过滤其内部对象
+    return connectionStore.getConnectionStatus(c.id) === 'connected'
+  })
 })
 
 function handleSelectConnection(conn: ConnectionConfig) {

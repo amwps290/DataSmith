@@ -3,7 +3,7 @@
     <a-spin :spinning="loading" tip="加载中...">
       <div class="custom-tree">
         <div
-          v-for="node in treeData"
+          v-for="node in filteredTreeData"
           :key="node.key"
           class="tree-node-wrapper"
         >
@@ -22,8 +22,8 @@
       </div>
 
       <a-empty
-        v-if="!loading && treeData.length === 0"
-        description="请先选择一个连接"
+        v-if="!loading && filteredTreeData.length === 0"
+        :description="searchValue ? '未找到匹配的对象' : '请先选择一个连接'"
         :image-style="{ height: '60px' }"
       />
     </a-spin>
@@ -313,16 +313,76 @@ interface TreeNode {
 const props = defineProps<{
   connectionId: string | null
   dbType?: string
+  searchValue?: string
 }>()
 
 const emit = defineEmits(['table-selected', 'database-selected', 'new-query', 'design-table', 'view-structure'])
 
-// 判断当前数据库是否支持 SQL
-const isSqlSupported = computed(() => {
-  if (!props.dbType) return true
-  const nonSqlTypes = ['redis', 'mongodb', 'elasticsearch']
-  return !nonSqlTypes.includes(props.dbType.toLowerCase())
+// 递归过滤树节点
+const filterNodes = (nodes: TreeNode[], search: string): TreeNode[] => {
+  if (!search) return nodes
+  
+  const lowSearch = search.toLowerCase()
+  const result: TreeNode[] = []
+  
+  for (const node of nodes) {
+    // 检查子节点是否匹配
+    const filteredChildren = node.children ? filterNodes(node.children, search) : []
+    const hasMatchingChildren = filteredChildren.length > 0
+    
+    // 检查当前节点是否匹配
+    const isSelfMatching = node.title.toLowerCase().includes(lowSearch)
+    
+    if (isSelfMatching || hasMatchingChildren) {
+      // 克隆节点并设置过滤后的子节点
+      result.push({
+        ...node,
+        children: hasMatchingChildren ? filteredChildren : (node.children || []),
+        // 如果是因为子节点匹配而显示，则强制展开
+        isAutoExpanded: hasMatchingChildren
+      })
+    }
+  }
+  
+  return result
+}
+
+// 过滤后的树数据
+const filteredTreeData = computed(() => {
+  return filterNodes(treeData.value, props.searchValue || '')
 })
+
+// 当搜索内容变化时，自动展开匹配的父节点
+watch(() => props.searchValue, (newVal) => {
+  if (!newVal) return
+  
+  const expandMatchingParents = (nodes: TreeNode[]) => {
+    for (const node of nodes) {
+      const lowSearch = newVal.toLowerCase()
+      const hasMatchingChildren = node.children?.some(child => 
+        child.title.toLowerCase().includes(lowSearch) || 
+        (child.children && child.children.length > 0 && hasMatchingChildrenInSubtree(child, lowSearch))
+      )
+      
+      if (hasMatchingChildren) {
+        if (!expandedKeys.value.includes(node.key)) {
+          expandedKeys.value.push(node.key)
+        }
+        if (node.children) expandMatchingParents(node.children)
+      }
+    }
+  }
+  
+  const hasMatchingChildrenInSubtree = (node: TreeNode, search: string): boolean => {
+    return node.children?.some(child => 
+      child.title.toLowerCase().includes(search) || 
+      (child.children && hasMatchingChildrenInSubtree(child, search))
+    ) || false
+  }
+  
+  expandMatchingParents(treeData.value)
+  expandedKeys.value = [...new Set(expandedKeys.value)] // 去重
+}, { immediate: true })
 
 // 判断是否可以删除数据库（SQLite 不支持 DROP DATABASE）
 const canDropDatabase = computed(() => {
