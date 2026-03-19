@@ -1,4 +1,4 @@
-use crate::database::{ColumnInfo, DatabaseInfo, TableInfo, QueryResult, DatabaseType};
+use crate::database::{ColumnInfo, DatabaseInfo, TableInfo, QueryResult, DatabaseType, SchemaInfo, FunctionInfo};
 use crate::AppState;
 use tauri::State;
 
@@ -706,4 +706,185 @@ pub async fn get_autocomplete_data(
         tables,
         keywords,
     })
+}
+
+/// 获取 schema 列表
+#[tauri::command]
+pub async fn get_schemas(
+    connection_id: String,
+    database: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<SchemaInfo>, String> {
+    let manager = state.connection_manager.lock().await;
+
+    manager
+        .get_schemas(&connection_id, database.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 获取指定 schema 下的表列表
+#[tauri::command]
+pub async fn get_schema_tables(
+    connection_id: String,
+    database: String,
+    schema: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<TableInfo>, String> {
+    let manager = state.connection_manager.lock().await;
+
+    // 获取所有表，然后过滤指定 schema 的表
+    let all_tables = manager
+        .get_tables(&connection_id, Some(&database))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(all_tables
+        .into_iter()
+        .filter(|t| t.schema.as_deref() == Some(&schema))
+        .collect())
+}
+
+/// 获取指定 schema 下的视图列表
+#[tauri::command]
+pub async fn get_schema_views(
+    connection_id: String,
+    database: String,
+    schema: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<TableInfo>, String> {
+    let manager = state.connection_manager.lock().await;
+
+    // 获取所有视图，然后过滤指定 schema 的视图
+    let all_views = manager
+        .get_views(&connection_id, Some(&database))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(all_views
+        .into_iter()
+        .filter(|v| v.schema.as_deref() == Some(&schema))
+        .collect())
+}
+
+/// 获取指定 schema 下的函数列表
+#[tauri::command]
+pub async fn get_schema_functions(
+    connection_id: String,
+    database: String,
+    schema: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<FunctionInfo>, String> {
+    let manager = state.connection_manager.lock().await;
+
+    manager
+        .get_functions(&connection_id, Some(&database), Some(&schema))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 获取指定 schema 下的聚合函数列表
+#[tauri::command]
+pub async fn get_schema_aggregate_functions(
+    connection_id: String,
+    database: String,
+    schema: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<FunctionInfo>, String> {
+    let manager = state.connection_manager.lock().await;
+
+    manager
+        .get_aggregate_functions(&connection_id, Some(&database), Some(&schema))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 获取指定 schema 下的索引列表
+#[tauri::command]
+pub async fn get_schema_indexes(
+    connection_id: String,
+    database: String,
+    schema: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let manager = state.connection_manager.lock().await;
+
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let sql = match db_type {
+        DatabaseType::PostgreSQL => {
+            format!(
+                "SELECT
+                    i.relname as index_name,
+                    t.relname as table_name,
+                    a.attname as column_name,
+                    ix.indisunique as is_unique,
+                    ix.indisprimary as is_primary,
+                    am.amname as index_type
+                 FROM pg_class t
+                 JOIN pg_index ix ON t.oid = ix.indrelid
+                 JOIN pg_class i ON i.oid = ix.indexrelid
+                 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+                 JOIN pg_am am ON i.relam = am.oid
+                 JOIN pg_namespace n ON n.oid = t.relnamespace
+                 WHERE n.nspname = '{}'
+                 ORDER BY i.relname, a.attnum",
+                schema.replace("'", "''")
+            )
+        }
+        _ => {
+            return Err("该数据库类型不支持按 schema 获取索引".to_string());
+        }
+    };
+
+    let result = manager
+        .execute_query(&connection_id, &sql, Some(&database))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(result.rows.into_iter().map(|row| serde_json::Value::Object(
+        row.into_iter().collect()
+    )).collect())
+}
+/// 获取数据库的扩展列表 (PostgreSQL)
+#[tauri::command]
+pub async fn get_database_extensions(
+    connection_id: String,
+    database: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let manager = state.connection_manager.lock().await;
+
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let sql = match db_type {
+        DatabaseType::PostgreSQL => {
+            "SELECT
+                e.extname as name,
+                e.extversion as version,
+                n.nspname as schema,
+                obj_description(e.oid, 'pg_extension') as comment
+             FROM pg_extension e
+             JOIN pg_namespace n ON n.oid = e.extnamespace
+             ORDER BY e.extname".to_string()
+        }
+        _ => {
+            return Err("该数据库类型不支持扩展".to_string());
+        }
+    };
+
+    let result = manager
+        .execute_query(&connection_id, &sql, Some(&database))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(result.rows.into_iter().map(|row| serde_json::Value::Object(
+        row.into_iter().collect()
+    )).collect())
 }

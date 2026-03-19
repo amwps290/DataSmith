@@ -209,6 +209,50 @@ impl ConnectionManager {
             .cloned()
             .ok_or_else(|| DbError::ConnectionFailed("连接不存在".to_string()))
     }
+
+    /// 获取 schema 列表
+    pub async fn get_schemas(
+        &self,
+        connection_id: &str,
+        database: Option<&str>,
+    ) -> DbResult<Vec<SchemaInfo>> {
+        let connections = self.connections.read().await;
+        let db = connections
+            .get(connection_id)
+            .ok_or_else(|| DbError::ConnectionFailed("连接不存在".to_string()))?;
+
+        db.get_schemas(database).await
+    }
+
+    /// 获取函数列表
+    pub async fn get_functions(
+        &self,
+        connection_id: &str,
+        database: Option<&str>,
+        schema: Option<&str>,
+    ) -> DbResult<Vec<FunctionInfo>> {
+        let connections = self.connections.read().await;
+        let db = connections
+            .get(connection_id)
+            .ok_or_else(|| DbError::ConnectionFailed("连接不存在".to_string()))?;
+
+        db.get_functions(database, schema).await
+    }
+
+    /// 获取聚合函数列表
+    pub async fn get_aggregate_functions(
+        &self,
+        connection_id: &str,
+        database: Option<&str>,
+        schema: Option<&str>,
+    ) -> DbResult<Vec<FunctionInfo>> {
+        let connections = self.connections.read().await;
+        let db = connections
+            .get(connection_id)
+            .ok_or_else(|| DbError::ConnectionFailed("连接不存在".to_string()))?;
+
+        db.get_aggregate_functions(database, schema).await
+    }
 }
 
 impl Default for ConnectionManager {

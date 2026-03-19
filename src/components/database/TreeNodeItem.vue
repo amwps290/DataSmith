@@ -48,6 +48,13 @@ import {
   LoadingOutlined,
   RightOutlined,
   DownOutlined,
+  AppstoreOutlined,
+  FunctionOutlined,
+  CalculatorOutlined,
+  OrderedListOutlined,
+  ThunderboltOutlined,
+  ApiOutlined,
+  BlockOutlined,
 } from '@ant-design/icons-vue'
 
 interface TreeNode {
@@ -103,18 +110,40 @@ const getIcon = (type: string) => {
   const iconMap: Record<string, any> = {
     connection: DatabaseOutlined,
     database: DatabaseOutlined,
-    tables: FolderOutlined,
+    // PostgreSQL Schema 相关
+    schemas: AppstoreOutlined,
+    schema: AppstoreOutlined,
+    'schema-tables': TableOutlined,
+    'schema-views': EyeOutlined,
+    'schema-functions': FunctionOutlined,
+    'schema-aggregate-functions': CalculatorOutlined,
+    'schema-indexes': OrderedListOutlined,
+    'schema-extensions': BlockOutlined,
+    // 通用对象类型
+    tables: TableOutlined,
     table: TableOutlined,
     views: EyeOutlined,
     view: EyeOutlined,
-    procedures: FolderOutlined,
-    procedure: FileOutlined,
-    functions: FolderOutlined,
-    function: FileOutlined,
-    triggers: FolderOutlined,
-    trigger: FileOutlined,
-    events: FolderOutlined,
+    procedures: ThunderboltOutlined,
+    procedure: ThunderboltOutlined,
+    functions: FunctionOutlined,
+    function: FunctionOutlined,
+    'aggregate-function': CalculatorOutlined,
+    triggers: ApiOutlined,
+    trigger: ApiOutlined,
+    events: FileOutlined,
     event: FileOutlined,
+    indexes: OrderedListOutlined,
+    index: OrderedListOutlined,
+    'database-extensions': BlockOutlined,
+    extensions: BlockOutlined,
+    extension: BlockOutlined,
+    // MongoDB
+    collections: TableOutlined,
+    collection: TableOutlined,
+    // Redis
+    keys: FolderOutlined,
+    'redis-key': FileOutlined,
   }
   return iconMap[type] || FileOutlined
 }

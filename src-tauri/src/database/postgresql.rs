@@ -810,6 +810,155 @@ impl DatabaseOperations for PostgreSqlDatabase {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    /// 获取 schema 列表
+    async fn get_schemas(&self, database: Option<&str>) -> DbResult<Vec<SchemaInfo>> {
+        // 确定使用哪个连接池
+        let pool = if let Some(db_name) = database {
+            let current_db = self.config.as_ref()
+                .and_then(|c| c.database.as_deref())
+                .unwrap_or("postgres");
+
+            if current_db == db_name {
+                self.pool.as_ref()
+                    .ok_or_else(|| DbError::ConnectionFailed("未连接到数据库".to_string()))?
+            } else {
+                let config = self.config.as_ref()
+                    .ok_or_else(|| DbError::ConnectionFailed("连接配置不存在".to_string()))?;
+
+                let mut temp_config = config.clone();
+                temp_config.database = Some(db_name.to_string());
+
+                let temp_connection_string = Self::build_connection_string(&temp_config);
+                let temp_pool = PgPool::connect(&temp_connection_string).await
+                    .map_err(|e| DbError::ConnectionFailed(format!("连接数据库失败: {}", e)))?;
+
+                let rows = sqlx::query(
+                    "SELECT
+                        n.nspname as schema_name,
+                        pg_catalog.pg_get_userbyid(n.nspowner) as owner,
+                        obj_description(n.oid, 'pg_namespace') as comment
+                     FROM pg_catalog.pg_namespace n
+                     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+                       AND n.nspname NOT LIKE 'pg_toast%'
+                       AND n.nspname NOT LIKE 'pg_temp%'
+                     ORDER BY n.nspname"
+                )
+                .fetch_all(&temp_pool)
+                .await
+                .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+                let mut schemas = Vec::new();
+                for row in rows {
+                    schemas.push(SchemaInfo {
+                        name: row.try_get(0).unwrap_or_default(),
+                        owner: row.try_get(1).ok(),
+                        comment: row.try_get(2).ok(),
+                    });
+                }
+
+                temp_pool.close().await;
+                return Ok(schemas);
+            }
+        } else {
+            self.pool.as_ref()
+                .ok_or_else(|| DbError::ConnectionFailed("未连接到数据库".to_string()))?
+        };
+
+        let rows = sqlx::query(
+            "SELECT
+                n.nspname as schema_name,
+                pg_catalog.pg_get_userbyid(n.nspowner) as owner,
+                obj_description(n.oid, 'pg_namespace') as comment
+             FROM pg_catalog.pg_namespace n
+             WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+               AND n.nspname NOT LIKE 'pg_toast%'
+               AND n.nspname NOT LIKE 'pg_temp%'
+             ORDER BY n.nspname"
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+        let mut schemas = Vec::new();
+        for row in rows {
+            schemas.push(SchemaInfo {
+                name: row.try_get(0).unwrap_or_default(),
+                owner: row.try_get(1).ok(),
+                comment: row.try_get(2).ok(),
+            });
+        }
+
+        Ok(schemas)
+    }
+
+    /// 获取函数列表
+    async fn get_functions(&self, database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
+        // 确定使用哪个连接池
+        let pool = if let Some(db_name) = database {
+            let current_db = self.config.as_ref()
+                .and_then(|c| c.database.as_deref())
+                .unwrap_or("postgres");
+
+            if current_db == db_name {
+                self.pool.as_ref()
+                    .ok_or_else(|| DbError::ConnectionFailed("未连接到数据库".to_string()))?
+            } else {
+                let config = self.config.as_ref()
+                    .ok_or_else(|| DbError::ConnectionFailed("连接配置不存在".to_string()))?;
+
+                let mut temp_config = config.clone();
+                temp_config.database = Some(db_name.to_string());
+
+                let temp_connection_string = Self::build_connection_string(&temp_config);
+                let temp_pool = PgPool::connect(&temp_connection_string).await
+                    .map_err(|e| DbError::ConnectionFailed(format!("连接数据库失败: {}", e)))?;
+
+                let result = self.get_functions_with_pool(&temp_pool, schema).await;
+                temp_pool.close().await;
+                return result;
+            }
+        } else {
+            self.pool.as_ref()
+                .ok_or_else(|| DbError::ConnectionFailed("未连接到数据库".to_string()))?
+        };
+
+        self.get_functions_with_pool(pool, schema).await
+    }
+
+    /// 获取聚合函数列表
+    async fn get_aggregate_functions(&self, database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
+        // 确定使用哪个连接池
+        let pool = if let Some(db_name) = database {
+            let current_db = self.config.as_ref()
+                .and_then(|c| c.database.as_deref())
+                .unwrap_or("postgres");
+
+            if current_db == db_name {
+                self.pool.as_ref()
+                    .ok_or_else(|| DbError::ConnectionFailed("未连接到数据库".to_string()))?
+            } else {
+                let config = self.config.as_ref()
+                    .ok_or_else(|| DbError::ConnectionFailed("连接配置不存在".to_string()))?;
+
+                let mut temp_config = config.clone();
+                temp_config.database = Some(db_name.to_string());
+
+                let temp_connection_string = Self::build_connection_string(&temp_config);
+                let temp_pool = PgPool::connect(&temp_connection_string).await
+                    .map_err(|e| DbError::ConnectionFailed(format!("连接数据库失败: {}", e)))?;
+
+                let result = self.get_aggregate_functions_with_pool(&temp_pool, schema).await;
+                temp_pool.close().await;
+                return result;
+            }
+        } else {
+            self.pool.as_ref()
+                .ok_or_else(|| DbError::ConnectionFailed("未连接到数据库".to_string()))?
+        };
+
+        self.get_aggregate_functions_with_pool(pool, schema).await
+    }
 }
 
 impl PostgreSqlDatabase {
@@ -938,7 +1087,107 @@ impl PostgreSqlDatabase {
         if !trimmed.is_empty() {
             statements.push(trimmed.to_string());
         }
-        
+
         statements
+    }
+
+    /// 使用指定连接池获取函数列表
+    async fn get_functions_with_pool(
+        &self,
+        pool: &Pool<Postgres>,
+        schema: Option<&str>,
+    ) -> DbResult<Vec<FunctionInfo>> {
+        let schema_filter = if let Some(s) = schema {
+            format!("AND n.nspname = '{}'", s.replace("'", "''"))
+        } else {
+            "AND n.nspname NOT IN ('pg_catalog', 'information_schema')".to_string()
+        };
+
+        let sql = format!(
+            "SELECT
+                p.proname as function_name,
+                n.nspname as schema_name,
+                pg_catalog.pg_get_function_result(p.oid) as return_type,
+                pg_catalog.pg_get_function_arguments(p.oid) as arguments,
+                l.lanname as language,
+                obj_description(p.oid, 'pg_proc') as comment
+             FROM pg_catalog.pg_proc p
+             JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+             JOIN pg_catalog.pg_language l ON l.oid = p.prolang
+             WHERE p.prokind = 'f'
+               {}
+             ORDER BY n.nspname, p.proname",
+            schema_filter
+        );
+
+        let rows = sqlx::query(&sql)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+        let mut functions = Vec::new();
+        for row in rows {
+            functions.push(FunctionInfo {
+                name: row.try_get(0).unwrap_or_default(),
+                schema: row.try_get(1).ok(),
+                return_type: row.try_get(2).ok(),
+                arguments: row.try_get(3).ok(),
+                language: row.try_get(4).ok(),
+                function_type: "function".to_string(),
+                comment: row.try_get(5).ok(),
+            });
+        }
+
+        Ok(functions)
+    }
+
+    /// 使用指定连接池获取聚合函数列表
+    async fn get_aggregate_functions_with_pool(
+        &self,
+        pool: &Pool<Postgres>,
+        schema: Option<&str>,
+    ) -> DbResult<Vec<FunctionInfo>> {
+        let schema_filter = if let Some(s) = schema {
+            format!("AND n.nspname = '{}'", s.replace("'", "''"))
+        } else {
+            "AND n.nspname NOT IN ('pg_catalog', 'information_schema')".to_string()
+        };
+
+        let sql = format!(
+            "SELECT
+                p.proname as function_name,
+                n.nspname as schema_name,
+                pg_catalog.pg_get_function_result(p.oid) as return_type,
+                pg_catalog.pg_get_function_arguments(p.oid) as arguments,
+                l.lanname as language,
+                obj_description(p.oid, 'pg_proc') as comment
+             FROM pg_catalog.pg_proc p
+             JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+             JOIN pg_catalog.pg_language l ON l.oid = p.prolang
+             WHERE p.prokind = 'a'
+               {}
+             ORDER BY n.nspname, p.proname",
+            schema_filter
+        );
+
+        let rows = sqlx::query(&sql)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+        let mut functions = Vec::new();
+        for row in rows {
+            functions.push(FunctionInfo {
+                name: row.try_get(0).unwrap_or_default(),
+                schema: row.try_get(1).ok(),
+                return_type: row.try_get(2).ok(),
+                arguments: row.try_get(3).ok(),
+                language: row.try_get(4).ok(),
+                function_type: "aggregate".to_string(),
+                comment: row.try_get(5).ok(),
+            });
+        }
+
+        Ok(functions)
     }
 }

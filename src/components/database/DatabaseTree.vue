@@ -499,8 +499,26 @@ async function onLoadData(treeNode: TreeNode): Promise<void> {
           metadata: { database: treeNode.metadata.name },
         },
       ]
+    } else if (props.dbType === 'postgresql') {
+      // PostgreSQL: 显示 Schemas 容器和 Extensions
+      children = [
+        {
+          key: `${treeNode.key}-schemas`,
+          title: 'Schemas',
+          type: 'schemas',
+          isLeaf: false,
+          metadata: { database: treeNode.metadata.name },
+        },
+        {
+          key: `${treeNode.key}-extensions`,
+          title: '扩展',
+          type: 'database-extensions',
+          isLeaf: false,
+          metadata: { database: treeNode.metadata.name },
+        },
+      ]
     } else {
-      // MySQL, PostgreSQL, SQLite: 显示传统的表、视图等
+      // MySQL, SQLite: 显示传统的表、视图等
       children = [
         {
           key: `${treeNode.key}-tables`,
@@ -517,9 +535,9 @@ async function onLoadData(treeNode: TreeNode): Promise<void> {
           metadata: { database: treeNode.metadata.name },
         },
       ]
-      
-      // MySQL 和 PostgreSQL 支持存储过程等
-      if (props.dbType === 'mysql' || props.dbType === 'postgresql') {
+
+      // MySQL 支持存储过程等
+      if (props.dbType === 'mysql') {
         children.push(
           {
             key: `${treeNode.key}-procedures`,
@@ -541,19 +559,15 @@ async function onLoadData(treeNode: TreeNode): Promise<void> {
             type: 'triggers',
             isLeaf: false,
             metadata: { database: treeNode.metadata.name },
+          },
+          {
+            key: `${treeNode.key}-events`,
+            title: '事件',
+            type: 'events',
+            isLeaf: false,
+            metadata: { database: treeNode.metadata.name },
           }
         )
-      }
-      
-      // MySQL 特有的事件
-      if (props.dbType === 'mysql') {
-        children.push({
-          key: `${treeNode.key}-events`,
-          title: '事件',
-          type: 'events',
-          isLeaf: false,
-          metadata: { database: treeNode.metadata.name },
-        })
       }
     }
     
@@ -566,6 +580,377 @@ async function onLoadData(treeNode: TreeNode): Promise<void> {
     console.log('数据库对象分组加载完成')
     return
   }
+
+  // 加载 Schemas 列表 (PostgreSQL)
+  if (treeNode.type === 'schemas') {
+    console.log('=== 开始加载 Schemas 列表 (PostgreSQL) ===')
+    try {
+      const schemas = await invoke<any[]>('get_schemas', {
+        connectionId: props.connectionId,
+        database: treeNode.metadata.database,
+      })
+
+      const children: TreeNode[] = schemas.map((schema) => ({
+        key: `${treeNode.key}-${schema.name}`,
+        title: schema.name,
+        type: 'schema',
+        isLeaf: false,
+        metadata: {
+          name: schema.name,
+          owner: schema.owner,
+          comment: schema.comment,
+          database: treeNode.metadata.database
+        },
+      }))
+
+      if (schemas.length === 0) {
+        children.push({
+          key: `${treeNode.key}-empty`,
+          title: '(无 Schema)',
+          type: 'empty',
+          isLeaf: true,
+          metadata: {},
+        })
+      }
+
+      updateNodeInTree(treeData.value, treeNode.key, (node) => {
+        node.children = children
+      })
+      treeData.value = [...treeData.value]
+      console.log('=== Schemas 列表加载完成 ===')
+    } catch (error: any) {
+      console.error('加载 Schemas 列表失败:', error)
+      message.error(`加载 Schemas 列表失败: ${error}`)
+    }
+    return
+  }
+
+  // 加载 Schema 子节点 (PostgreSQL)
+  if (treeNode.type === 'schema') {
+    console.log('=== 开始加载 Schema 子节点 (PostgreSQL) ===')
+    const children: TreeNode[] = [
+      {
+        key: `${treeNode.key}-tables`,
+        title: '表',
+        type: 'schema-tables',
+        isLeaf: false,
+        metadata: {
+          database: treeNode.metadata.database,
+          schema: treeNode.metadata.name
+        },
+      },
+      {
+        key: `${treeNode.key}-views`,
+        title: '视图',
+        type: 'schema-views',
+        isLeaf: false,
+        metadata: {
+          database: treeNode.metadata.database,
+          schema: treeNode.metadata.name
+        },
+      },
+      {
+        key: `${treeNode.key}-functions`,
+        title: '函数',
+        type: 'schema-functions',
+        isLeaf: false,
+        metadata: {
+          database: treeNode.metadata.database,
+          schema: treeNode.metadata.name
+        },
+      },
+      {
+        key: `${treeNode.key}-aggregate-functions`,
+        title: '聚合函数',
+        type: 'schema-aggregate-functions',
+        isLeaf: false,
+        metadata: {
+          database: treeNode.metadata.database,
+          schema: treeNode.metadata.name
+        },
+      },
+      {
+        key: `${treeNode.key}-indexes`,
+        title: '索引',
+        type: 'schema-indexes',
+        isLeaf: false,
+        metadata: {
+          database: treeNode.metadata.database,
+          schema: treeNode.metadata.name
+        },
+      },
+    ]
+
+    updateNodeInTree(treeData.value, treeNode.key, (node) => {
+      node.children = children
+    })
+    treeData.value = [...treeData.value]
+    console.log('=== Schema 子节点加载完成 ===')
+    return
+  }
+
+  // 加载 Schema 下的表列表 (PostgreSQL)
+  if (treeNode.type === 'schema-tables') {
+    console.log('=== 开始加载 Schema 表列表 (PostgreSQL) ===')
+    try {
+      const tables = await invoke<any[]>('get_schema_tables', {
+        connectionId: props.connectionId,
+        database: treeNode.metadata.database,
+        schema: treeNode.metadata.schema,
+      })
+
+      const children: TreeNode[] = tables.map((table) => ({
+        key: `${treeNode.key}-${table.name}`,
+        title: table.name,
+        type: 'table',
+        isLeaf: true,
+        metadata: {
+          ...table,
+          database: treeNode.metadata.database,
+          schema: treeNode.metadata.schema
+        },
+      }))
+
+      if (tables.length === 0) {
+        children.push({
+          key: `${treeNode.key}-empty`,
+          title: '(无表)',
+          type: 'empty',
+          isLeaf: true,
+          metadata: {},
+        })
+      }
+
+      updateNodeInTree(treeData.value, treeNode.key, (node) => {
+        node.children = children
+      })
+      treeData.value = [...treeData.value]
+      console.log('=== Schema 表列表加载完成 ===')
+    } catch (error: any) {
+      console.error('加载 Schema 表列表失败:', error)
+      message.error(`加载表列表失败: ${error}`)
+    }
+    return
+  }
+
+  // 加载 Schema 下的视图列表 (PostgreSQL)
+  if (treeNode.type === 'schema-views') {
+    console.log('=== 开始加载 Schema 视图列表 (PostgreSQL) ===')
+    try {
+      const views = await invoke<any[]>('get_schema_views', {
+        connectionId: props.connectionId,
+        database: treeNode.metadata.database,
+        schema: treeNode.metadata.schema,
+      })
+
+      const children: TreeNode[] = views.map((view) => ({
+        key: `${treeNode.key}-${view.name}`,
+        title: view.name,
+        type: 'view',
+        isLeaf: true,
+        metadata: {
+          ...view,
+          database: treeNode.metadata.database,
+          schema: treeNode.metadata.schema
+        },
+      }))
+
+      if (views.length === 0) {
+        children.push({
+          key: `${treeNode.key}-empty`,
+          title: '(无视图)',
+          type: 'empty',
+          isLeaf: true,
+          metadata: {},
+        })
+      }
+
+      updateNodeInTree(treeData.value, treeNode.key, (node) => {
+        node.children = children
+      })
+      treeData.value = [...treeData.value]
+      console.log('=== Schema 视图列表加载完成 ===')
+    } catch (error: any) {
+      console.error('加载 Schema 视图列表失败:', error)
+      message.error(`加载视图列表失败: ${error}`)
+    }
+    return
+  }
+
+  // 加载 Schema 下的函数列表 (PostgreSQL)
+  if (treeNode.type === 'schema-functions') {
+    console.log('=== 开始加载 Schema 函数列表 (PostgreSQL) ===')
+    try {
+      const functions = await invoke<any[]>('get_schema_functions', {
+        connectionId: props.connectionId,
+        database: treeNode.metadata.database,
+        schema: treeNode.metadata.schema,
+      })
+
+      const children: TreeNode[] = functions.map((func) => ({
+        key: `${treeNode.key}-${func.name}`,
+        title: func.name,
+        type: 'function',
+        isLeaf: true,
+        metadata: {
+          ...func,
+          database: treeNode.metadata.database,
+          schema: treeNode.metadata.schema
+        },
+      }))
+
+      if (functions.length === 0) {
+        children.push({
+          key: `${treeNode.key}-empty`,
+          title: '(无函数)',
+          type: 'empty',
+          isLeaf: true,
+          metadata: {},
+        })
+      }
+
+      updateNodeInTree(treeData.value, treeNode.key, (node) => {
+        node.children = children
+      })
+      treeData.value = [...treeData.value]
+      console.log('=== Schema 函数列表加载完成 ===')
+    } catch (error: any) {
+      console.error('加载 Schema 函数列表失败:', error)
+      message.error(`加载函数列表失败: ${error}`)
+    }
+    return
+  }
+
+  // 加载 Schema 下的聚合函数列表 (PostgreSQL)
+  if (treeNode.type === 'schema-aggregate-functions') {
+    console.log('=== 开始加载 Schema 聚合函数列表 (PostgreSQL) ===')
+    try {
+      const aggregateFunctions = await invoke<any[]>('get_schema_aggregate_functions', {
+        connectionId: props.connectionId,
+        database: treeNode.metadata.database,
+        schema: treeNode.metadata.schema,
+      })
+
+      const children: TreeNode[] = aggregateFunctions.map((func) => ({
+        key: `${treeNode.key}-${func.name}`,
+        title: func.name,
+        type: 'aggregate-function',
+        isLeaf: true,
+        metadata: {
+          ...func,
+          database: treeNode.metadata.database,
+          schema: treeNode.metadata.schema
+        },
+      }))
+
+      if (aggregateFunctions.length === 0) {
+        children.push({
+          key: `${treeNode.key}-empty`,
+          title: '(无聚合函数)',
+          type: 'empty',
+          isLeaf: true,
+          metadata: {},
+        })
+      }
+
+      updateNodeInTree(treeData.value, treeNode.key, (node) => {
+        node.children = children
+      })
+      treeData.value = [...treeData.value]
+      console.log('=== Schema 聚合函数列表加载完成 ===')
+    } catch (error: any) {
+      console.error('加载 Schema 聚合函数列表失败:', error)
+      message.error(`加载聚合函数列表失败: ${error}`)
+    }
+    return
+  }
+
+  // 加载 Schema 下的索引列表 (PostgreSQL)
+  if (treeNode.type === 'schema-indexes') {
+    console.log('=== 开始加载 Schema 索引列表 (PostgreSQL) ===')
+    try {
+      const indexes = await invoke<any[]>('get_schema_indexes', {
+        connectionId: props.connectionId,
+        database: treeNode.metadata.database,
+        schema: treeNode.metadata.schema,
+      })
+
+      const children: TreeNode[] = indexes.map((index) => ({
+        key: `${treeNode.key}-${index.index_name}`,
+        title: index.index_name,
+        type: 'index',
+        isLeaf: true,
+        metadata: {
+          ...index,
+          database: treeNode.metadata.database,
+          schema: treeNode.metadata.schema
+        },
+      }))
+
+      if (indexes.length === 0) {
+        children.push({
+          key: `${treeNode.key}-empty`,
+          title: '(无索引)',
+          type: 'empty',
+          isLeaf: true,
+          metadata: {},
+        })
+      }
+
+      updateNodeInTree(treeData.value, treeNode.key, (node) => {
+        node.children = children
+      })
+      treeData.value = [...treeData.value]
+      console.log('=== Schema 索引列表加载完成 ===')
+    } catch (error: any) {
+      console.error('加载 Schema 索引列表失败:', error)
+      message.error(`加载索引列表失败: ${error}`)
+    }
+    return
+  }
+
+  // 加载数据库的扩展列表 (PostgreSQL)
+  if (treeNode.type === 'database-extensions') {
+    console.log('=== 开始加载数据库扩展列表 (PostgreSQL) ===')
+    try {
+      const extensions = await invoke<any[]>('get_database_extensions', {
+        connectionId: props.connectionId,
+        database: treeNode.metadata.database,
+      })
+
+      const children: TreeNode[] = extensions.map((ext) => ({
+        key: `${treeNode.key}-${ext.name}`,
+        title: ext.name,
+        type: 'extension',
+        isLeaf: true,
+        metadata: {
+          ...ext,
+          database: treeNode.metadata.database,
+        },
+      }))
+
+      if (extensions.length === 0) {
+        children.push({
+          key: `${treeNode.key}-empty`,
+          title: '(无扩展)',
+          type: 'empty',
+          isLeaf: true,
+          metadata: {},
+        })
+      }
+
+      updateNodeInTree(treeData.value, treeNode.key, (node) => {
+        node.children = children
+      })
+      treeData.value = [...treeData.value]
+      console.log('=== 数据库扩展列表加载完成 ===')
+    } catch (error: any) {
+      console.error('加载数据库扩展列表失败:', error)
+      message.error(`加载扩展列表失败: ${error}`)
+    }
+    return
+  }
+
   // 加载集合列表 (MongoDB)
   if (treeNode.type === 'collections') {
     console.log('=== 开始加载集合列表 (MongoDB) ===')
