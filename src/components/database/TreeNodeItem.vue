@@ -72,6 +72,13 @@ import {
   ClusterOutlined,
   KeyOutlined,
   FieldStringOutlined,
+  NumberOutlined,
+  DotChartOutlined,
+  CalendarOutlined,
+  CheckSquareOutlined,
+  GlobalOutlined,
+  CodeOutlined,
+  ContainerOutlined,
 } from '@ant-design/icons-vue'
 
 interface TreeNode {
@@ -124,7 +131,48 @@ const handleContextMenu = (e: MouseEvent) => {
 
 const getIcon = (type: string) => {
   if (type === 'column') {
-    return props.node.metadata?.is_primary_key ? KeyOutlined : FieldStringOutlined
+    if (props.node.metadata?.is_primary_key) return KeyOutlined
+    
+    const dataType = (props.node.metadata?.data_type || '').toLowerCase()
+    
+    // 整数类型
+    if (dataType.includes('int') || dataType.includes('serial') || dataType.includes('bigint') || dataType.includes('smallint')) {
+      return NumberOutlined
+    }
+
+    // 浮点数/高精度数字类型
+    if (dataType.includes('double') || dataType.includes('float') || 
+        dataType.includes('decimal') || dataType.includes('numeric') || dataType.includes('real') || dataType.includes('precision')) {
+      return DotChartOutlined
+    }
+    
+    // 时间类型
+    if (dataType.includes('date') || dataType.includes('time') || dataType.includes('interval')) {
+      return CalendarOutlined
+    }
+    
+    // 布尔类型
+    if (dataType.includes('bool')) {
+      return CheckSquareOutlined
+    }
+    
+    // 地理空间类型
+    if (dataType.includes('geometry') || dataType.includes('geography') || dataType.includes('geomodel')) {
+      return GlobalOutlined
+    }
+    
+    // JSON/XML 类型
+    if (dataType.includes('json') || dataType.includes('xml')) {
+      return CodeOutlined
+    }
+    
+    // 二进制类型
+    if (dataType.includes('blob') || dataType.includes('binary') || dataType.includes('bytea')) {
+      return ContainerOutlined
+    }
+    
+    // 默认（字符串）
+    return FieldStringOutlined
   }
   
   const iconMap: Record<string, any> = {
@@ -254,6 +302,13 @@ const getIcon = (type: string) => {
 .icon-schema { color: #722ed1; }
 .icon-column { color: #8c8c8c; }
 .icon-column.anticon-key { color: #ffc53d; }
+.icon-column.anticon-number { color: #1890ff; }
+.icon-column.anticon-dot-chart { color: #13c2c2; }
+.icon-column.anticon-calendar { color: #722ed1; }
+.icon-column.anticon-check-square { color: #13c2c2; }
+.icon-column.anticon-global { color: #52c41a; }
+.icon-column.anticon-code { color: #fa8c16; }
+.icon-column.anticon-container { color: #eb2f96; }
 
 .tree-node-content.selected .tree-node-icon {
   color: inherit;
