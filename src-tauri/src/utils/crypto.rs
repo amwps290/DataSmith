@@ -2,12 +2,8 @@ use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
     Aes256Gcm,
 };
-use argon2::{
-    password_hash::{rand_core::RngCore, SaltString},
-    Argon2, PasswordHasher,
-};
+use argon2::password_hash::rand_core::RngCore;
 use base64::{engine::general_purpose, Engine as _};
-use keyring::Entry;
 use std::sync::OnceLock;
 
 static MASTER_KEY: OnceLock<[u8; 32]> = OnceLock::new();

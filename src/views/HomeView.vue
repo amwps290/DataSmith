@@ -297,7 +297,7 @@
 </template>
 
 <script setup lang="ts">
-import { h, reactive, ref, computed, nextTick, watch, onMounted } from 'vue'
+import { h, reactive, ref, computed, nextTick, onMounted } from 'vue'
 import { 
   DatabaseOutlined, BulbOutlined, PlusOutlined, SettingOutlined, LogoutOutlined, 
   MenuOutlined, FileTextOutlined, InfoCircleOutlined, SearchOutlined, 
@@ -306,7 +306,6 @@ import {
   CaretRightOutlined, StopOutlined, SaveOutlined, FolderOpenOutlined,
   FormatPainterOutlined, ClearOutlined, HistoryOutlined, CodeOutlined, ReloadOutlined
 } from '@ant-design/icons-vue'
-import { message } from 'ant-design-vue'
 import { useAppStore } from '@/stores/app'
 import { useConnectionStore } from '@/stores/connection'
 import ConnectionPanel from '@/components/connection/ConnectionPanel.vue'
@@ -330,7 +329,6 @@ const redisEditorRef = ref<any>(null)
 const availableDatabases = ref<any[]>([])
 
 const sidebarWidth = ref(280)
-const isResizing = ref(false)
 
 const isSqlSupported = computed(() => {
   const activeConnection = connectionStore.getActiveConnection()

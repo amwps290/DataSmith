@@ -407,8 +407,6 @@ impl DatabaseOperations for PostgreSqlDatabase {
     }
 
     async fn execute_query(&self, sql: &str, database: Option<&str>) -> DbResult<QueryResult> {
-        let start = Instant::now();
-
         // PostgreSQL 中数据库切换需要重新连接
         // 如果指定了数据库且与当前连接的数据库不同，需要创建临时连接
         let pool = if let Some(db_name) = database {

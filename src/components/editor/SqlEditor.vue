@@ -175,8 +175,6 @@ const resultTabKey = ref('result')
 const showHistory = ref(false)
 const showSaveDialog = ref(false)
 const showSnippets = ref(false)
-const cursorLine = ref(1)
-const cursorColumn = ref(1)
 
 const selectedDatabase = ref(props.initialDatabase || '')
 const availableDatabases = ref<any[]>([])
@@ -291,11 +289,6 @@ onMounted(() => {
     completionProvider.setConnectionId(connId)
     if (selectedDatabase.value) completionProvider.setCurrentDatabase(selectedDatabase.value)
   }
-
-  editor.onDidChangeCursorPosition((e) => {
-    cursorLine.value = e.position.lineNumber
-    cursorColumn.value = e.position.column
-  })
 
   editor.onDidChangeModelContent(() => {
     emit('contentChange', editor?.getValue() || '')
