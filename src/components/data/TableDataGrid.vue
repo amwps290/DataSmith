@@ -198,7 +198,6 @@ function updateTableHeight() {
 }
 
 onMounted(() => {
-  loadData()
   updateTableHeight()
   window.addEventListener('resize', updateTableHeight)
 })
@@ -636,17 +635,13 @@ async function handleExport({ key }: { key: string | number }) {
   }
 }
 
-// 初始加载
-onMounted(() => {
-  loadData()
-})
-
-// 监听表变化
+// 监听表变化并执行初始加载
 watch(
   () => props.table,
   () => {
     loadData()
-  }
+  },
+  { immediate: true }
 )
 </script>
 
