@@ -604,6 +604,7 @@ use serde::Serialize;
 pub struct AutoCompleteData {
     pub databases: Vec<String>,
     pub tables: Vec<TableSuggestion>,
+    pub functions: Vec<FunctionSuggestion>,
     pub keywords: Vec<String>,
 }
 
@@ -613,6 +614,15 @@ pub struct TableSuggestion {
     pub schema: Option<String>,
     pub database: String,
     pub columns: Vec<ColumnSuggestion>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FunctionSuggestion {
+    pub name: String,
+    pub schema: Option<String>,
+    pub database: String,
+    pub return_type: Option<String>,
+    pub arguments: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -640,9 +650,10 @@ pub async fn get_autocomplete_data(
     
     // 获取表和列信息
     let mut tables = Vec::new();
+    let mut functions = Vec::new();
     
-    // 如果指定了数据库，只获取该数据库的表
-    // 否则获取所有数据库的表
+    // 如果指定了数据库，只获取该数据库的表和函数
+    // 否则获取所有数据库的信息
     let target_databases: Vec<String> = if let Some(db) = database {
         vec![db]
     } else {
@@ -678,6 +689,22 @@ pub async fn get_autocomplete_data(
                 columns,
             });
         }
+
+        // 获取该数据库的所有函数
+        let functions_info = manager
+            .get_functions(&connection_id, Some(db_name), None)
+            .await
+            .unwrap_or_default();
+            
+        for func in functions_info {
+            functions.push(FunctionSuggestion {
+                name: func.name,
+                schema: func.schema,
+                database: db_name.clone(),
+                return_type: func.return_type,
+                arguments: func.arguments,
+            });
+        }
     }
     
     // SQL 关键字列表
@@ -706,6 +733,7 @@ pub async fn get_autocomplete_data(
     Ok(AutoCompleteData {
         databases,
         tables,
+        functions,
         keywords,
     })
 }
