@@ -16,6 +16,7 @@
     "@ant-design/icons-vue": "^7.0.1",
     "@tauri-apps/api": "2.5.0",
     "@tauri-apps/plugin-dialog": "2.5.0",
+    "@tauri-apps/plugin-fs": "~2.4.5",
     "@tauri-apps/plugin-store": "^2.0.0",
     "ant-design-vue": "^4.2.0",
     "monaco-editor": "^0.47.0",

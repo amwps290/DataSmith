@@ -44,11 +44,12 @@
       :data-source="dataSource"
       :loading="loading"
       :pagination="pagination"
-      :scroll="{ x: 1200, y: 'calc(100vh - 350px)' }"
+      :scroll="{ x: 'max-content', y: tableHeight }"
       :row-selection="rowSelection"
       :row-key="(record: any) => record.__rowIndex"
       size="small"
       bordered
+      class="data-table"
       @change="handleTableChange"
     >
       <template #bodyCell="{ column, text, record, index }">
@@ -186,6 +187,24 @@ const filterCondition = ref('')
 const limitRows = ref(1000)
 const tableStructure = ref<any[]>([]) // 表结构信息
 const primaryKeys = ref<string[]>([]) // 主键列
+const tableHeight = ref(400) // 默认高度
+
+// 动态计算表格高度
+function updateTableHeight() {
+  // 窗口高度 - header - tabs - toolbar - pagination - padding
+  const height = window.innerHeight - 64 - 40 - 56 - 64 - 40
+  tableHeight.value = Math.max(height, 300)
+}
+
+onMounted(() => {
+  loadData()
+  updateTableHeight()
+  window.addEventListener('resize', updateTableHeight)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateTableHeight)
+})
 
 // 编辑相关
 const editingKey = ref('')
