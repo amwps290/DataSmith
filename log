@@ -1,0 +1,18 @@
+Error: src/components/data/TableDataGrid.vue(205,1): error TS2552: Cannot find name 'onUnmounted'. Did you mean 'onMounted'?
+Error: src/components/editor/SqlEditor.vue(120,10): error TS6133: 'h' is declared but its value is never read.
+Error: src/components/editor/SqlEditor.vue(120,59): error TS6133: 'reactive' is declared but its value is never read.
+Error: src/views/HomeView.vue(189,18): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+Error: src/views/HomeView.vue(190,18): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+Error: src/views/HomeView.vue(191,18): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+Error: src/views/HomeView.vue(196,18): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+Error: src/views/HomeView.vue(197,18): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+Error: src/views/HomeView.vue(198,18): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+beforeBuildCommand `npm run build` failed with exit code 2
+       Error [tauri_cli_node] beforeBuildCommand `npm run build` failed with exit code 2
+Error: Process completed with exit code 1.

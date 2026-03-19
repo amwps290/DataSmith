@@ -117,7 +117,7 @@
 </template>
 
 <script setup lang="ts">
-import { h, onMounted, onUnmounted, watch, ref, computed, reactive } from 'vue'
+import { onMounted, onUnmounted, watch, ref, computed } from 'vue'
 import * as monaco from 'monaco-editor'
 import { registerSqlCompletionProvider, type SqlCompletionProvider } from '@/services/sqlAutocomplete'
 import { save, open } from '@tauri-apps/plugin-dialog'

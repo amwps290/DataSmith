@@ -186,16 +186,16 @@
               />
               <TableDataGrid
                 v-else-if="tab.type === 'data'"
-                :connection-id="tab.connectionId"
-                :database="tab.database"
-                :table="tab.table"
+                :connection-id="tab.connectionId!"
+                :database="tab.database!"
+                :table="tab.table!"
                 :schema="tab.schema"
               />
               <TableDesigner
                 v-else-if="tab.type === 'design'"
-                :connection-id="tab.connectionId"
-                :database="tab.database"
-                :table="tab.table"
+                :connection-id="tab.connectionId!"
+                :database="tab.database!"
+                :table="tab.table!"
                 :schema="tab.schema"
               />
               <RedisEditor
