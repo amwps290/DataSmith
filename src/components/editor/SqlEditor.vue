@@ -140,21 +140,18 @@ const props = defineProps<{
   initialDatabase?: string; 
   initialValue?: string; 
   filePath?: string;
-  tabId?: string; // 增加 Tab ID 传入
+  tabId?: string;
 }>()
 
 const emit = defineEmits(['contentChange', 'fileSaved', 'databasesLoaded'])
 const connectionStore = useConnectionStore()
 const appStore = useAppStore()
 
-// 1. 生成唯一的会话 ID
 const internalSessionId = ref(props.tabId || props.filePath || `editor-${Math.random().toString(36).substring(2, 9)}`)
 
-// 2. 计算复合连接 ID (用于后端路由到独立会话)
 const sessionConnectionId = computed(() => {
   const baseId = props.connectionId || connectionStore.activeConnectionId
   if (!baseId) return ''
-  // 将路径中的特殊字符清理，防止 ID 冲突
   const sid = internalSessionId.value.replace(/[^a-zA-Z0-9]/g, '_')
   return `${baseId}:tab_${sid}`
 })
@@ -225,27 +222,63 @@ async function executeQuery() {
   await fetchPageData(false)
 }
 
+/**
+ * 获取待执行的 SQL
+ * 逻辑：优先获取选中的文本，如果没有选中则获取全文
+ */
+function getTargetSql(): { sql: string; isSelection: boolean } {
+  if (!editor) return { sql: '', isSelection: false }
+  
+  const selection = editor.getSelection()
+  const model = editor.getModel()
+  
+  if (selection && model && !selection.isEmpty()) {
+    const selectedText = model.getValueInRange(selection).trim()
+    if (selectedText) {
+      return { sql: selectedText, isSelection: true }
+    }
+  }
+  
+  return { sql: editor.getValue().trim(), isSelection: false }
+}
+
 async function fetchPageData(isAppend: boolean) {
-  const connId = sessionConnectionId.value // 使用带隔离的 Session ID
+  const connId = sessionConnectionId.value
   if (!connId) return
-  const sql = editor?.getValue().trim()
+  
+  const { sql, isSelection } = getTargetSql()
   if (!sql) return message.warning('请输入 SQL')
 
   if (isAppend) loadingMore.value = true
-  else executing.value = true
+  else {
+    executing.value = true
+    if (isSelection) {
+      addMessage('info', '正在执行选中部分 SQL...')
+    }
+  }
 
   try {
     const result = await invoke<QueryResult>('execute_query_paged', {
-      connectionId: connId, sql, database: selectedDatabase.value || null, page: currentPage.value, pageSize: pageSize.value,
+      connectionId: connId, 
+      sql, 
+      database: selectedDatabase.value || null, 
+      page: currentPage.value, 
+      pageSize: pageSize.value,
     })
     
     hasMore.value = result.rows.length === pageSize.value
 
     if (!isAppend) {
       queryResults.value = [result]
-      gridOptions.columns = result.columns.map(col => ({ field: col, title: col, minWidth: 150, showOverflow: true, slots: { default: 'cell_default' } }))
+      gridOptions.columns = result.columns.map(col => ({ 
+        field: col, 
+        title: col, 
+        minWidth: 150, 
+        showOverflow: true, 
+        slots: { default: 'cell_default' } 
+      }))
       gridOptions.data = result.rows
-      addMessage('success', `查询成功 (${result.affected_rows} 行)`)
+      addMessage('success', `查询成功 (${result.affected_rows} 行)${isSelection ? ' [执行选中部分]' : ''}`)
       saveToHistory(sql)
     } else {
       gridOptions.data = [...(gridOptions.data || []), ...result.rows]
@@ -267,11 +300,24 @@ function stopExecution() { executing.value = false; addMessage('info', '已停�
 
 async function formatSql() {
   if (!editor) return
-  const sql = editor.getValue(), connId = sessionConnectionId.value
-  if (!sql.trim() || !connId) return
+  const { sql, isSelection } = getTargetSql()
+  const connId = sessionConnectionId.value
+  if (!sql || !connId) return
+  
   try { 
-    const formatted = await invoke<string>('beautify_sql', { connectionId: connId, sql }); 
-    editor.setValue(formatted) 
+    const formatted = await invoke<string>('beautify_sql', { connectionId: connId, sql })
+    
+    if (isSelection) {
+      const selection = editor.getSelection()!
+      editor.executeEdits('format-selection', [{
+        range: selection,
+        text: formatted,
+        forceMoveMarkers: true
+      }])
+    } else {
+      editor.setValue(formatted)
+    }
+    message.success('格式化完成')
   } catch (e: any) { 
     message.error(e) 
   }
@@ -323,7 +369,6 @@ function updateAutocompleteContext() {
 }
 
 async function loadAvailableDatabases() { 
-  // 获取数据库列表通常使用 Metadata 连接即可
   const baseId = props.connectionId || connectionStore.activeConnectionId; 
   if (!baseId) return; 
   loadingDatabases.value = true; 
