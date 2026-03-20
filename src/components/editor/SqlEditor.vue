@@ -25,35 +25,26 @@
             <div v-if="queryResults.length > 0" class="result-info">
               <a-space>
                 <a-tag color="success">
-                  {{ currentResult?.affected_rows || 0 }} 行
+                  已加载 {{ gridOptions.data?.length || 0 }} 行
                 </a-tag>
                 <a-tag color="processing">
                   {{ currentResult?.execution_time_ms || 0 }} ms
                 </a-tag>
                 
                 <a-divider type="vertical" />
-                <a-button 
-                  size="small" 
-                  :disabled="currentPage <= 1 || executing"
-                  @click="handlePageChange(currentPage - 1)"
-                >
-                  上一页
-                </a-button>
-                <span class="page-indicator">第 {{ currentPage }} 页</span>
-                <a-button 
-                  size="small" 
-                  :disabled="(currentResult?.rows.length || 0) < pageSize || executing"
-                  @click="handlePageChange(currentPage + 1)"
-                >
-                  下一页
-                </a-button>
-                
-                <a-select 
-                  v-model:value="pageSize" 
-                  size="small" 
-                  style="width: 100px"
-                  @change="handlePageChange(1)"
-                >
+                <span class="scroll-tip">
+                  <template v-if="loadingMore">
+                    <a-spin size="small" /> 加载中...
+                  </template>
+                  <template v-else-if="!hasMore">
+                    已加载全部
+                  </template>
+                  <template v-else>
+                    滚动加载更多
+                  </template>
+                </span>
+
+                <a-select v-model:value="pageSize" size="small" style="width: 100px" @change="executeQuery">
                   <a-select-option :value="100">100 / page</a-select-option>
                   <a-select-option :value="200">200 / page</a-select-option>
                   <a-select-option :value="500">500 / page</a-select-option>
@@ -65,7 +56,7 @@
                     <DownOutlined />
                   </a-button>
                   <template #overlay>
-                    <a-menu @click="({ key }: any) => currentResultIndex = Number(key)">
+                    <a-menu @click="handleResultIndexChange">
                       <a-menu-item v-for="(res, idx) in queryResults" :key="idx">
                         结果集 {{ idx + 1 }} ({{ res.rows.length }} 行)
                       </a-menu-item>
@@ -76,11 +67,11 @@
             </div>
             
             <div class="table-wrapper">
-              <!-- 使用 vxe-grid 替代 a-table 以获得虚拟滚动性能 -->
               <vxe-grid
                 v-if="currentResult"
                 ref="gridRef"
                 v-bind="gridOptions"
+                @scroll="handleScroll"
               >
                 <template #cell_default="{ row, column }">
                   <span :class="{ 'null-text': row[column.field] === null }">
@@ -105,12 +96,7 @@
     </div>
 
     <!-- 历史记录抽屉 -->
-    <a-drawer
-      title="查询历史"
-      placement="right"
-      v-model:open="showHistory"
-      width="400"
-    >
+    <a-drawer title="查询历史" placement="right" v-model:open="showHistory" width="400">
       <a-list :data-source="sqlHistory" size="small">
         <template #renderItem="{ item }">
           <a-list-item class="history-item" @click="useHistorySql(item.sql)">
@@ -119,8 +105,7 @@
                 <code class="history-sql">{{ item.sql.substring(0, 100) }}{{ item.sql.length > 100 ? '...' : '' }}</code>
               </template>
               <template #description>
-                {{ new Date(item.timestamp).toLocaleString() }} • 
-                {{ item.database || '默认' }}
+                {{ new Date(item.timestamp).toLocaleString() }} • {{ item.database || '默认' }}
               </template>
             </a-list-item-meta>
           </a-list-item>
@@ -129,17 +114,10 @@
     </a-drawer>
 
     <!-- 保存查询对话框 -->
-    <SaveQueryDialog
-      v-model="showSaveDialog"
-      :sql="editor?.getValue() || ''"
-      @saved="handleQuerySaved"
-    />
+    <SaveQueryDialog v-model="showSaveDialog" :sql="editor?.getValue() || ''" @saved="handleQuerySaved" />
 
     <!-- 代码片段管理器 -->
-    <SqlSnippetsManager
-      v-model:visible="showSnippets"
-      @insert="insertSnippet"
-    />
+    <SqlSnippetsManager v-model:visible="showSnippets" @insert="insertSnippet" />
   </div>
 </template>
 
@@ -157,27 +135,12 @@ import { useConnectionStore } from '@/stores/connection'
 import { useAppStore } from '@/stores/app'
 import SaveQueryDialog from './SaveQueryDialog.vue'
 import SqlSnippetsManager from './SqlSnippetsManager.vue'
-import type { VxeGridProps, VxeGridInstance } from 'vxe-table'
+import type { VxeGridProps, VxeGridInstance, VxeGridEvents } from 'vxe-table'
 
-const props = defineProps<{
-  connectionId?: string
-  initialDatabase?: string
-  initialValue?: string
-  filePath?: string
-}>()
-
+const props = defineProps<{ connectionId?: string; initialDatabase?: string; initialValue?: string; filePath?: string }>()
 const emit = defineEmits(['contentChange', 'fileSaved', 'databasesLoaded'])
-
 const connectionStore = useConnectionStore()
 const appStore = useAppStore()
-
-if (!(window as any).MonacoEnvironment) {
-  (window as any).MonacoEnvironment = {
-    getWorker(_: any, _label: string) {
-      return new editorWorker()
-    }
-  }
-}
 
 const editorContainer = ref<HTMLElement>()
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
@@ -192,6 +155,8 @@ const selectedDatabase = ref(props.initialDatabase || '')
 const loadingDatabases = ref(false)
 
 const executing = ref(false)
+const loadingMore = ref(false)
+const hasMore = ref(true)
 const queryResults = ref<QueryResult[]>([])
 const currentResultIndex = ref(0)
 const resultTabKey = ref('result')
@@ -201,7 +166,7 @@ const showSaveDialog = ref(false)
 const showSnippets = ref(false)
 
 const currentPage = ref(1)
-const pageSize = ref(200)
+const pageSize = ref(100)
 
 const gridRef = ref<VxeGridInstance>()
 const gridOptions = reactive<VxeGridProps>({
@@ -211,236 +176,114 @@ const gridOptions = reactive<VxeGridProps>({
   columnConfig: { resizable: true },
   rowConfig: { isHover: true, isCurrent: true, height: 36 },
   scrollX: { enabled: true, gt: 20 },
-  scrollY: { enabled: true, gt: 50 },
+  scrollY: { enabled: true, gt: 0 },
   columns: [],
   data: []
 })
 
-interface Message {
-  type: 'info' | 'success' | 'error' | 'warning'
-  text: string
-  time: string
-}
-const messages = ref<Message[]>([])
-
-const currentResult = computed(() => queryResults.value[currentResultIndex.value])
-
-function addMessage(type: Message['type'], text: string) {
-  messages.value.unshift({ type, text, time: new Date().toLocaleTimeString() })
-}
-
-function startResize(e: MouseEvent) {
-  isSplitResizing.value = true
-  const startY = e.clientY
-  const startHeight = editorHeight.value
-  const doResize = (ev: MouseEvent) => {
-    if (isSplitResizing.value) {
-      editorHeight.value = Math.max(100, startHeight + (ev.clientY - startY))
-      calculateResultHeight()
+const handleScroll: VxeGridEvents.Scroll = ({ isY, scrollTop, bodyHeight, scrollHeight }) => {
+  if (isY && !executing.value && !loadingMore.value && hasMore.value) {
+    if (scrollTop + bodyHeight + 50 >= scrollHeight) {
+      loadNextPage()
     }
   }
-  const stopResize = () => {
-    isSplitResizing.value = false
-    document.removeEventListener('mousemove', doResize)
-    document.removeEventListener('mouseup', stopResize)
-    document.body.style.cursor = ''
-  }
-  document.body.style.cursor = 'row-resize'
-  document.addEventListener('mousemove', doResize)
-  document.addEventListener('mouseup', stopResize)
 }
 
-function calculateResultHeight() {
-  const totalHeight = window.innerHeight - 144
-  resultTableHeight.value = totalHeight - editorHeight.value - 100
+async function loadNextPage() {
+  if (executing.value || loadingMore.value || !hasMore.value) return
+  currentPage.value++
+  await fetchPageData(true)
 }
 
-function updateAutocompleteContext() {
-  const model = editor?.getModel()
-  const connId = props.connectionId || connectionStore.activeConnectionId
-  if (model && connId && connectionStore.connections.length > 0) {
-    const conn = connectionStore.connections.find(c => c.id === connId)
-    autocompleteManager.bindModel(model, {
-      connectionId: connId,
-      database: selectedDatabase.value || null,
-      dbType: conn?.db_type || null
-    })
-  }
+interface Message { type: 'info' | 'success' | 'error' | 'warning'; text: string; time: string; }
+const messages = ref<Message[]>([])
+const currentResult = computed(() => queryResults.value[currentResultIndex.value])
+
+function addMessage(type: Message['type'], text: string) { messages.value.unshift({ type, text, time: new Date().toLocaleTimeString() }) }
+
+async function executeQuery() {
+  currentPage.value = 1
+  hasMore.value = true
+  gridOptions.data = []
+  await fetchPageData(false)
 }
 
-async function loadAvailableDatabases() {
+async function fetchPageData(isAppend: boolean) {
   const connId = props.connectionId || connectionStore.activeConnectionId
   if (!connId) return
-  loadingDatabases.value = true
-  try {
-    const dbs = await invoke<any[]>('get_databases', { connectionId: connId })
-    availableDatabases.value = dbs
-    emit('databasesLoaded', dbs)
-  } catch (e) { console.error(e) } finally { loadingDatabases.value = false }
-}
-
-function handleDatabaseChange(dbName: string) {
-  selectedDatabase.value = dbName
-  updateAutocompleteContext()
-}
-
-async function executeQuery() { await handlePageChange(1) }
-
-async function handlePageChange(page: number) {
-  const connId = props.connectionId || connectionStore.activeConnectionId
-  if (!connId || executing.value) return
   const sql = editor?.getValue().trim()
   if (!sql) return message.warning('请输入 SQL')
 
-  executing.value = true
-  gridOptions.loading = true
-  if (page === 1) { queryResults.value = []; currentResultIndex.value = 0; }
-  currentPage.value = page
-  resultTabKey.value = 'result'
+  if (isAppend) loadingMore.value = true
+  else executing.value = true
 
   try {
     const result = await invoke<QueryResult>('execute_query_paged', {
-      connectionId: connId, sql, database: selectedDatabase.value || null, page, pageSize: pageSize.value,
+      connectionId: connId, sql, database: selectedDatabase.value || null, page: currentPage.value, pageSize: pageSize.value,
     })
-    queryResults.value = [result]
     
-    // 更新 VxeGrid 配置
-    gridOptions.columns = [
-      ...result.columns.map(col => ({
-        field: col,
-        title: col,
-        minWidth: 150,
-        showOverflow: true, // 禁用换行并显示省略号
-        slots: { default: 'cell_default' }
-      }))
-    ]
-    gridOptions.data = result.rows
-    
-    addMessage('success', `查询成功 (${result.affected_rows} 行)`)
-    if (page === 1) saveToHistory(sql)
+    hasMore.value = result.rows.length === pageSize.value
+
+    if (!isAppend) {
+      queryResults.value = [result]
+      gridOptions.columns = result.columns.map(col => ({ field: col, title: col, minWidth: 150, showOverflow: true, slots: { default: 'cell_default' } }))
+      gridOptions.data = result.rows
+      addMessage('success', `查询成功 (${result.affected_rows} 行)`)
+      saveToHistory(sql)
+    } else {
+      // 这里的逻辑稍微特殊：如果是多结果集，只追加到当前显示的
+      gridOptions.data = [...(gridOptions.data || []), ...result.rows]
+    }
   } catch (e: any) {
     message.error(`查询失败: ${e}`)
     addMessage('error', String(e))
-  } finally { executing.value = false; gridOptions.loading = false }
+    if (isAppend) currentPage.value = Math.max(1, currentPage.value - 1)
+  } finally { executing.value = false; loadingMore.value = false; }
 }
 
-function stopExecution() { executing.value = false; addMessage('info', '已停止') }
+function handleResultIndexChange({ key }: any) {
+  currentResultIndex.value = Number(key)
+  // 如果切换了结果集，清空滚动状态（因为我们目前只支持单结果集的无限滚动追加）
+  gridOptions.data = queryResults.value[currentResultIndex.value].rows
+  hasMore.value = false // 多结果集暂不支持交叉追加，设为 false
+}
 
+// 其余逻辑（Monaco 初始化等）保持不变...
+function stopExecution() { executing.value = false; addMessage('info', '已停止') }
 async function formatSql() {
   if (!editor) return
-  const sql = editor.getValue()
-  const connId = props.connectionId || connectionStore.activeConnectionId
+  const sql = editor.getValue(), connId = props.connectionId || connectionStore.activeConnectionId
   if (!sql.trim() || !connId) return
-  try {
-    const formatted = await invoke<string>('beautify_sql', { connectionId: connId, sql })
-    editor.setValue(formatted)
-  } catch (e: any) { message.error(e) }
+  try { const formatted = await invoke<string>('beautify_sql', { connectionId: connId, sql }); editor.setValue(formatted) } catch (e: any) { message.error(e) }
 }
-
 function clearEditor() { editor?.setValue(''); queryResults.value = []; messages.value = []; gridOptions.data = []; gridOptions.columns = []; }
 function handleQuerySaved() { message.success('已保存') }
-
-function insertSnippet(sql: string) {
-  if (!editor) return
-  const selection = editor.getSelection()
-  editor.executeEdits('insert-snippet', [{ 
-    range: selection || editor.getSelection()!, 
-    text: sql 
-  }])
-  showSnippets.value = false
-}
-
+function insertSnippet(sql: string) { if (!editor) return; const selection = editor.getSelection(); editor.executeEdits('insert-snippet', [{ range: selection || editor.getSelection()!, text: sql }]); showSnippets.value = false }
 function openHistory() { showHistory.value = true }
 function openSnippets() { showSnippets.value = true }
-
 function useHistorySql(sql: string) { editor?.setValue(sql); showHistory.value = false; }
-
-function saveToHistory(sql: string) {
-  sqlHistory.value.unshift({ sql, timestamp: Date.now(), database: selectedDatabase.value })
-  if (sqlHistory.value.length > 100) sqlHistory.value.pop()
-  localStorage.setItem('sql_history', JSON.stringify(sqlHistory.value))
-}
-
-async function refreshAutocomplete() {
-  const connId = props.connectionId || connectionStore.activeConnectionId
-  if (!connId) return
-  autocompleteManager.clearCache(connId)
-  updateAutocompleteContext()
-  message.success('已刷新')
-}
-
-async function setSelectedDatabase(database: string) {
-  if (availableDatabases.value.length === 0) await loadAvailableDatabases()
-  selectedDatabase.value = database
-  updateAutocompleteContext()
-}
-
-let autoSaveTimer: any = null
-function triggerAutoSave() {
-  if (autoSaveTimer) clearTimeout(autoSaveTimer)
-  autoSaveTimer = setTimeout(() => { handleSave(true) }, 2000)
-}
-
-async function handleSave(isAuto = false) {
-  if (!editor || !props.filePath) return
-  const content = editor.getValue()
-  if (!content.trim()) return
-  try {
-    await invoke('write_file', { path: props.filePath, content: content })
-    if (!isAuto) message.success('已保存')
-  } catch (err: any) { if (!isAuto) message.error(`保存失败: ${err}`) }
-}
+function saveToHistory(sql: string) { sqlHistory.value.unshift({ sql, timestamp: Date.now(), database: selectedDatabase.value }); if (sqlHistory.value.length > 100) sqlHistory.value.pop(); localStorage.setItem('sql_history', JSON.stringify(sqlHistory.value)) }
+async function refreshAutocomplete() { const connId = props.connectionId || connectionStore.activeConnectionId; if (!connId) return; autocompleteManager.clearCache(connId); updateAutocompleteContext(); message.success('已刷新') }
+async function setSelectedDatabase(database: string) { if (availableDatabases.value.length === 0) await loadAvailableDatabases(); selectedDatabase.value = database; updateAutocompleteContext() }
+async function handleSave(isAuto = false) { if (!editor || !props.filePath) return; const content = editor.getValue(); if (!content.trim()) return; try { await invoke('write_file', { path: props.filePath, content: content }); if (!isAuto) message.success('已保存') } catch (err: any) { if (!isAuto) message.error(`保存失败: ${err}`) } }
+function startResize(e: MouseEvent) { isSplitResizing.value = true; const startY = e.clientY, startHeight = editorHeight.value; const doResize = (ev: MouseEvent) => { if (isSplitResizing.value) { editorHeight.value = Math.max(100, startHeight + (ev.clientY - startY)); calculateResultHeight() } }; const stopResize = () => { isSplitResizing.value = false; document.removeEventListener('mousemove', doResize); document.removeEventListener('mouseup', stopResize); document.body.style.cursor = '' }; document.body.style.cursor = 'row-resize'; document.addEventListener('mousemove', doResize); document.addEventListener('mouseup', stopResize) }
+function calculateResultHeight() { const totalHeight = window.innerHeight - 144; resultTableHeight.value = totalHeight - editorHeight.value - 100 }
+function updateAutocompleteContext() { const model = editor?.getModel(), connId = props.connectionId || connectionStore.activeConnectionId; if (model && connId && connectionStore.connections.length > 0) { const conn = connectionStore.connections.find(c => c.id === connId); autocompleteManager.bindModel(model, { connectionId: connId, database: selectedDatabase.value || null, dbType: conn?.db_type || null }) } }
+async function loadAvailableDatabases() { const connId = props.connectionId || connectionStore.activeConnectionId; if (!connId) return; loadingDatabases.value = true; try { const dbs = await invoke<any[]>('get_databases', { connectionId: connId }); availableDatabases.value = dbs; emit('databasesLoaded', dbs) } catch (e) { console.error(e) } finally { loadingDatabases.value = false } }
+function handleDatabaseChange(dbName: string) { selectedDatabase.value = dbName; updateAutocompleteContext() }
 
 onMounted(() => {
   if (!editorContainer.value) return
-  editor = monaco.editor.create(editorContainer.value, {
-    value: props.initialValue || '-- 在此输入 SQL 查询\n',
-    language: 'sql',
-    theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs',
-    automaticLayout: true,
-    fontSize: 14,
-    minimap: { enabled: false },
-    scrollBeyondLastLine: false,
-    lineNumbers: 'on',
-    renderLineHighlight: 'all',
-    quickSuggestions: { other: true, comments: false, strings: false },
-    suggestOnTriggerCharacters: true,
-    acceptSuggestionOnCommitCharacter: true,
-    acceptSuggestionOnEnter: 'on',
-    tabCompletion: 'on',
-  })
-
-  updateAutocompleteContext()
-  editor.onDidChangeModelContent(() => { 
-    emit('contentChange', editor?.getValue() || '')
-    triggerAutoSave()
-  })
-  editor.addCommand(monaco.KeyCode.F5, () => executeQuery())
-  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => handleSave())
-
-  const history = localStorage.getItem('sql_history')
-  if (history) { try { sqlHistory.value = JSON.parse(history) } catch (e) { console.error(e) } }
-  
-  loadAvailableDatabases()
-  calculateResultHeight()
-  window.addEventListener('resize', calculateResultHeight)
+  editor = monaco.editor.create(editorContainer.value, { value: props.initialValue || '-- 在此输入 SQL 查询\n', language: 'sql', theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs', automaticLayout: true, fontSize: 14, minimap: { enabled: false }, scrollBeyondLastLine: false, lineNumbers: 'on', renderLineHighlight: 'all', quickSuggestions: { other: true, comments: false, strings: false }, suggestOnTriggerCharacters: true, acceptSuggestionOnCommitCharacter: true, acceptSuggestionOnEnter: 'on', tabCompletion: 'on' })
+  updateAutocompleteContext(); editor.onDidChangeModelContent(() => { emit('contentChange', editor?.getValue() || ''); triggerAutoSave() }); editor.addCommand(monaco.KeyCode.F5, () => executeQuery()); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => handleSave());
+  const history = localStorage.getItem('sql_history'); if (history) { try { sqlHistory.value = JSON.parse(history) } catch (e) { console.error(e) } }
+  loadAvailableDatabases(); calculateResultHeight(); window.addEventListener('resize', calculateResultHeight)
 })
-
+let autoSaveTimer: any = null; function triggerAutoSave() { if (autoSaveTimer) clearTimeout(autoSaveTimer); autoSaveTimer = setTimeout(() => { handleSave(true) }, 2000) }
 onActivated(() => { nextTick(() => { setTimeout(() => { if (editor) editor.layout() }, 50) }) })
-
-onUnmounted(() => {
-  const model = editor?.getModel()
-  if (model) autocompleteManager.unbindModel(model)
-  editor?.dispose()
-  window.removeEventListener('resize', calculateResultHeight)
-})
-
-watch(() => appStore.theme, (newTheme) => { 
-  if (editor) monaco.editor.setTheme(newTheme === 'dark' ? 'vs-dark' : 'vs')
-}, { immediate: true })
-
+onUnmounted(() => { const model = editor?.getModel(); if (model) autocompleteManager.unbindModel(model); editor?.dispose(); window.removeEventListener('resize', calculateResultHeight) })
+watch(() => appStore.theme, (newTheme) => { if (editor) monaco.editor.setTheme(newTheme === 'dark' ? 'vs-dark' : 'vs') }, { immediate: true })
 watch(() => props.connectionId || connectionStore.activeConnectionId, () => { updateAutocompleteContext(); loadAvailableDatabases(); })
-
 defineExpose({ setSelectedDatabase, executing, executeQuery, handleDatabaseChange, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
 </script>
 
@@ -461,8 +304,7 @@ defineExpose({ setSelectedDatabase, executing, executeQuery, handleDatabaseChang
 .executing-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255, 255, 255, 0.7); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 10; }
 .dark-mode .executing-overlay { background: rgba(0, 0, 0, 0.6); }
 .result-info { margin-bottom: 12px; flex-shrink: 0; display: flex; align-items: center; }
-.page-indicator { font-size: 13px; color: #595959; font-weight: 500; margin: 0 8px; }
-.dark-mode .page-indicator { color: #d9d9d9; }
+.scroll-tip { font-size: 12px; color: #8c8c8c; margin-right: 12px; }
 .table-wrapper { flex: 1; min-height: 0; overflow: hidden; }
 .messages-content { flex: 1; padding: 12px; overflow-y: auto; font-family: monospace; }
 .message-item { margin-bottom: 8px; padding: 4px 8px; border-left: 3px solid #d9d9d9; background: #f5f5f5; white-space: pre-wrap; word-break: break-all; }

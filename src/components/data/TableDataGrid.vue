@@ -2,7 +2,7 @@
   <div class="table-data-grid">
     <div class="grid-toolbar">
       <a-space>
-        <a-button :icon="h(ReloadOutlined)" @click="loadData" :loading="loading">
+        <a-button :icon="h(ReloadOutlined)" @click="refresh" :loading="loading">
           刷新
         </a-button>
         <a-button :icon="h(PlusOutlined)" @click="addRow">
@@ -35,20 +35,26 @@
       </a-space>
       
       <div class="toolbar-right">
-        <div class="pagination-info">
-          第 {{ pagination.current }} 页 (每页 {{ pagination.pageSize }} 条)
-          <a-divider type="vertical" />
-          <a-button-group size="small">
-            <a-button :disabled="pagination.current <= 1" @click="changePage(-1)"><LeftOutlined /></a-button>
-            <a-button :disabled="!hasMore" @click="changePage(1)"><RightOutlined /></a-button>
-          </a-button-group>
+        <div class="data-info">
+          已加载 {{ gridOptions.data?.length || 0 }} 行
+          <span v-if="loading" class="loading-text">
+            <a-spin size="small" style="margin-left: 8px" /> 加载中...
+          </span>
+          <span v-else-if="!hasMore" class="end-text"> (已加载全部)</span>
         </div>
       </div>
     </div>
 
-    <!-- 高性能虚拟滚动表格 -->
+    <!-- 高性能虚拟滚动表格 + 滚动加载 -->
     <div class="grid-wrapper">
-      <vxe-grid ref="gridRef" v-bind="gridOptions" @cell-dblclick="handleCellDblClick" @checkbox-change="handleCheckboxChange" @checkbox-all="handleCheckboxChange">
+      <vxe-grid 
+        ref="gridRef" 
+        v-bind="gridOptions" 
+        @cell-dblclick="handleCellDblClick" 
+        @checkbox-change="handleCheckboxChange" 
+        @checkbox-all="handleCheckboxChange"
+        @scroll="handleScroll"
+      >
         <template #cell_default="{ row, column }">
           <span :class="{ 'null-text': row[column.field] === null }">
             {{ row[column.field] === null ? 'NULL' : row[column.field] }}
@@ -57,14 +63,8 @@
       </vxe-grid>
     </div>
 
-    <!-- 单元格编辑器 (弹窗式以处理大数据内容) -->
-    <a-modal
-      v-model:open="showEditor"
-      :title="`编辑单元格: ${editingField}`"
-      @ok="saveEdit"
-      width="600px"
-      :confirm-loading="saving"
-    >
+    <!-- 单元格编辑器 -->
+    <a-modal v-model:open="showEditor" :title="`编辑单元格: ${editingField}`" @ok="saveEdit" width="600px" :confirm-loading="saving">
       <a-form layout="vertical">
         <a-form-item label="当前值">
           <a-textarea v-model:value="editingValue" :rows="8" class="editor-textarea" />
@@ -85,28 +85,27 @@
 </template>
 
 <script setup lang="ts">
-import { h, ref, onMounted, onUnmounted, watch, computed, reactive } from 'vue'
+import { h, ref, watch, computed, reactive } from 'vue'
 import {
   ReloadOutlined, PlusOutlined, DeleteOutlined, FilterOutlined,
-  ExportOutlined, LeftOutlined, RightOutlined
+  ExportOutlined
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { QueryResult } from '@/types/database'
 import { useConnectionStore } from '@/stores/connection'
-import type { VxeGridProps, VxeGridInstance } from 'vxe-table'
+import type { VxeGridProps, VxeGridInstance, VxeGridEvents } from 'vxe-table'
 
 const props = defineProps<{ connectionId: string; database: string; table: string; schema?: string }>()
 const connectionStore = useConnectionStore()
 const gridRef = ref<VxeGridInstance>()
 
 const loading = ref(false)
-const hasMore = ref(false)
+const hasMore = ref(true)
 const selectedRowKeys = ref<any[]>([])
 const showFilterDialog = ref(false)
 const filterCondition = ref('')
 const primaryKeys = ref<string[]>([])
-const tableHeight = ref(400)
 
 const pagination = reactive({ current: 1, pageSize: 100 })
 
@@ -122,23 +121,45 @@ const gridOptions = reactive<VxeGridProps>({
   rowConfig: { isCurrent: true, isHover: true, keyField: '__rowIndex', height: 36 },
   checkboxConfig: { reserve: true, trigger: 'cell' },
   scrollX: { enabled: true, gt: 20 },
-  scrollY: { enabled: true, gt: 50 }, // 开启纵向虚拟滚动
+  scrollY: { enabled: true, gt: 0 }, // 必须开启虚拟滚动以支持大数据追加
   columns: [],
   data: []
 })
 
-function updateHeight() { tableHeight.value = window.innerHeight - 200 }
-onMounted(() => { updateHeight(); window.addEventListener('resize', updateHeight); })
-onUnmounted(() => { window.removeEventListener('resize', updateHeight) })
+// 滚动触发加载
+const handleScroll: VxeGridEvents.Scroll = ({ isY, scrollTop, bodyHeight, scrollHeight }) => {
+  if (isY && !loading.value && hasMore.value) {
+    // 距离底部 50px 时加载
+    if (scrollTop + bodyHeight + 50 >= scrollHeight) {
+      loadNextPage()
+    }
+  }
+}
 
-async function loadData() {
+async function refresh() {
+  pagination.current = 1
+  hasMore.value = true
+  gridOptions.data = []
+  await loadData(false)
+}
+
+async function loadNextPage() {
+  if (loading.value || !hasMore.value) return
+  pagination.current++
+  await loadData(true)
+}
+
+async function loadData(isAppend: boolean) {
   if (!props.table) return
   loading.value = true
-  gridOptions.loading = true
+  if (!isAppend) gridOptions.loading = true
+  
   try {
     // 获取主键
-    const struct = await invoke<any[]>('get_table_structure', { connectionId: props.connectionId, table: props.table, schema: props.schema || props.database, database: props.database })
-    primaryKeys.value = struct.filter(c => c.is_primary_key).map(c => c.name)
+    if (primaryKeys.value.length === 0) {
+      const struct = await invoke<any[]>('get_table_structure', { connectionId: props.connectionId, table: props.table, schema: props.schema || props.database, database: props.database })
+      primaryKeys.value = struct.filter(c => c.is_primary_key).map(c => c.name)
+    }
 
     const offset = (pagination.current - 1) * pagination.pageSize
     let sql = `SELECT * FROM ${tableRef()}`
@@ -146,20 +167,31 @@ async function loadData() {
     sql += ` LIMIT ${pagination.pageSize} OFFSET ${offset}`
     
     const result = await invoke<QueryResult>('execute_query', { connectionId: props.connectionId, sql, database: props.database })
+    
+    // 如果返回的数据少于页大小，说明没有更多了
     hasMore.value = result.rows.length === pagination.pageSize
 
-    gridOptions.columns = [
-      { type: 'checkbox', width: 50, fixed: 'left' },
-      ...result.columns.map(col => ({ 
-        field: col, 
-        title: col, 
-        minWidth: 120, 
-        showOverflow: true, // 禁用换行并显示省略号
-        slots: { default: 'cell_default' } 
-      }))
-    ]
-    gridOptions.data = result.rows.map((row, i) => ({ __rowIndex: offset + i, ...row }))
-  } catch (e: any) { message.error(e) } finally { loading.value = false; gridOptions.loading = false }
+    if (!isAppend) {
+      gridOptions.columns = [
+        { type: 'checkbox', width: 50, fixed: 'left' },
+        ...result.columns.map(col => ({ 
+          field: col, title: col, minWidth: 120, showOverflow: true, slots: { default: 'cell_default' } 
+        }))
+      ]
+      gridOptions.data = result.rows.map((row, i) => ({ __rowIndex: i, ...row }))
+    } else {
+      // 追加模式
+      const currentCount = gridOptions.data?.length || 0
+      const newRows = result.rows.map((row, i) => ({ __rowIndex: currentCount + i, ...row }))
+      gridOptions.data = [...(gridOptions.data || []), ...newRows]
+    }
+  } catch (e: any) { 
+    message.error(e) 
+    pagination.current = Math.max(1, pagination.current - 1)
+  } finally { 
+    loading.value = false
+    gridOptions.loading = false 
+  }
 }
 
 function handleCheckboxChange() {
@@ -167,10 +199,9 @@ function handleCheckboxChange() {
   selectedRowKeys.value = records.map((r: any) => r.__rowIndex)
 }
 
-function changePage(delta: number) { pagination.current += delta; loadData() }
-function applyFilter() { showFilterDialog.value = false; pagination.current = 1; loadData() }
+function applyFilter() { showFilterDialog.value = false; refresh() }
 
-// 编辑逻辑
+// 编辑与删除逻辑保持不变 (已适配)
 const showEditor = ref(false), editingField = ref(''), editingRow = ref<any>(null), editingValue = ref(''), isSetNull = ref(false), saving = ref(false)
 function handleCellDblClick({ row, column }: any) {
   if (column.type === 'checkbox' || column.type === 'seq') return
@@ -207,7 +238,7 @@ async function deleteSelected() {
           }).join(' AND ')
           await invoke('delete_table_data', { connectionId: props.connectionId, database: props.database, table: props.table, schema: props.schema, whereClause: where })
         }
-        message.success('删除成功'); loadData()
+        message.success('删除成功'); refresh()
       } catch (e: any) { message.error(e) }
     }
   })
@@ -221,7 +252,7 @@ async function handleExport({ key }: any) {
   } catch (e: any) { message.error(e) }
 }
 
-watch(() => props.table, () => { pagination.current = 1; loadData() }, { immediate: true })
+watch(() => props.table, () => { refresh() }, { immediate: true })
 </script>
 
 <style scoped>
@@ -231,7 +262,9 @@ watch(() => props.table, () => { pagination.current = 1; loadData() }, { immedia
 .grid-wrapper { flex: 1; min-height: 0; padding: 4px; background: #fff; }
 .dark-mode .grid-wrapper { background: #1f1f1f; }
 .toolbar-right { display: flex; align-items: center; }
-.pagination-info { font-size: 12px; color: #8c8c8c; }
+.data-info { font-size: 12px; color: #8c8c8c; }
+.loading-text { color: #1890ff; font-weight: 500; }
+.end-text { color: #bfbfbf; }
 .null-text { color: #bfbfbf; font-style: italic; }
 .editor-textarea { font-family: monospace; }
 </style>
