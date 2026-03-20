@@ -76,6 +76,7 @@ fn main() {
             commands::workspace::save_session,
             commands::workspace::load_session,
             commands::workspace::list_db_scripts,
+            commands::workspace::create_db_script,
             commands::workspace::get_db_scripts_dir,
             commands::export::export_to_csv,
             commands::export::export_to_json,

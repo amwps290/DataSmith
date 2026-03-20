@@ -47,11 +47,7 @@
     </a-layout-header>
 
     <a-layout-content class="content-container">
-      <!-- 左侧：连接管理器 -->
-      <div 
-        class="sidebar-wrapper" 
-        :style="{ width: appStore.sidebarCollapsed ? '0' : sidebarWidth + 'px' }"
-      >
+      <div class="sidebar-wrapper" :style="{ width: appStore.sidebarCollapsed ? '0' : sidebarWidth + 'px' }">
         <div class="sidebar-inner">
           <ConnectionPanel 
             @add-connection="showConnectionDialog = true"
@@ -66,16 +62,9 @@
         </div>
       </div>
 
-      <!-- 拖拽调整器 -->
-      <div 
-        v-if="!appStore.sidebarCollapsed"
-        class="sidebar-resizer"
-        @mousedown="startResize"
-      ></div>
+      <div v-if="!appStore.sidebarCollapsed" class="sidebar-resizer" @mousedown="startResize"></div>
 
-      <!-- 右侧：主工作区 -->
       <div class="main-workspace">
-        <!-- 全局 SQL 工具栏 (紧凑版) -->
         <div v-if="activeTabType === 'query'" class="global-sql-toolbar">
           <div class="toolbar-left">
             <a-space :size="2">
@@ -84,6 +73,10 @@
               </a-tooltip>
               <a-tooltip title="停止">
                 <a-button type="text" size="small" :icon="h(StopOutlined)" @click="callActiveEditor('stopExecution')" :disabled="!activeEditorExecuting" />
+              </a-tooltip>
+              <a-divider type="vertical" />
+              <a-tooltip title="保存 (Ctrl+S)">
+                <a-button type="text" size="small" :icon="h(SaveOutlined)" @click="callActiveEditor('handleSave')" />
               </a-tooltip>
               <a-divider type="vertical" />
               <a-tooltip title="格式化 SQL">
@@ -106,35 +99,16 @@
           <div class="toolbar-right">
             <a-space>
               <span class="db-label">DB:</span>
-              <a-select
-                v-model:value="activeTabDatabase"
-                placeholder="选择数据库"
-                size="small"
-                style="width: 140px"
-                @change="handleToolbarDbChange"
-              >
+              <a-select v-model:value="activeTabDatabase" placeholder="选择数据库" size="small" style="width: 140px" @change="handleToolbarDbChange">
                 <a-select-option value="">默认</a-select-option>
-                <a-select-option v-for="db in availableDatabases" :key="db.name" :value="db.name">
-                  {{ db.name }}
-                </a-select-option>
+                <a-select-option v-for="db in availableDatabases" :key="db.name" :value="db.name">{{ db.name }}</a-select-option>
               </a-select>
             </a-space>
           </div>
         </div>
 
-        <!-- 标签页 -->
-        <a-tabs 
-          v-model:activeKey="mainTabKey" 
-          type="editable-card" 
-          size="small"
-          @edit="onTabEdit"
-          class="workspace-tabs"
-        >
-          <a-tab-pane
-            v-for="tab in dataTabs"
-            :key="tab.key"
-            :closable="tab.closable !== false"
-          >
+        <a-tabs v-model:activeKey="mainTabKey" type="editable-card" size="small" @edit="onTabEdit" class="workspace-tabs">
+          <a-tab-pane v-for="tab in dataTabs" :key="tab.key" :closable="tab.closable !== false">
             <template #tab>
               <span class="tab-title" @contextmenu.prevent="handleTabContextMenu($event, tab.key, tab.closable !== false)">
                 <FileTextOutlined v-if="tab.type === 'query'" />
@@ -143,99 +117,59 @@
                 <span class="title-text">{{ tab.title }}</span>
               </span>
             </template>
-            
             <div class="tab-content-wrapper">
-              <KeepAlive><SqlEditor v-if="tab.type === 'query'" :key="tab.key" :ref="(el) => setSqlEditorRef(el, tab.key)" :connection-id="tab.connectionId" :initial-database="tab.database" :initial-value="tab.content" :file-path="tab.filePath" @content-change="(val) => handleContentChange(tab.key, val)" @file-saved="(path, title) => handleFileSaved(tab.key, path, title)" @databases-loaded="(dbs) => availableDatabases = dbs" /><TableDataGrid v-else-if="tab.type === 'data'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" /><TableDesigner v-else-if="tab.type === 'design'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" :read-only="tab.readOnly" /><RedisEditor v-else-if="tab.type === 'redis'" :key="tab.key" :ref="redisEditorRef" /></KeepAlive>
+              <KeepAlive>
+                <SqlEditor v-if="tab.type === 'query'" :key="tab.key" :ref="(el) => setSqlEditorRef(el, tab.key)" :connection-id="tab.connectionId" :initial-database="tab.database" :initial-value="tab.content" :file-path="tab.filePath" @content-change="(val) => handleContentChange(tab.key, val)" @file-saved="(path, title) => handleFileSaved(tab.key, path, title)" @databases-loaded="(dbs) => availableDatabases = dbs" />
+                <TableDataGrid v-else-if="tab.type === 'data'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" />
+                <TableDesigner v-else-if="tab.type === 'design'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" :read-only="tab.readOnly" />
+                <RedisEditor v-else-if="tab.type === 'redis'" :key="tab.key" :ref="redisEditorRef" />
+              </KeepAlive>
             </div>
           </a-tab-pane>
         </a-tabs>
 
-        <!-- 空状态 -->
         <div v-if="dataTabs.length === 0" class="empty-workspace">
           <a-empty description="从左侧选择表开始探索">
-            <template #extra>
-              <a-button type="primary" @click="handleNewQuery({})">新建查询 (Ctrl+N)</a-button>
-            </template>
+            <template #extra><a-button type="primary" @click="handleNewQuery({})">新建查询 (Ctrl+N)</a-button></template>
           </a-empty>
         </div>
       </div>
     </a-layout-content>
 
-    <!-- 右键菜单 -->
     <a-dropdown :open="contextMenuVisible" :trigger="['contextmenu']">
-      <div 
-        v-if="contextMenuVisible"
-        class="context-menu-overlay"
-        @click="contextMenuVisible = false"
-        :style="{ left: contextMenuPosition.x + 'px', top: contextMenuPosition.y + 'px' }"
-      ></div>
+      <div v-if="contextMenuVisible" class="context-menu-overlay" @click="contextMenuVisible = false" :style="{ left: contextMenuPosition.x + 'px', top: contextMenuPosition.y + 'px' }"></div>
       <template #overlay>
         <a-menu @click="handleContextMenuClick" class="context-menu">
-          <a-menu-item key="close">
-            <CloseOutlined />
-            关闭当前标签
-          </a-menu-item>
-          <a-menu-item key="closeOthers" :disabled="dataTabs.length <= 1">
-            <CloseCircleOutlined />
-            关闭其他标签
-          </a-menu-item>
-          <a-menu-item key="closeAll" :disabled="dataTabs.length === 0">
-            <CloseSquareOutlined />
-            关闭所有标签
-          </a-menu-item>
+          <a-menu-item key="close"><CloseOutlined />关闭当前标签</a-menu-item>
+          <a-menu-item key="closeOthers" :disabled="dataTabs.length <= 1"><CloseCircleOutlined />关闭其他标签</a-menu-item>
+          <a-menu-item key="closeAll" :disabled="dataTabs.length === 0"><CloseSquareOutlined />关闭所有标签</a-menu-item>
           <a-menu-divider />
-          <a-menu-item key="closeLeft" :disabled="!hasTabsOnLeft">
-            <VerticalRightOutlined />
-            关闭左侧标签
-          </a-menu-item>
-          <a-menu-item key="closeRight" :disabled="!hasTabsOnRight">
-            <VerticalLeftOutlined />
-            关闭右侧标签
-          </a-menu-item>
+          <a-menu-item key="closeLeft" :disabled="!hasTabsOnLeft"><VerticalRightOutlined />关闭左侧标签</a-menu-item>
+          <a-menu-item key="closeRight" :disabled="!hasTabsOnRight"><VerticalLeftOutlined />关闭右侧标签</a-menu-item>
         </a-menu>
       </template>
     </a-dropdown>
 
-    <!-- 连接对话框 -->
-    <ConnectionDialog 
-      v-model:visible="showConnectionDialog" 
-      :editing-connection="editingConnection"
-      @close="editingConnection = null"
-    />
-
-    <!-- 设置对话框 -->
-    <a-modal
-      v-model:open="showSettings"
-      title="设置"
-      @ok="handleSaveSettings"
-    >
+    <ConnectionDialog v-model:visible="showConnectionDialog" :editing-connection="editingConnection" @close="editingConnection = null" />
+    <a-modal v-model:open="showSettings" title="设置" @ok="handleSaveSettings">
       <a-form :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
         <a-form-item label="主题">
-          <a-radio-group v-model:value="settingsForm.theme">
-            <a-radio value="light">明亮</a-radio>
-            <a-radio value="dark">暗色</a-radio>
-          </a-radio-group>
+          <a-radio-group v-model:value="settingsForm.theme"><a-radio value="light">明亮</a-radio><a-radio value="dark">暗色</a-radio></a-radio-group>
         </a-form-item>
       </a-form>
     </a-modal>
-
-    <!-- 全局搜索 -->
-    <GlobalSearch
-      v-model:visible="showGlobalSearch"
-      :connection-id="connectionStore.activeConnectionId"
-      @view-data="handleTableSelected"
-    />
+    <GlobalSearch v-model:visible="showGlobalSearch" :connection-id="connectionStore.activeConnectionId" @view-data="handleTableSelected" />
   </a-layout>
 </template>
 
 <script setup lang="ts">
-import { h, reactive, ref, computed, nextTick, onMounted } from 'vue'
+import { h, reactive, ref, computed, nextTick, onMounted, watch } from 'vue'
 import { 
   DatabaseOutlined, BulbOutlined, PlusOutlined, SettingOutlined, 
   MenuOutlined, FileTextOutlined, SearchOutlined, 
   CloseOutlined, CloseCircleOutlined, CloseSquareOutlined, 
   VerticalRightOutlined, VerticalLeftOutlined, TableOutlined, EditOutlined,
-  CaretRightOutlined, StopOutlined,
+  CaretRightOutlined, StopOutlined, SaveOutlined,
   FormatPainterOutlined, ClearOutlined, HistoryOutlined, CodeOutlined, ReloadOutlined
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
@@ -248,6 +182,8 @@ import RedisEditor from '@/components/editor/RedisEditor.vue'
 import TableDataGrid from '@/components/data/TableDataGrid.vue'
 import TableDesigner from '@/components/database/TableDesigner.vue'
 import GlobalSearch from '@/components/search/GlobalSearch.vue'
+import { invoke } from '@tauri-apps/api/core'
+import { message } from 'ant-design-vue'
 
 const appStore = useAppStore()
 const connectionStore = useConnectionStore()
@@ -260,67 +196,44 @@ const editingConnection = ref<any>(null)
 const sqlEditorRefs = reactive<Record<string, any>>({})
 const redisEditorRef = ref<any>(null)
 const availableDatabases = ref<any[]>([])
-
 const sidebarWidth = ref(280)
 
 const isSqlSupported = computed(() => {
   const activeConnection = connectionStore.getActiveConnection()
-  if (!activeConnection) return true
-  return !['redis', 'mongodb', 'elasticsearch'].includes(activeConnection.db_type)
+  return activeConnection ? !['redis', 'mongodb', 'elasticsearch'].includes(activeConnection.db_type) : true
 })
 
 interface DataTab {
   key: string; title: string; type: 'data' | 'design' | 'query' | 'redis';
   connectionId?: string; database?: string; table?: string; schema?: string;
-  content?: string; filePath?: string; closable?: boolean;
-  readOnly?: boolean;
+  content?: string; filePath?: string; closable?: boolean; readOnly?: boolean;
 }
 const dataTabs = ref<DataTab[]>([])
 
-// 监听标签页变化，自动保存会话
-watch([dataTabs, mainTabKey], () => {
-  workspaceStore.saveSession(dataTabs.value as any, mainTabKey.value)
-}, { deep: true })
+watch([dataTabs, mainTabKey], () => { workspaceStore.saveSession(dataTabs.value as any, mainTabKey.value) }, { deep: true })
 
-// 恢复会话
 async function restoreSession() {
+  console.log('[Restore] 开始恢复会话...')
   workspaceStore.isRestoring = true
   try {
     const session = await workspaceStore.loadSession()
     if (session && session.open_tabs.length > 0) {
-      dataTabs.value = session.open_tabs.map(t => ({
-        ...t,
-        type: (t as any).tab_type || t.type // 后端返回的是 tab_type
-      })) as any
-      
+      dataTabs.value = session.open_tabs.map(t => ({ ...t, type: (t as any).tab_type || t.type })) as any
       mainTabKey.value = session.active_tab_key
+      console.log(`[Restore] 加载了 ${dataTabs.value.length} 个标签页`)
       
-      // 自动连接数据库
-      const connectionIds = [...new Set(dataTabs.value.map(t => t.connectionId).filter(Boolean))]
+      if (connectionStore.connections.length === 0) await connectionStore.fetchConnections()
+      
+      const connectionIds = [...new Set(dataTabs.value.map(t => t.connectionId).filter(Boolean))] as string[]
       for (const id of connectionIds) {
-        // 等待连接列表加载完成
-        if (connectionStore.connections.length === 0) {
-          await connectionStore.fetchConnections()
-        }
-        
         const conn = connectionStore.connections.find(c => c.id === id)
         if (conn) {
-          try {
-            await connectionStore.connectToDatabase(conn.id)
-          } catch (e) {
-            console.warn(`自动重连失败 (${conn.name}):`, e)
-          }
+          console.log(`[Restore] 自动重连数据库: ${conn.name}`)
+          connectionStore.connectToDatabase(conn.id).catch(e => console.warn(`自动重连失败 (${conn.name}):`, e))
         }
       }
-    } else {
-      if (isSqlSupported.value) handleNewQuery({})
-    }
-  } catch (e) {
-    console.error('恢复会话失败:', e)
-    if (isSqlSupported.value) handleNewQuery({})
-  } finally {
-    workspaceStore.isRestoring = false
-  }
+    } else if (isSqlSupported.value) { handleNewQuery({}) }
+  } catch (e) { console.error('恢复失败:', e); if (isSqlSupported.value) handleNewQuery({}) } finally { workspaceStore.isRestoring = false }
 }
 
 const activeTabType = computed(() => dataTabs.value.find(t => t.key === mainTabKey.value)?.type)
@@ -330,86 +243,32 @@ const activeTabDatabase = computed({
 })
 const activeEditorExecuting = computed(() => sqlEditorRefs[mainTabKey.value]?.executing || false)
 
-function callActiveEditor(method: string, ...args: any[]) {
-  const editor = sqlEditorRefs[mainTabKey.value]
-  if (editor && editor[method]) editor[method](...args)
-}
-
+function callActiveEditor(method: string, ...args: any[]) { const editor = sqlEditorRefs[mainTabKey.value]; if (editor && editor[method]) editor[method](...args) }
 function handleToolbarDbChange(val: any) { callActiveEditor('handleDatabaseChange', String(val || '')) }
-
-onMounted(() => {
-  restoreSession()
-})
-
+onMounted(() => { restoreSession() })
 function setSqlEditorRef(el: any, key: string) { if (el) sqlEditorRefs[key] = el; else delete sqlEditorRefs[key]; }
 function handleContentChange(key: string, val: string) { const t = dataTabs.value.find(t => t.key === key); if (t) t.content = val; }
 function handleFileSaved(key: string, path: string, title: string) {
   const t = dataTabs.value.find(t => t.key === key); if (t) { t.filePath = path; t.title = title; }
 }
-
-// 打开已保存的脚本
-function handleOpenSavedScript(data: any) {
-  handleNewQuery(data)
+function handleOpenSavedScript(data: any) { handleNewQuery(data) }
+function handleViewStructure(data: any) {
+  const key = `structure-${data.connectionId}-${data.database}-${data.table}`
+  if (dataTabs.value.some(t => t.key === key)) { mainTabKey.value = key; return; }
+  dataTabs.value.push({ key, title: `结构: ${data.table}`, type: 'design', ...data, readOnly: true })
+  mainTabKey.value = key
+}
+function handleDesignTable(data: any) {
+  const key = `design-${data.connectionId}-${data.database}-${data.table}`
+  if (dataTabs.value.some(t => t.key === key)) { mainTabKey.value = key; return; }
+  dataTabs.value.push({ key, title: `设计: ${data.table}`, type: 'design', ...data, readOnly: false })
+  mainTabKey.value = key
 }
 
-// 查看表结构
-function handleViewStructure(data: { connectionId: string, database: string, table: string, schema?: string }) {
-  const tabKey = `structure-${data.connectionId}-${data.database}-${data.table}`
-  const existingTab = dataTabs.value.find(t => t.key === tabKey)
-  
-  if (existingTab) {
-    mainTabKey.value = tabKey
-  } else {
-    dataTabs.value.push({
-      key: tabKey,
-      title: `结构: ${data.table}`,
-      type: 'design',
-      connectionId: data.connectionId,
-      database: data.database,
-      table: data.table,
-      schema: data.schema,
-      readOnly: true
-    })
-    mainTabKey.value = tabKey
-  }
-}
-
-// 设计表
-function handleDesignTable(data: { connectionId: string, database: string, table: string, schema?: string }) {
-  const tabKey = `design-${data.connectionId}-${data.database}-${data.table}`
-  const existingTab = dataTabs.value.find(t => t.key === tabKey)
-  
-  if (existingTab) {
-    mainTabKey.value = tabKey
-  } else {
-    dataTabs.value.push({
-      key: tabKey,
-      title: `设计: ${data.table}`,
-      type: 'design',
-      connectionId: data.connectionId,
-      database: data.database,
-      table: data.table,
-      schema: data.schema,
-      readOnly: false
-    })
-    mainTabKey.value = tabKey
-  }
-}
-
-const contextMenuVisible = ref(false)
-const contextMenuPosition = reactive({ x: 0, y: 0 })
-const currentContextTab = reactive({ key: '', closable: false })
+const contextMenuVisible = ref(false), contextMenuPosition = reactive({ x: 0, y: 0 }), currentContextTab = reactive({ key: '', closable: false })
 const hasTabsOnLeft = computed(() => dataTabs.value.findIndex(t => t.key === currentContextTab.key) > 0)
-const hasTabsOnRight = computed(() => {
-  const i = dataTabs.value.findIndex(t => t.key === currentContextTab.key)
-  return i >= 0 && i < dataTabs.value.length - 1
-})
-
-function handleTabContextMenu(e: MouseEvent, key: string, closable: boolean) {
-  e.preventDefault(); currentContextTab.key = key; currentContextTab.closable = closable;
-  contextMenuPosition.x = e.clientX; contextMenuPosition.y = e.clientY; contextMenuVisible.value = true;
-}
-
+const hasTabsOnRight = computed(() => { const i = dataTabs.value.findIndex(t => t.key === currentContextTab.key); return i >= 0 && i < dataTabs.value.length - 1 })
+function handleTabContextMenu(e: MouseEvent, key: string, closable: boolean) { e.preventDefault(); currentContextTab.key = key; currentContextTab.closable = closable; contextMenuPosition.x = e.clientX; contextMenuPosition.y = e.clientY; contextMenuVisible.value = true; }
 function handleContextMenuClick({ key }: any) {
   contextMenuVisible.value = false; const idx = dataTabs.value.findIndex(t => t.key === currentContextTab.key)
   if (key === 'close') closeTab(currentContextTab.key)
@@ -417,22 +276,12 @@ function handleContextMenuClick({ key }: any) {
   else if (key === 'closeAll') dataTabs.value = dataTabs.value.filter(t => t.closable === false)
   if (!dataTabs.value.some(t => t.key === mainTabKey.value) && dataTabs.value.length > 0) mainTabKey.value = dataTabs.value[0].key
 }
-
-function closeTab(key: string) {
-  const i = dataTabs.value.findIndex(t => t.key === key)
-  if (i >= 0) {
-    dataTabs.value.splice(i, 1)
-    if (mainTabKey.value === key && dataTabs.value.length > 0) mainTabKey.value = dataTabs.value[Math.min(i, dataTabs.value.length - 1)].key
-  }
-}
-
+function closeTab(key: string) { const i = dataTabs.value.findIndex(t => t.key === key); if (i >= 0) { dataTabs.value.splice(i, 1); if (mainTabKey.value === key && dataTabs.value.length > 0) mainTabKey.value = dataTabs.value[Math.min(i, dataTabs.value.length - 1)].key } }
 function handleTableSelected(d: any) {
   const id = d.connectionId || connectionStore.activeConnectionId, key = `table-${id}-${d.database}-${d.table}`
   if (dataTabs.value.some(t => t.key === key)) { mainTabKey.value = key; return; }
-  dataTabs.value.push({ key, title: d.table, type: 'data', connectionId: id!, database: d.database, table: d.table, schema: d.schema || d.metadata?.schema })
-  mainTabKey.value = key
+  dataTabs.value.push({ key, title: d.table, type: 'data', connectionId: id!, database: d.database, table: d.table, schema: d.schema || d.metadata?.schema }); mainTabKey.value = key
 }
-
 async function handleDatabaseSelected(d: any) {
   if (d.connectionId) connectionStore.setActiveConnection(d.connectionId)
   if (!isSqlSupported.value) {
@@ -442,27 +291,44 @@ async function handleDatabaseSelected(d: any) {
     }
     return
   }
-  
-  // 仅切换当前活跃 SQL 编辑器的数据库，不自动打开新 Tab
-  const cur = dataTabs.value.find(t => t.key === mainTabKey.value)
-  if (cur?.type === 'query') {
-    sqlEditorRefs[mainTabKey.value]?.setSelectedDatabase(d.name)
-  }
+  const cur = dataTabs.value.find(t => t.key === mainTabKey.value); if (cur?.type === 'query') sqlEditorRefs[mainTabKey.value]?.setSelectedDatabase(d.name)
 }
 
-function handleNewQuery(d: any) {
+async function handleNewQuery(d: any) {
   if (!isSqlSupported.value) return
-  const key = `query-${Date.now()}`
-  const queryCount = dataTabs.value.filter(t => t.type === 'query').length + 1
+  const connId = d.connectionId || connectionStore.activeConnectionId
+  const dbName = d.database
   
+  // 核心逻辑：如果绑定了库，强制先在后端创建物理文件
+  let filePath = d.filePath
+  let title = d.title
+  let initialContent = d.content || '-- 在此输入 SQL 查询\n'
+
+  if (connId && dbName && !filePath) {
+    try {
+      const script = await invoke<any>('create_db_script', {
+        connectionId: connId,
+        database: dbName,
+        content: initialContent
+      })
+      filePath = script.path
+      title = script.name
+    } catch (e) {
+      console.error('物理脚本创建失败:', e)
+      message.error('无法在磁盘上创建脚本文件')
+      return
+    }
+  }
+
+  const key = `query-${Date.now()}`
   dataTabs.value.push({ 
     key, 
-    title: d.title || `查询 ${queryCount}`, 
+    title: title || `script-${new Date().getTime()}.sql`, 
     type: 'query', 
-    connectionId: d.connectionId || connectionStore.activeConnectionId || undefined, 
-    database: d.database, 
-    content: d.content || '-- 在此输入 SQL 查询\n',
-    filePath: d.filePath
+    connectionId: connId || undefined, 
+    database: dbName, 
+    content: initialContent, 
+    filePath 
   })
   mainTabKey.value = key
 }
@@ -470,16 +336,10 @@ function handleNewQuery(d: any) {
 function onTabEdit(key: any, action: string) { if (action === 'add') handleNewQuery({}); else closeTab(String(key)); }
 const settingsForm = reactive({ theme: appStore.theme }); function handleSaveSettings() { appStore.setTheme(settingsForm.theme); showSettings.value = false; }
 function startResize(e: MouseEvent) {
-  const sx = e.clientX, sw = sidebarWidth.value
-  const dr = (e: MouseEvent) => { const nw = sw + (e.clientX - sx); if (nw >= 200 && nw <= 600) sidebarWidth.value = nw }
-  const sr = () => { document.removeEventListener('mousemove', dr); document.removeEventListener('mouseup', sr) }
+  const sx = e.clientX, sw = sidebarWidth.value; const dr = (ev: MouseEvent) => { const nw = sw + (ev.clientX - sx); if (nw >= 200 && nw <= 600) sidebarWidth.value = nw }; const sr = () => { document.removeEventListener('mousemove', dr); document.removeEventListener('mouseup', sr) }
   document.addEventListener('mousemove', dr); document.addEventListener('mouseup', sr)
 }
 function handleEditConnection(c: any) { editingConnection.value = c; showConnectionDialog.value = true; }
-
-watch(mainTabKey, (newKey, oldKey) => {
-  console.log(`=== Tab 切换: ${oldKey} -> ${newKey} ===`)
-})
 </script>
 
 <style scoped>

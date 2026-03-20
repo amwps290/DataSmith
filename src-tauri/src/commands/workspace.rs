@@ -41,6 +41,14 @@ fn get_scripts_root_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(scripts_dir)
 }
 
+/// 标准化目录名（转小写并清理特殊字符）
+fn normalize_dir_name(name: &str) -> String {
+    name.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect()
+}
+
 /// 获取特定数据库的脚本目录
 #[tauri::command]
 pub async fn get_db_scripts_dir(
@@ -49,11 +57,18 @@ pub async fn get_db_scripts_dir(
     app: AppHandle,
 ) -> Result<String, String> {
     let root = get_scripts_root_dir(&app)?;
-    let db_dir = root.join(&connection_id).join(&database);
+    let conn_dir = normalize_dir_name(&connection_id);
+    let db_dir_name = normalize_dir_name(&database);
+    
+    let db_dir = root.join(&conn_dir).join(&db_dir_name);
+    let path_str = db_dir.to_string_lossy().to_string();
+    
     if !db_dir.exists() {
-        fs::create_dir_all(&db_dir).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&db_dir).map_err(|e| format!("无法创建脚本目录: {}", e))?;
     }
-    Ok(db_dir.to_string_lossy().to_string())
+    
+    println!("[Workspace] 脚本存放目录: {}", path_str);
+    Ok(path_str)
 }
 
 /// 列出特定数据库下的脚本文件
@@ -64,14 +79,21 @@ pub async fn list_db_scripts(
     app: AppHandle,
 ) -> Result<Vec<ScriptInfo>, String> {
     let root = get_scripts_root_dir(&app)?;
-    let db_dir = root.join(&connection_id).join(&database);
+    let conn_dir = normalize_dir_name(&connection_id);
+    let db_dir_name = normalize_dir_name(&database);
+    
+    let db_dir = root.join(&conn_dir).join(&db_dir_name);
+    let path_str = db_dir.to_string_lossy().to_string();
+    
+    println!("[Workspace] 正在扫描目录: {}", path_str);
     
     if !db_dir.exists() {
+        println!("[Workspace] 目录不存在，返回空列表");
         return Ok(Vec::new());
     }
 
     let mut scripts = Vec::new();
-    let entries = fs::read_dir(db_dir).map_err(|e| e.to_string())?;
+    let entries = fs::read_dir(&db_dir).map_err(|e| format!("无法读取目录: {}", e))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -84,17 +106,55 @@ pub async fn list_db_scripts(
             
             scripts.push(ScriptInfo {
                 name: entry.file_name().to_string_lossy().to_string(),
-                path: path.to_string_lossy().to_string(),
+                path: path.to_string_lossy().to_string().replace("\\", "/"),
                 last_modified,
                 size: metadata.len(),
             });
         }
     }
 
-    // 按修改时间降序排列
+    println!("[Workspace] 扫描完成, 找到 {} 个有效 SQL 脚本", scripts.len());
     scripts.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
     
     Ok(scripts)
+}
+
+/// 在特定数据库目录下创建一个新脚本
+#[tauri::command]
+pub async fn create_db_script(
+    connection_id: String,
+    database: String,
+    content: Option<String>,
+    app: AppHandle,
+) -> Result<ScriptInfo, String> {
+    let root = get_scripts_root_dir(&app)?;
+    let conn_dir = normalize_dir_name(&connection_id);
+    let db_dir_name = normalize_dir_name(&database);
+    
+    let db_dir = root.join(&conn_dir).join(&db_dir_name);
+    
+    if !db_dir.exists() {
+        fs::create_dir_all(&db_dir).map_err(|e| format!("无法创建目录: {}", e))?;
+    }
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+    let file_name = format!("script-{}.sql", timestamp);
+    let path = db_dir.join(&file_name);
+    
+    let initial_content = content.unwrap_or_else(|| "-- 在此输入 SQL 查询\n".to_string());
+    fs::write(&path, initial_content).map_err(|e| format!("创建脚本失败: {}", e))?;
+    
+    println!("[Workspace] 物理文件已创建: {}", path.to_string_lossy());
+    
+    let metadata = path.metadata().map_err(|e| e.to_string())?;
+    
+    Ok(ScriptInfo {
+        name: file_name,
+        path: path.to_string_lossy().to_string().replace("\\", "/"),
+        last_modified: timestamp as u64 / 1000,
+        size: metadata.len(),
+    })
 }
 
 /// 保存会话状态

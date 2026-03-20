@@ -132,7 +132,10 @@ export const useConnectionStore = defineStore('connection', () => {
       }
       // 调用后端创建连接
       await invoke('create_connection', { connectionId: id, config: conn })
+      // 成功后更新状态
+      updateConnectionStatus(id, 'connected')
     } catch (error) {
+      updateConnectionStatus(id, 'error')
       console.error('连接数据库失败:', error)
       throw error
     }
@@ -143,6 +146,7 @@ export const useConnectionStore = defineStore('connection', () => {
     try {
       // 调用后端断开连接
       await invoke('disconnect_database', { connectionId: id })
+      updateConnectionStatus(id, 'disconnected')
     } catch (error) {
       console.error('断开连接失败:', error)
       throw error

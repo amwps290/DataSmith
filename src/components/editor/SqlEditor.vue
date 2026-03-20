@@ -148,15 +148,12 @@ import { getSqlAutocompleteManager } from '@/services/sqlAutocomplete'
 import { DownOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { invoke } from '@tauri-apps/api/core'
-import { save } from '@tauri-apps/plugin-dialog'
-import { writeTextFile } from '@tauri-apps/plugin-fs'
 import type { QueryResult } from '@/types/database'
 import { useConnectionStore } from '@/stores/connection'
 import { useAppStore } from '@/stores/app'
 import SaveQueryDialog from './SaveQueryDialog.vue'
 import SqlSnippetsManager from './SqlSnippetsManager.vue'
 
-// 1. 定义 Props 和 Emits
 const props = defineProps<{
   connectionId?: string
   initialDatabase?: string
@@ -166,11 +163,9 @@ const props = defineProps<{
 
 const emit = defineEmits(['contentChange', 'fileSaved', 'databasesLoaded'])
 
-// 2. 实例化 Store
 const connectionStore = useConnectionStore()
 const appStore = useAppStore()
 
-// 3. 配置 Monaco 环境 (确保只在 setup 内部配置一次)
 if (!(window as any).MonacoEnvironment) {
   (window as any).MonacoEnvironment = {
     getWorker(_: any, _label: string) {
@@ -179,7 +174,6 @@ if (!(window as any).MonacoEnvironment) {
   }
 }
 
-// 4. 定义响应式变量
 const editorContainer = ref<HTMLElement>()
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
 const autocompleteManager = getSqlAutocompleteManager()
@@ -211,7 +205,6 @@ interface Message {
 }
 const messages = ref<Message[]>([])
 
-// 5. 计算属性
 const currentResult = computed(() => queryResults.value[currentResultIndex.value])
 
 const resultColumns = computed(() => {
@@ -226,7 +219,6 @@ const resultColumns = computed(() => {
   }))
 })
 
-// 6. 核心逻辑方法
 function addMessage(type: Message['type'], text: string) {
   messages.value.unshift({ type, text, time: new Date().toLocaleTimeString() })
 }
@@ -362,7 +354,33 @@ async function setSelectedDatabase(database: string) {
   updateAutocompleteContext()
 }
 
-// 7. 生命周期钩子
+// 自动保存逻辑 (防抖)
+let autoSaveTimer: any = null
+function triggerAutoSave() {
+  if (autoSaveTimer) clearTimeout(autoSaveTimer)
+  autoSaveTimer = setTimeout(() => {
+    handleSave(true)
+  }, 2000)
+}
+
+async function handleSave(isAuto = false) {
+  if (!editor || !props.filePath) return
+  const content = editor.getValue()
+  if (!content.trim()) return
+
+  try {
+    // 关键修复：不再使用前端 writeTextFile，改用后端 write_file 绕过权限限制
+    await invoke('write_file', { 
+      path: props.filePath, 
+      content: content 
+    })
+    if (!isAuto) message.success('已保存')
+  } catch (err: any) {
+    console.error('文件保存失败:', err)
+    if (!isAuto) message.error(`保存失败: ${err}`)
+  }
+}
+
 onMounted(() => {
   if (!editorContainer.value) return
   editor = monaco.editor.create(editorContainer.value, {
@@ -383,9 +401,12 @@ onMounted(() => {
   })
 
   updateAutocompleteContext()
-  editor.onDidChangeModelContent(() => { emit('contentChange', editor?.getValue() || '') })
+  editor.onDidChangeModelContent(() => { 
+    emit('contentChange', editor?.getValue() || '')
+    triggerAutoSave()
+  })
   editor.addCommand(monaco.KeyCode.F5, () => executeQuery())
-  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => showSaveDialog.value = true)
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => handleSave())
 
   const history = localStorage.getItem('sql_history')
   if (history) { try { sqlHistory.value = JSON.parse(history) } catch (e) { console.error(e) } }
@@ -404,53 +425,8 @@ onUnmounted(() => {
   window.removeEventListener('resize', calculateResultHeight)
 })
 
-// 8. 监听器
 watch(() => appStore.theme, (newTheme) => { if (editor) monaco.editor.setTheme(newTheme === 'dark' ? 'vs-dark' : 'vs') })
 watch(() => props.connectionId || connectionStore.activeConnectionId, () => { updateAutocompleteContext(); loadAvailableDatabases(); })
-
-async function handleSave() {
-  if (!editor) return
-  const content = editor.getValue()
-  if (!content.trim()) return message.warning('内容为空')
-
-  let targetPath = props.filePath
-  
-  if (!targetPath) {
-    // 获取当前连接和数据库对应的脚本目录
-    const connId = props.connectionId || connectionStore.activeConnectionId
-    if (!connId || !selectedDatabase.value) {
-      // 如果没有绑定库，弹出普通另存为对话框
-      const path = await save({
-        filters: [{ name: 'SQL', extensions: ['sql'] }],
-        defaultPath: `script-${new Date().getTime()}.sql`
-      })
-      if (path) targetPath = path
-    } else {
-      try {
-        const dir = await invoke<string>('get_db_scripts_dir', {
-          connectionId: connId,
-          database: selectedDatabase.value
-        })
-        const fileName = `script-${new Date().toISOString().replace(/[:.]/g, '-')}.sql`
-        targetPath = `${dir}/${fileName}`
-      } catch (e) {
-        console.error('获取目录失败:', e)
-      }
-    }
-  }
-
-  if (targetPath) {
-    try {
-      await writeTextFile(targetPath, content)
-      const fileName = targetPath.split(/[/\\]/).pop() || 'script.sql'
-      emit('fileSaved', targetPath, fileName)
-      addMessage('success', `文件已保存: ${targetPath}`)
-      message.success('已保存')
-    } catch (err: any) {
-      message.error(`保存失败: ${err}`)
-    }
-  }
-}
 
 defineExpose({ setSelectedDatabase, executing, executeQuery, handleDatabaseChange, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
 </script>
@@ -484,6 +460,7 @@ defineExpose({ setSelectedDatabase, executing, executeQuery, handleDatabaseChang
 .history-item { cursor: pointer; transition: background 0.2s; }
 .history-item:hover { background: #f5f5f5; }
 .dark-mode .history-item:hover { background: #262626; }
+.history-sql { font-family: monospace; background: transparent; padding: 0; }
 .dark-mode .result-content :deep(.ant-table) { background: #1f1f1f !important; color: rgba(255, 255, 255, 0.65); }
 .dark-mode .result-content :deep(.ant-table-thead), .dark-mode .result-content :deep(.ant-table-header) { background-color: #1d1d1d !important; }
 .dark-mode .result-content :deep(.ant-table-thead > tr > th) { background: #1d1d1d !important; color: rgba(255, 255, 255, 0.85) !important; border-bottom: 1px solid #303030 !important; }
