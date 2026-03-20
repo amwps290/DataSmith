@@ -34,85 +34,50 @@
         </a-dropdown>
       </a-space>
       
-      <div class="toolbar-info">
-        <div class="row-count">
+      <div class="toolbar-right">
+        <div class="pagination-info">
           第 {{ pagination.current }} 页 (每页 {{ pagination.pageSize }} 条)
+          <a-divider type="vertical" />
+          <a-button-group size="small">
+            <a-button :disabled="pagination.current <= 1" @click="changePage(-1)"><LeftOutlined /></a-button>
+            <a-button :disabled="!hasMore" @click="changePage(1)"><RightOutlined /></a-button>
+          </a-button-group>
         </div>
       </div>
     </div>
 
-    <a-table
-      :columns="columns"
-      :data-source="dataSource"
-      :loading="loading"
-      :pagination="pagination"
-      :scroll="{ x: 'max-content', y: tableHeight }"
-      :row-selection="rowSelection"
-      :row-key="(record: any) => record.__rowIndex"
-      size="small"
-      bordered
-      class="data-table"
-      @change="handleTableChange"
-    >
-      <template #bodyCell="{ column, text, record, index }">
-        <div
-          class="editable-cell"
-          @dblclick="startEdit(record, column.dataIndex, index)"
-        >
-          <div v-if="editingKey === `${record.__rowIndex}-${column.dataIndex}`" class="editing-wrapper">
-            <a-textarea
-              v-model:value="editingValue"
-              @keyup.esc="cancelEdit"
-              :auto-size="{ minRows: 2, maxRows: 8 }"
-              ref="editInput"
-              class="edit-input"
-            />
-            <div class="edit-buttons">
-              <a-button 
-                type="primary" 
-                size="small" 
-                :loading="saving"
-                @click.stop="saveEdit(record, column.dataIndex)"
-              >
-                <template #icon><CheckOutlined /></template>
-                保存
-              </a-button>
-              <a-button 
-                size="small" 
-                @click.stop="cancelEdit"
-                :disabled="saving"
-              >
-                <template #icon><CloseOutlined /></template>
-                取消
-              </a-button>
-            </div>
-          </div>
-          <div 
-            v-else 
-            class="cell-content"
-            :title="text !== null && text !== undefined && String(text).length > 30 ? String(text) : undefined"
-          >
-            <span :class="{ null: text === null }">
-              {{ text === null ? 'NULL' : text }}
-            </span>
-          </div>
-        </div>
-      </template>
-    </a-table>
+    <!-- 高性能虚拟滚动表格 -->
+    <div class="grid-wrapper">
+      <vxe-grid ref="gridRef" v-bind="gridOptions" @cell-dblclick="handleCellDblClick" @checkbox-change="handleCheckboxChange" @checkbox-all="handleCheckboxChange">
+        <template #cell_default="{ row, column }">
+          <span :class="{ 'null-text': row[column.field] === null }">
+            {{ row[column.field] === null ? 'NULL' : row[column.field] }}
+          </span>
+        </template>
+      </vxe-grid>
+    </div>
 
-    <!-- 筛选对话框 -->
+    <!-- 单元格编辑器 (弹窗式以处理大数据内容) -->
     <a-modal
-      v-model:open="showFilterDialog"
-      title="数据筛选"
-      @ok="applyFilter"
+      v-model:open="showEditor"
+      :title="`编辑单元格: ${editingField}`"
+      @ok="saveEdit"
+      width="600px"
+      :confirm-loading="saving"
     >
       <a-form layout="vertical">
+        <a-form-item label="当前值">
+          <a-textarea v-model:value="editingValue" :rows="8" class="editor-textarea" />
+        </a-form-item>
+        <a-checkbox v-model:checked="isSetNull">设为 NULL</a-checkbox>
+      </a-form>
+    </a-modal>
+
+    <!-- 筛选对话框 -->
+    <a-modal v-model:open="showFilterDialog" title="数据筛选" @ok="applyFilter">
+      <a-form layout="vertical">
         <a-form-item label="WHERE 条件">
-          <a-textarea
-            v-model:value="filterCondition"
-            :rows="4"
-            placeholder="例如: id > 100 AND status = 'active'"
-          />
+          <a-textarea v-model:value="filterCondition" :rows="4" placeholder="例如: id > 100 AND status = 'active'" />
         </a-form-item>
       </a-form>
     </a-modal>
@@ -120,260 +85,148 @@
 </template>
 
 <script setup lang="ts">
-import { h, nextTick, ref, onMounted, onUnmounted, watch, computed, onActivated, onDeactivated } from 'vue'
-
-onActivated(() => {
-  const start = performance.now()
-  console.log('[TableDataGrid] 组件已激活')
-  updateTableHeight()
-  console.log(`[TableDataGrid] 激活更新耗时: ${(performance.now() - start).toFixed(2)}ms`)
-})
-
-onDeactivated(() => {
-  console.log('[TableDataGrid] 组件已进入缓存')
-})
+import { h, ref, onMounted, onUnmounted, watch, computed, reactive } from 'vue'
 import {
-  ReloadOutlined,
-  PlusOutlined,
-  DeleteOutlined,
-  FilterOutlined,
-  ExportOutlined,
-  CheckOutlined,
-  CloseOutlined,
+  ReloadOutlined, PlusOutlined, DeleteOutlined, FilterOutlined,
+  ExportOutlined, LeftOutlined, RightOutlined
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { QueryResult } from '@/types/database'
 import { useConnectionStore } from '@/stores/connection'
+import type { VxeGridProps, VxeGridInstance } from 'vxe-table'
 
-const props = defineProps<{
-  connectionId: string
-  database: string
-  table: string
-  schema?: string
-}>()
-
+const props = defineProps<{ connectionId: string; database: string; table: string; schema?: string }>()
 const connectionStore = useConnectionStore()
-
-const dbType = computed(() => {
-  const connection = connectionStore.connections.find(c => c.id === props.connectionId)
-  return connection?.db_type || 'mysql'
-})
-
-const quoteIdentifier = (name: string) => {
-  return dbType.value === 'sqlite' || dbType.value === 'postgresql' ? `"${name}"` : `\`${name}\``
-}
-
-const formatTableRef = () => {
-  if (dbType.value === 'sqlite') return quoteIdentifier(props.table)
-  if (dbType.value === 'postgresql') return `${quoteIdentifier(props.schema || 'public')}.${quoteIdentifier(props.table)}`
-  return `${quoteIdentifier(props.database)}.${quoteIdentifier(props.table)}`
-}
+const gridRef = ref<VxeGridInstance>()
 
 const loading = ref(false)
-const dataSource = ref<any[]>([])
-const columns = ref<any[]>([])
-const selectedRowKeys = ref<string[]>([])
+const hasMore = ref(false)
+const selectedRowKeys = ref<any[]>([])
 const showFilterDialog = ref(false)
 const filterCondition = ref('')
-const tableStructure = ref<any[]>([])
 const primaryKeys = ref<string[]>([])
 const tableHeight = ref(400)
 
-function updateTableHeight() {
-  const height = window.innerHeight - (64 + 40 + 56 + 48 + 40)
-  tableHeight.value = Math.max(height, 200)
-}
+const pagination = reactive({ current: 1, pageSize: 100 })
 
-onMounted(() => {
-  updateTableHeight()
-  window.addEventListener('resize', updateTableHeight)
+const dbType = computed(() => connectionStore.connections.find(c => c.id === props.connectionId)?.db_type || 'mysql')
+const quote = (n: string) => dbType.value === 'sqlite' || dbType.value === 'postgresql' ? `"${n}"` : `\`${n}\``
+const tableRef = () => dbType.value === 'postgresql' ? `${quote(props.schema || 'public')}.${quote(props.table)}` : quote(props.table)
+
+const gridOptions = reactive<VxeGridProps>({
+  border: true,
+  height: 'auto',
+  loading: false,
+  columnConfig: { resizable: true, drag: true },
+  rowConfig: { isCurrent: true, isHover: true, keyField: '__rowIndex' },
+  checkboxConfig: { reserve: true, trigger: 'cell' },
+  scrollX: { enabled: true, gt: 20 },
+  scrollY: { enabled: true, gt: 50 }, // 开启纵向虚拟滚动
+  columns: [],
+  data: []
 })
 
-onUnmounted(() => {
-  window.removeEventListener('resize', updateTableHeight)
-})
-
-// 高性能分页配置：不显示总数，只提供翻页
-const pagination = ref({
-  current: 1,
-  pageSize: 100,
-  total: 0, // 动态调整以实现无限翻页
-  showSizeChanger: true,
-  showQuickJumper: false,
-  pageSizeOptions: ['50', '100', '200', '500'],
-  showTotal: () => '', // 不显示总数指标
-})
+function updateHeight() { tableHeight.value = window.innerHeight - 200 }
+onMounted(() => { updateHeight(); window.addEventListener('resize', updateHeight); })
+onUnmounted(() => { window.removeEventListener('resize', updateHeight) })
 
 async function loadData() {
   if (!props.table) return
   loading.value = true
-  
+  gridOptions.loading = true
   try {
-    // 1. 获取结构 (仅一次)
-    if (tableStructure.value.length === 0) {
-      const structure = await invoke<any[]>('get_table_structure', {
-        connectionId: props.connectionId,
-        table: props.table,
-        schema: props.schema || props.database,
-        database: props.database,
-      })
-      tableStructure.value = structure
-      primaryKeys.value = structure.filter((col: any) => col.is_primary_key).map((col: any) => col.name)
-    }
+    // 获取主键
+    const struct = await invoke<any[]>('get_table_structure', { connectionId: props.connectionId, table: props.table, schema: props.schema || props.database, database: props.database })
+    primaryKeys.value = struct.filter(c => c.is_primary_key).map(c => c.name)
 
-    // 2. 直接拉取分页数据，不执行 COUNT
-    const offset = (pagination.value.current - 1) * pagination.value.pageSize
-    let sql = `SELECT * FROM ${formatTableRef()}`
+    const offset = (pagination.current - 1) * pagination.pageSize
+    let sql = `SELECT * FROM ${tableRef()}`
     if (filterCondition.value) sql += ` WHERE ${filterCondition.value}`
-    sql += ` LIMIT ${pagination.value.pageSize} OFFSET ${offset}`
+    sql += ` LIMIT ${pagination.pageSize} OFFSET ${offset}`
     
-    const result = await invoke<QueryResult>('execute_query', {
-      connectionId: props.connectionId,
-      sql,
-      database: props.database,
-    })
-    
-    // 3. 核心技巧：根据返回行数动态“伪造”总数，让 Ant Design 的下一页按钮可用
-    if (result.rows.length === pagination.value.pageSize) {
-      // 如果正好填满一页，说明可能还有后续，设置 total 为当前已加载数 + 1
-      pagination.value.total = offset + result.rows.length + 1
-    } else {
-      // 如果不满一页，说明到头了，设置 total 为当前实际总数
-      pagination.value.total = offset + result.rows.length
-    }
+    const result = await invoke<QueryResult>('execute_query', { connectionId: props.connectionId, sql, database: props.database })
+    hasMore.value = result.rows.length === pagination.pageSize
 
-    columns.value = result.columns.map((col) => ({
-      title: col, dataIndex: col, key: col, width: 150, resizable: true, sorter: true,
-      ellipsis: { showTitle: false },
-    }))
-
-    dataSource.value = result.rows.map((row, index) => ({
-      __rowIndex: offset + index,
-      ...row,
-    }))
-
-    if (pagination.value.current === 1 && result.rows.length > 0) {
-      message.success(`已加载前 ${result.rows.length} 条数据`)
-    }
-  } catch (error: any) {
-    message.error(`加载失败: ${error}`)
-  } finally {
-    loading.value = false
-  }
+    gridOptions.columns = [
+      { type: 'checkbox', width: 50, fixed: 'left' },
+      { type: 'seq', title: '#', width: 60, fixed: 'left' },
+      ...result.columns.map(col => ({ field: col, title: col, minWidth: 120, slots: { default: 'cell_default' } }))
+    ]
+    gridOptions.data = result.rows.map((row, i) => ({ __rowIndex: offset + i, ...row }))
+  } catch (e: any) { message.error(e) } finally { loading.value = false; gridOptions.loading = false }
 }
 
-function handleTableChange(pag: any) {
-  pagination.value.current = pag.current
-  pagination.value.pageSize = pag.pageSize
-  loadData()
+function handleCheckboxChange() {
+  const records = gridRef.value?.getCheckboxRecords() || []
+  selectedRowKeys.value = records.map(r => r.__rowIndex)
 }
 
-const editingKey = ref('')
-const editingValue = ref('')
-const editInput = ref()
-const saving = ref(false)
+function changePage(delta: number) { pagination.current += delta; loadData() }
+function applyFilter() { showFilterDialog.value = false; pagination.current = 1; loadData() }
 
-function startEdit(record: any, field: any, _index: number) {
-  if (!field) return
-  editingKey.value = `${record.__rowIndex}-${field}`
-  editingValue.value = record[field] === null ? '' : String(record[field])
-  nextTick(() => { if (editInput.value) { const el = editInput.value.$el?.querySelector('textarea') || editInput.value.$el; el?.focus(); el?.select(); } })
+// 编辑逻辑
+const showEditor = ref(false), editingField = ref(''), editingRow = ref<any>(null), editingValue = ref(''), isSetNull = ref(false), saving = ref(false)
+function handleCellDblClick({ row, column }: any) {
+  if (column.type === 'checkbox' || column.type === 'seq') return
+  editingRow.value = row; editingField.value = column.field
+  editingValue.value = row[column.field] === null ? '' : String(row[column.field])
+  isSetNull.value = row[column.field] === null
+  showEditor.value = true
 }
 
-async function saveEdit(record: any, field: any) {
-  if (saving.value) return
-  if (primaryKeys.value.length === 0) { message.error('无主键，无法更新'); cancelEdit(); return; }
-  const newValue = editingValue.value === '' ? null : editingValue.value
-  if (String(record[field]) === String(newValue)) { cancelEdit(); return; }
+async function saveEdit() {
+  if (primaryKeys.value.length === 0) return message.error('无主键，无法执行精准更新')
   saving.value = true
+  const newValue = isSetNull.value ? null : editingValue.value
   try {
-    const whereClause = primaryKeys.value.map(pk => {
-      const v = record[pk]; return v === null ? `${quoteIdentifier(pk)} IS NULL` : `${quoteIdentifier(pk)} = '${String(v).replace(/'/g, "''")}'`
+    const where = primaryKeys.value.map(pk => {
+      const v = editingRow.value[pk]; return v === null ? `${quote(pk)} IS NULL` : `${quote(pk)} = '${String(v).replace(/'/g, "''")}'`
     }).join(' AND ')
-    await invoke('update_table_data', { connectionId: props.connectionId, database: props.database, table: props.table, schema: props.schema, column: field, value: newValue === null ? null : String(newValue), whereClause })
-    record[field] = newValue; editingKey.value = ''; message.success('已更新')
-  } catch (error: any) { message.error(`失败: ${error}`) } finally { saving.value = false }
+    await invoke('update_table_data', { connectionId: props.connectionId, database: props.database, table: props.table, schema: props.schema, column: editingField.value, value: newValue === null ? null : String(newValue), whereClause: where })
+    editingRow.value[editingField.value] = newValue
+    showEditor.value = false; message.success('更新成功')
+  } catch (e: any) { message.error(e) } finally { saving.value = false }
 }
 
-function cancelEdit() { editingKey.value = ''; editingValue.value = '' }
-
-async function addRow() {
-  if (tableStructure.value.length === 0) return
-  const newRow: any = { __rowIndex: -1, __isNew: true }
-  tableStructure.value.forEach(col => { newRow[col.name] = col.default_value !== null ? col.default_value : (col.nullable ? null : '') })
-  dataSource.value.unshift(newRow); message.info('已添加新行')
-}
-
+function addRow() { message.info('新增行功能待完善') }
 async function deleteSelected() {
-  if (selectedRowKeys.value.length === 0 || primaryKeys.value.length === 0) return
   Modal.confirm({
-    title: '确认删除', content: `确定删除选中行吗？`, okText: '删除', okType: 'danger',
+    title: '确认删除', content: `确定删除选中的 ${selectedRowKeys.value.length} 行数据吗？`, okType: 'danger',
     async onOk() {
       try {
-        for (const key of selectedRowKeys.value) {
-          const record = dataSource.value.find(item => item.__rowIndex === key)
-          if (!record || record.__isNew) continue
-          const whereClause = primaryKeys.value.map(pk => {
-            const v = record[pk]; return v === null ? `${quoteIdentifier(pk)} IS NULL` : `${quoteIdentifier(pk)} = '${String(v).replace(/'/g, "''")}'`
+        const records = gridRef.value?.getCheckboxRecords() || []
+        for (const record of records) {
+          const where = primaryKeys.value.map(pk => {
+            const v = record[pk]; return v === null ? `${quote(pk)} IS NULL` : `${quote(pk)} = '${String(v).replace(/'/g, "''")}'`
           }).join(' AND ')
-          await invoke('delete_table_data', { connectionId: props.connectionId, database: props.database, table: props.table, schema: props.schema, whereClause })
+          await invoke('delete_table_data', { connectionId: props.connectionId, database: props.database, table: props.table, schema: props.schema, whereClause: where })
         }
-        await loadData(); selectedRowKeys.value = []; message.success('已删除')
-      } catch (error: any) { message.error(`失败: ${error}`) }
-    },
+        message.success('删除成功'); loadData()
+      } catch (e: any) { message.error(e) }
+    }
   })
 }
 
-function applyFilter() { showFilterDialog.value = false; pagination.value.current = 1; loadData(); }
-
 async function handleExport({ key }: any) {
   try {
-    let sql = `SELECT * FROM ${formatTableRef()}${filterCondition.value ? ' WHERE ' + filterCondition.value : ''}`
-    const result = await invoke<string>(`export_to_${key}`, { connectionId: props.connectionId, database: props.database, table: props.table, query: sql })
-    message.success(`导出成功: ${result}`)
-  } catch (error: any) { message.error(`失败: ${error}`) }
+    const sql = `SELECT * FROM ${tableRef()}${filterCondition.value ? ' WHERE ' + filterCondition.value : ''}`
+    const path = await invoke<string>(`export_to_${key}`, { connectionId: props.connectionId, database: props.database, table: props.table, query: sql })
+    message.success(`导出完成: ${path}`)
+  } catch (e: any) { message.error(e) }
 }
 
-const rowSelection = computed(() => ({
-  selectedRowKeys: selectedRowKeys.value,
-  onChange: (keys: any) => { selectedRowKeys.value = keys },
-}))
-
-watch(() => props.table, () => { tableStructure.value = []; pagination.value.current = 1; loadData() }, { immediate: true })
+watch(() => props.table, () => { pagination.current = 1; loadData() }, { immediate: true })
 </script>
 
 <style scoped>
-.table-data-grid { height: 100%; display: flex; flex-direction: column; overflow: hidden; background: #fff; }
-.dark-mode .table-data-grid { background: #1f1f1f; }
-.grid-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #e8e8e8; background: #fafafa; flex-shrink: 0; }
+.table-data-grid { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.grid-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid #d9d9d9; background: #fafafa; flex-shrink: 0; }
 .dark-mode .grid-toolbar { background: #1f1f1f; border-bottom-color: #303030; }
-.toolbar-info { display: flex; gap: 12px; align-items: center; }
-.row-count { font-size: 13px; color: #8c8c8c; }
-.editable-cell { min-height: 32px; padding: 4px 8px; cursor: text; position: relative; }
-.editable-cell:hover { background: #f0f0f0; }
-.dark-mode .editable-cell:hover { background: #262626; }
-.editing-wrapper { position: fixed; z-index: 9999; background: #fff; border: 2px solid #1890ff; border-radius: 8px; padding: 16px; box-shadow: 0 6px 24px rgba(0,0,0,0.2); min-width: 400px; }
-.dark-mode .editing-wrapper { background: #1f1f1f; border-color: #177ddc; }
-.edit-input { width: 100%; margin-bottom: 12px; font-family: monospace; }
-.edit-buttons { display: flex; gap: 8px; justify-content: flex-end; }
-.cell-content { min-height: 24px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.null { color: #bfbfbf; font-style: italic; }
-.data-table { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-:deep(.ant-table-wrapper), :deep(.ant-spin-nested-loading), :deep(.ant-spin-container), :deep(.ant-table), :deep(.ant-table-container) { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-:deep(.ant-table-content) { flex: 1; }
-:deep(.ant-pagination.ant-table-pagination) { margin: 0 !important; padding: 12px 16px !important; background: #fafafa; border-top: 1px solid #f0f0f0; width: 100%; flex-shrink: 0; }
-.dark-mode :deep(.ant-pagination.ant-table-pagination) { background: #1f1f1f !important; border-top-color: #303030 !important; }
-.dark-mode :deep(.ant-pagination) { color: rgba(255,255,255,0.85) !important; }
-.dark-mode :deep(.ant-pagination-item), .dark-mode :deep(.ant-pagination-prev .ant-pagination-item-link), .dark-mode :deep(.ant-pagination-next .ant-pagination-item-link) { background-color: #262626 !important; border-color: #434343 !important; color: rgba(255,255,255,0.65) !important; }
-.dark-mode :deep(.ant-pagination-item-active) { background-color: #177ddc !important; border-color: #177ddc !important; }
-.dark-mode :deep(.ant-pagination-item-active a) { color: #fff !important; }
-:deep(.ant-table-thead > tr > th) { background: #fafafa; font-weight: 600; padding: 10px 12px; }
-.dark-mode :deep(.ant-table-thead > tr > th) { background: #1d1d1d !important; color: rgba(255,255,255,0.85) !important; border-bottom: 1px solid #303030 !important; }
-.dark-mode :deep(.ant-table) { background-color: #1f1f1f !important; }
-.dark-mode :deep(.ant-table-thead), .dark-mode :deep(.ant-table-header) { background-color: #1d1d1d !important; }
-.dark-mode :deep(.ant-table-container) { background-color: #1f1f1f !important; border-color: #303030 !important; }
-:deep(.ant-table-tbody > tr > td) { padding: 8px 12px; }
-.dark-mode :deep(.ant-table-tbody > tr:hover > td) { background: #262626 !important; }
-.dark-mode :deep(.ant-table-cell) { border-bottom-color: #303030 !important; border-right-color: #303030 !important; }
+.grid-wrapper { flex: 1; min-height: 0; padding: 4px; background: #fff; }
+.dark-mode .grid-wrapper { background: #1f1f1f; }
+.toolbar-right { display: flex; align-items: center; }
+.pagination-info { font-size: 12px; color: #8c8c8c; }
+.null-text { color: #bfbfbf; font-style: italic; }
+.editor-textarea { font-family: monospace; }
 </style>

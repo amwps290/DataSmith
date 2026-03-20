@@ -6,6 +6,12 @@ import App from './App.vue'
 import router from './router'
 import './style.css'
 
+// 引入 vxe-table 高性能表格库
+import VxeTable from 'vxe-table'
+import 'vxe-table/lib/style.css'
+import VxeUI from 'vxe-pc-ui'
+import 'vxe-pc-ui/lib/style.css'
+
 // 设置 Monaco Editor 的 Worker 配置
 (window as any).MonacoEnvironment = {
   getWorkerUrl: function (_moduleId: string, label: string) {
@@ -30,6 +36,7 @@ const app = createApp(App)
 app.use(createPinia())
 app.use(router)
 app.use(Antd)
+app.use(VxeUI)
+app.use(VxeTable)
 
 app.mount('#app')
-

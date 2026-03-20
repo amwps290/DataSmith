@@ -21,13 +21,14 @@
                 停止执行
               </a-button>
             </div>
+            
             <div v-if="queryResults.length > 0" class="result-info">
               <a-space>
                 <a-tag color="success">
-                  {{ queryResults[currentResultIndex]?.affected_rows || 0 }} 行
+                  {{ currentResult?.affected_rows || 0 }} 行
                 </a-tag>
                 <a-tag color="processing">
-                  {{ queryResults[currentResultIndex]?.execution_time_ms || 0 }} ms
+                  {{ currentResult?.execution_time_ms || 0 }} ms
                 </a-tag>
                 
                 <a-divider type="vertical" />
@@ -46,6 +47,7 @@
                 >
                   下一页
                 </a-button>
+                
                 <a-select 
                   v-model:value="pageSize" 
                   size="small" 
@@ -74,15 +76,18 @@
             </div>
             
             <div class="table-wrapper">
-              <a-table
+              <!-- 使用 vxe-grid 替代 a-table 以获得虚拟滚动性能 -->
+              <vxe-grid
                 v-if="currentResult"
-                :columns="resultColumns"
-                :data-source="currentResult.rows"
-                :scroll="{ x: 'max-content', y: resultTableHeight }"
-                :pagination="false"
-                size="small"
-                bordered
-              />
+                ref="gridRef"
+                v-bind="gridOptions"
+              >
+                <template #cell_default="{ row, column }">
+                  <span :class="{ 'null-text': row[column.field] === null }">
+                    {{ row[column.field] === null ? 'NULL' : row[column.field] }}
+                  </span>
+                </template>
+              </vxe-grid>
               <a-empty v-else description="暂无查询结果" />
             </div>
           </div>
@@ -103,8 +108,7 @@
     <a-drawer
       title="查询历史"
       placement="right"
-      :visible="showHistory"
-      @close="showHistory = false"
+      v-model:open="showHistory"
       width="400"
     >
       <a-list :data-source="sqlHistory" size="small">
@@ -140,7 +144,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch, ref, computed, onActivated, nextTick } from 'vue'
+import { onMounted, onUnmounted, watch, ref, computed, onActivated, nextTick, reactive } from 'vue'
 import * as monaco from 'monaco-editor'
 // @ts-ignore
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
@@ -153,6 +157,7 @@ import { useConnectionStore } from '@/stores/connection'
 import { useAppStore } from '@/stores/app'
 import SaveQueryDialog from './SaveQueryDialog.vue'
 import SqlSnippetsManager from './SqlSnippetsManager.vue'
+import type { VxeGridProps, VxeGridInstance } from 'vxe-table'
 
 const props = defineProps<{
   connectionId?: string
@@ -198,6 +203,19 @@ const showSnippets = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(200)
 
+const gridRef = ref<VxeGridInstance>()
+const gridOptions = reactive<VxeGridProps>({
+  border: true,
+  height: 'auto',
+  loading: false,
+  columnConfig: { resizable: true },
+  rowConfig: { isHover: true, isCurrent: true },
+  scrollX: { enabled: true, gt: 20 },
+  scrollY: { enabled: true, gt: 50 },
+  columns: [],
+  data: []
+})
+
 interface Message {
   type: 'info' | 'success' | 'error' | 'warning'
   text: string
@@ -206,18 +224,6 @@ interface Message {
 const messages = ref<Message[]>([])
 
 const currentResult = computed(() => queryResults.value[currentResultIndex.value])
-
-const resultColumns = computed(() => {
-  if (!currentResult.value) return []
-  return currentResult.value.columns.map(col => ({
-    title: col,
-    dataIndex: col,
-    key: col,
-    ellipsis: true,
-    width: 150,
-    resizable: true
-  }))
-})
 
 function addMessage(type: Message['type'], text: string) {
   messages.value.unshift({ type, text, time: new Date().toLocaleTimeString() })
@@ -287,6 +293,7 @@ async function handlePageChange(page: number) {
   if (!sql) return message.warning('请输入 SQL')
 
   executing.value = true
+  gridOptions.loading = true
   if (page === 1) { queryResults.value = []; currentResultIndex.value = 0; }
   currentPage.value = page
   resultTabKey.value = 'result'
@@ -296,11 +303,25 @@ async function handlePageChange(page: number) {
       connectionId: connId, sql, database: selectedDatabase.value || null, page, pageSize: pageSize.value,
     })
     queryResults.value = [result]
+    
+    // 更新 VxeGrid 配置
+    gridOptions.columns = [
+      { type: 'seq', title: '#', width: 60, fixed: 'left' },
+      ...result.columns.map(col => ({
+        field: col,
+        title: col,
+        minWidth: 150,
+        slots: { default: 'cell_default' }
+      }))
+    ]
+    gridOptions.data = result.rows
+    
     addMessage('success', `查询成功 (${result.affected_rows} 行)`)
     if (page === 1) saveToHistory(sql)
   } catch (e: any) {
     message.error(`查询失败: ${e}`)
-  } finally { executing.value = false }
+    addMessage('error', String(e))
+  } finally { executing.value = false; gridOptions.loading = false }
 }
 
 function stopExecution() { executing.value = false; addMessage('info', '已停止') }
@@ -316,7 +337,7 @@ async function formatSql() {
   } catch (e: any) { message.error(e) }
 }
 
-function clearEditor() { editor?.setValue(''); queryResults.value = []; messages.value = []; }
+function clearEditor() { editor?.setValue(''); queryResults.value = []; messages.value = []; gridOptions.data = []; gridOptions.columns = []; }
 function handleQuerySaved() { message.success('已保存') }
 
 function insertSnippet(sql: string) {
@@ -354,31 +375,20 @@ async function setSelectedDatabase(database: string) {
   updateAutocompleteContext()
 }
 
-// 自动保存逻辑 (防抖)
 let autoSaveTimer: any = null
 function triggerAutoSave() {
   if (autoSaveTimer) clearTimeout(autoSaveTimer)
-  autoSaveTimer = setTimeout(() => {
-    handleSave(true)
-  }, 2000)
+  autoSaveTimer = setTimeout(() => { handleSave(true) }, 2000)
 }
 
 async function handleSave(isAuto = false) {
   if (!editor || !props.filePath) return
   const content = editor.getValue()
   if (!content.trim()) return
-
   try {
-    // 关键修复：不再使用前端 writeTextFile，改用后端 write_file 绕过权限限制
-    await invoke('write_file', { 
-      path: props.filePath, 
-      content: content 
-    })
+    await invoke('write_file', { path: props.filePath, content: content })
     if (!isAuto) message.success('已保存')
-  } catch (err: any) {
-    console.error('文件保存失败:', err)
-    if (!isAuto) message.error(`保存失败: ${err}`)
-  }
+  } catch (err: any) { if (!isAuto) message.error(`保存失败: ${err}`) }
 }
 
 onMounted(() => {
@@ -425,7 +435,10 @@ onUnmounted(() => {
   window.removeEventListener('resize', calculateResultHeight)
 })
 
-watch(() => appStore.theme, (newTheme) => { if (editor) monaco.editor.setTheme(newTheme === 'dark' ? 'vs-dark' : 'vs') })
+watch(() => appStore.theme, (newTheme) => { 
+  if (editor) monaco.editor.setTheme(newTheme === 'dark' ? 'vs-dark' : 'vs')
+}, { immediate: true })
+
 watch(() => props.connectionId || connectionStore.activeConnectionId, () => { updateAutocompleteContext(); loadAvailableDatabases(); })
 
 defineExpose({ setSelectedDatabase, executing, executeQuery, handleDatabaseChange, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
@@ -450,7 +463,7 @@ defineExpose({ setSelectedDatabase, executing, executeQuery, handleDatabaseChang
 .result-info { margin-bottom: 12px; flex-shrink: 0; display: flex; align-items: center; }
 .page-indicator { font-size: 13px; color: #595959; font-weight: 500; margin: 0 8px; }
 .dark-mode .page-indicator { color: #d9d9d9; }
-.table-wrapper { flex: 1; overflow: hidden; }
+.table-wrapper { flex: 1; min-height: 0; overflow: hidden; }
 .messages-content { flex: 1; padding: 12px; overflow-y: auto; font-family: monospace; }
 .message-item { margin-bottom: 8px; padding: 4px 8px; border-left: 3px solid #d9d9d9; background: #f5f5f5; white-space: pre-wrap; word-break: break-all; }
 .dark-mode .message-item { background: #262626; border-left-color: #434343; }
@@ -461,11 +474,5 @@ defineExpose({ setSelectedDatabase, executing, executeQuery, handleDatabaseChang
 .history-item:hover { background: #f5f5f5; }
 .dark-mode .history-item:hover { background: #262626; }
 .history-sql { font-family: monospace; background: transparent; padding: 0; }
-.dark-mode .result-content :deep(.ant-table) { background: #1f1f1f !important; color: rgba(255, 255, 255, 0.65); }
-.dark-mode .result-content :deep(.ant-table-thead), .dark-mode .result-content :deep(.ant-table-header) { background-color: #1d1d1d !important; }
-.dark-mode .result-content :deep(.ant-table-thead > tr > th) { background: #1d1d1d !important; color: rgba(255, 255, 255, 0.85) !important; border-bottom: 1px solid #303030 !important; }
-.dark-mode .result-content :deep(.ant-table-cell) { border-bottom-color: #303030 !important; border-right-color: #303030 !important; }
-.dark-mode .result-content :deep(.ant-table-tbody > tr:hover > td) { background: #262626 !important; }
-.dark-mode .result-info :deep(.ant-btn) { background-color: #262626; border-color: #434343; color: rgba(255, 255, 255, 0.65); }
-.dark-mode .result-info :deep(.ant-select-selector) { background-color: #262626 !important; border-color: #434343 !important; color: rgba(255, 255, 255, 0.65) !important; }
+.null-text { color: #bfbfbf; font-style: italic; }
 </style>
