@@ -28,6 +28,9 @@ serde_json = "1.0"
 tokio = { version = "1.36", features = ["full"] }
 thiserror = "2.0.17"
 async-trait = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tracing-appender = "0.2"
 
 # 数据库驱动
 sqlx = { version = "0.8", features = [

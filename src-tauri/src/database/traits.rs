@@ -122,6 +122,18 @@ pub enum DbError {
     #[error("配置错误: {0}")]
     ConfigError(String),
 
+    #[error("认证失败: {0}")]
+    AuthenticationFailed(String),
+
+    #[error("网络超时: {0}")]
+    NetworkTimeout(String),
+
+    #[error("会话不存在: {0}")]
+    SessionNotFound(String),
+
+    #[error("权限不足: {0}")]
+    PermissionDenied(String),
+
     #[error("其他错误: {0}")]
     Other(String),
 }

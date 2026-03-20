@@ -1,6 +1,7 @@
 use crate::database::{ColumnInfo, DatabaseInfo, TableInfo, QueryResult, DatabaseType, SchemaInfo, FunctionInfo};
 use crate::AppState;
 use tauri::State;
+use tracing::instrument;
 
 /// 根据数据库类型生成表引用 SQL
 fn format_table_reference(db_type: DatabaseType, database: &str, table: &str, schema: Option<&str>) -> String {
@@ -23,6 +24,7 @@ fn format_table_reference(db_type: DatabaseType, database: &str, table: &str, sc
 
 /// 获取数据库列表
 #[tauri::command]
+#[instrument(skip(state))]
 pub async fn get_databases(
     connection_id: String,
     state: State<'_, AppState>,
@@ -37,6 +39,7 @@ pub async fn get_databases(
 
 /// 获取表列表
 #[tauri::command]
+#[instrument(skip(state))]
 pub async fn get_tables(
     connection_id: String,
     database: Option<String>,

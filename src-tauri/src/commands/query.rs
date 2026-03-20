@@ -2,9 +2,11 @@ use crate::database::QueryResult;
 use crate::utils::sql_formatter::SqlFormatter;
 use crate::AppState;
 use tauri::State;
+use tracing::{info, instrument};
 
 /// 格式化 SQL
 #[tauri::command]
+#[instrument(skip(state, sql))]
 pub async fn beautify_sql(
     connection_id: String,
     sql: String,
@@ -22,6 +24,7 @@ pub async fn beautify_sql(
 
 /// 执行 SQL 查询
 #[tauri::command]
+#[instrument(skip(state, sql))]
 pub async fn execute_query(
     connection_id: String,
     sql: String,
@@ -30,21 +33,13 @@ pub async fn execute_query(
 ) -> Result<QueryResult, String> {
     let manager = state.connection_manager.lock().await;
     
-    println!("=== 执行查询 (ID: {}) ===", connection_id);
-    println!("数据库: {:?}", database);
-    println!("SQL: {}", sql.replace('\n', " ").trim());
+    info!(sql = %sql.replace('\n', " ").trim(), "收到执行请求");
     
     let result = manager
         .execute_query(&connection_id, &sql, database.as_deref())
         .await
-        .map_err(|e| {
-            println!("查询执行报错: {}", e);
-            e.to_string()
-        })?;
+        .map_err(|e| e.to_string())?;
         
-    println!("查询成功: 返回 {} 行数据", result.rows.len());
-    println!("===============================");
-    
     Ok(result)
 }
 
