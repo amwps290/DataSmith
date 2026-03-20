@@ -148,6 +148,8 @@ import { getSqlAutocompleteManager } from '@/services/sqlAutocomplete'
 import { DownOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { invoke } from '@tauri-apps/api/core'
+import { save } from '@tauri-apps/plugin-dialog'
+import { writeTextFile } from '@tauri-apps/plugin-fs'
 import type { QueryResult } from '@/types/database'
 import { useConnectionStore } from '@/stores/connection'
 import { useAppStore } from '@/stores/app'
@@ -406,7 +408,51 @@ onUnmounted(() => {
 watch(() => appStore.theme, (newTheme) => { if (editor) monaco.editor.setTheme(newTheme === 'dark' ? 'vs-dark' : 'vs') })
 watch(() => props.connectionId || connectionStore.activeConnectionId, () => { updateAutocompleteContext(); loadAvailableDatabases(); })
 
-defineExpose({ setSelectedDatabase, executing, executeQuery, handleDatabaseChange, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete })
+async function handleSave() {
+  if (!editor) return
+  const content = editor.getValue()
+  if (!content.trim()) return message.warning('内容为空')
+
+  let targetPath = props.filePath
+  
+  if (!targetPath) {
+    // 获取当前连接和数据库对应的脚本目录
+    const connId = props.connectionId || connectionStore.activeConnectionId
+    if (!connId || !selectedDatabase.value) {
+      // 如果没有绑定库，弹出普通另存为对话框
+      const path = await save({
+        filters: [{ name: 'SQL', extensions: ['sql'] }],
+        defaultPath: `script-${new Date().getTime()}.sql`
+      })
+      if (path) targetPath = path
+    } else {
+      try {
+        const dir = await invoke<string>('get_db_scripts_dir', {
+          connectionId: connId,
+          database: selectedDatabase.value
+        })
+        const fileName = `script-${new Date().toISOString().replace(/[:.]/g, '-')}.sql`
+        targetPath = `${dir}/${fileName}`
+      } catch (e) {
+        console.error('获取目录失败:', e)
+      }
+    }
+  }
+
+  if (targetPath) {
+    try {
+      await writeTextFile(targetPath, content)
+      const fileName = targetPath.split(/[/\\]/).pop() || 'script.sql'
+      emit('fileSaved', targetPath, fileName)
+      addMessage('success', `文件已保存: ${targetPath}`)
+      message.success('已保存')
+    } catch (err: any) {
+      message.error(`保存失败: ${err}`)
+    }
+  }
+}
+
+defineExpose({ setSelectedDatabase, executing, executeQuery, handleDatabaseChange, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
 </script>
 
 <style scoped>

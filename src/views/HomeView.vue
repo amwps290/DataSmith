@@ -61,6 +61,7 @@
             @new-query="handleNewQuery"
             @design-table="handleDesignTable"
             @view-structure="handleViewStructure"
+            @open-scripts="handleOpenSavedScript"
           />
         </div>
       </div>
@@ -239,6 +240,7 @@ import {
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useConnectionStore } from '@/stores/connection'
+import { useWorkspaceStore } from '@/stores/workspace'
 import ConnectionPanel from '@/components/connection/ConnectionPanel.vue'
 import ConnectionDialog from '@/components/connection/ConnectionDialog.vue'
 import SqlEditor from '@/components/editor/SqlEditor.vue'
@@ -249,6 +251,7 @@ import GlobalSearch from '@/components/search/GlobalSearch.vue'
 
 const appStore = useAppStore()
 const connectionStore = useConnectionStore()
+const workspaceStore = useWorkspaceStore()
 const showConnectionDialog = ref(false)
 const showSettings = ref(false)
 const showGlobalSearch = ref(false)
@@ -274,6 +277,52 @@ interface DataTab {
 }
 const dataTabs = ref<DataTab[]>([])
 
+// 监听标签页变化，自动保存会话
+watch([dataTabs, mainTabKey], () => {
+  workspaceStore.saveSession(dataTabs.value as any, mainTabKey.value)
+}, { deep: true })
+
+// 恢复会话
+async function restoreSession() {
+  workspaceStore.isRestoring = true
+  try {
+    const session = await workspaceStore.loadSession()
+    if (session && session.open_tabs.length > 0) {
+      dataTabs.value = session.open_tabs.map(t => ({
+        ...t,
+        type: (t as any).tab_type || t.type // 后端返回的是 tab_type
+      })) as any
+      
+      mainTabKey.value = session.active_tab_key
+      
+      // 自动连接数据库
+      const connectionIds = [...new Set(dataTabs.value.map(t => t.connectionId).filter(Boolean))]
+      for (const id of connectionIds) {
+        // 等待连接列表加载完成
+        if (connectionStore.connections.length === 0) {
+          await connectionStore.fetchConnections()
+        }
+        
+        const conn = connectionStore.connections.find(c => c.id === id)
+        if (conn) {
+          try {
+            await connectionStore.connectToDatabase(conn.id)
+          } catch (e) {
+            console.warn(`自动重连失败 (${conn.name}):`, e)
+          }
+        }
+      }
+    } else {
+      if (isSqlSupported.value) handleNewQuery({})
+    }
+  } catch (e) {
+    console.error('恢复会话失败:', e)
+    if (isSqlSupported.value) handleNewQuery({})
+  } finally {
+    workspaceStore.isRestoring = false
+  }
+}
+
 const activeTabType = computed(() => dataTabs.value.find(t => t.key === mainTabKey.value)?.type)
 const activeTabDatabase = computed({
   get: () => dataTabs.value.find(t => t.key === mainTabKey.value)?.database || '',
@@ -288,12 +337,19 @@ function callActiveEditor(method: string, ...args: any[]) {
 
 function handleToolbarDbChange(val: any) { callActiveEditor('handleDatabaseChange', String(val || '')) }
 
-onMounted(() => { if (isSqlSupported.value) handleNewQuery({}) })
+onMounted(() => {
+  restoreSession()
+})
 
 function setSqlEditorRef(el: any, key: string) { if (el) sqlEditorRefs[key] = el; else delete sqlEditorRefs[key]; }
 function handleContentChange(key: string, val: string) { const t = dataTabs.value.find(t => t.key === key); if (t) t.content = val; }
 function handleFileSaved(key: string, path: string, title: string) {
   const t = dataTabs.value.find(t => t.key === key); if (t) { t.filePath = path; t.title = title; }
+}
+
+// 打开已保存的脚本
+function handleOpenSavedScript(data: any) {
+  handleNewQuery(data)
 }
 
 // 查看表结构
@@ -386,15 +442,28 @@ async function handleDatabaseSelected(d: any) {
     }
     return
   }
+  
+  // 仅切换当前活跃 SQL 编辑器的数据库，不自动打开新 Tab
   const cur = dataTabs.value.find(t => t.key === mainTabKey.value)
-  if (cur?.type === 'query' && (!cur.content || cur.content.length < 5)) sqlEditorRefs[mainTabKey.value]?.setSelectedDatabase(d.name)
-  else handleNewQuery({ database: d.name })
+  if (cur?.type === 'query') {
+    sqlEditorRefs[mainTabKey.value]?.setSelectedDatabase(d.name)
+  }
 }
 
 function handleNewQuery(d: any) {
   if (!isSqlSupported.value) return
   const key = `query-${Date.now()}`
-  dataTabs.value.push({ key, title: `查询 ${dataTabs.value.filter(t => t.type === 'query').length + 1}`, type: 'query', connectionId: connectionStore.activeConnectionId || undefined, database: d.database, content: '-- 在此输入 SQL 查询\n' })
+  const queryCount = dataTabs.value.filter(t => t.type === 'query').length + 1
+  
+  dataTabs.value.push({ 
+    key, 
+    title: d.title || `查询 ${queryCount}`, 
+    type: 'query', 
+    connectionId: d.connectionId || connectionStore.activeConnectionId || undefined, 
+    database: d.database, 
+    content: d.content || '-- 在此输入 SQL 查询\n',
+    filePath: d.filePath
+  })
   mainTabKey.value = key
 }
 

@@ -44,7 +44,11 @@
           <template v-if="selectedNode?.type === 'database'">
             <a-menu-item v-if="isSqlSupported" key="new-query">
               <FileTextOutlined />
-              新建查询
+              新建查询脚本
+            </a-menu-item>
+            <a-menu-item v-if="isSqlSupported" key="open-scripts">
+              <FolderOpenOutlined />
+              打开已有脚本...
             </a-menu-item>
             <a-menu-divider v-if="isSqlSupported" />
             <a-menu-item key="open-database">
@@ -268,6 +272,33 @@
       :database="currentDatabase"
       @restored="handleDatabaseRestored"
     />
+
+    <!-- 脚本选择对话框 -->
+    <a-modal
+      v-model:open="showScriptsModal"
+      title="选择已有脚本"
+      :footer="null"
+      width="600px"
+    >
+      <a-list v-if="savedScripts.length > 0" :loading="loadingScripts" :data-source="savedScripts" size="small">
+        <template #renderItem="{ item }">
+          <a-list-item class="script-list-item" @click="openSavedScript(item)">
+            <a-list-item-meta>
+              <template #title>
+                <div class="script-item-title">
+                  <FileTextOutlined style="margin-right: 8px; color: #1890ff" />
+                  {{ item.name }}
+                </div>
+              </template>
+              <template #description>
+                {{ new Date(item.last_modified * 1000).toLocaleString() }} • {{ (item.size / 1024).toFixed(2) }} KB
+              </template>
+            </a-list-item-meta>
+          </a-list-item>
+        </template>
+      </a-list>
+      <a-empty v-else-if="!loadingScripts" description="该数据库暂无保存的脚本" />
+    </a-modal>
   </div>
 </template>
 
@@ -318,7 +349,7 @@ const props = defineProps<{
   searchValue?: string
 }>()
 
-const emit = defineEmits(['table-selected', 'database-selected', 'new-query', 'design-table', 'view-structure'])
+const emit = defineEmits(['table-selected', 'database-selected', 'new-query', 'design-table', 'view-structure', 'open-scripts'])
 
 // 判断当前数据库是否支持 SQL
 const isSqlSupported = computed(() => {
@@ -1582,6 +1613,9 @@ async function handleMenuClick({ key }: { key: string | number }) {
     case 'new-query':
       handleNewQuery()
       break
+    case 'open-scripts':
+      handleOpenScripts()
+      break
     case 'open-database':
       handleDoubleClick(selectedNode.value)
       break
@@ -1683,6 +1717,48 @@ async function handleMenuClick({ key }: { key: string | number }) {
       navigator.clipboard.writeText(selectedNode.value.title)
       message.success('已复制到剪贴板')
       break
+  }
+}
+
+// 脚本管理相关
+const showScriptsModal = ref(false)
+const savedScripts = ref<any[]>([])
+const loadingScripts = ref(false)
+
+async function handleOpenScripts() {
+  if (!selectedNode.value || !props.connectionId) return
+  
+  loadingScripts.value = true
+  showScriptsModal.value = true
+  
+  try {
+    const scripts = await invoke<any[]>('list_db_scripts', {
+      connectionId: props.connectionId,
+      database: selectedNode.value.metadata.database || selectedNode.value.title,
+    })
+    savedScripts.value = scripts
+  } catch (error: any) {
+    message.error(`获取脚本列表失败: ${error}`)
+  } finally {
+    loadingScripts.value = false
+  }
+}
+
+async function openSavedScript(script: any) {
+  if (!selectedNode.value) return
+  
+  try {
+    const content = await invoke<string>('read_file', { filePath: script.path })
+    emit('new-query', {
+      database: selectedNode.value.metadata.database || selectedNode.value.title,
+      connectionId: props.connectionId,
+      content,
+      filePath: script.path,
+      title: script.name
+    })
+    showScriptsModal.value = false
+  } catch (error: any) {
+    message.error(`打开脚本失败: ${error}`)
   }
 }
 
@@ -2209,6 +2285,27 @@ defineExpose({
 .dark-mode .context-menu {
   background: #1f1f1f;
   border: 1px solid #303030;
+}
+
+.script-list-item {
+  cursor: pointer;
+  transition: all 0.2s;
+  padding: 8px 12px;
+  border-radius: 4px;
+}
+
+.script-list-item:hover {
+  background-color: #f5f5f5;
+}
+
+.dark-mode .script-list-item:hover {
+  background-color: #262626;
+}
+
+.script-item-title {
+  font-weight: 500;
+  display: flex;
+  align-items: center;
 }
 </style>
 
