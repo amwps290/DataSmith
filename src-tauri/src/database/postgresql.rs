@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::time::Instant;
 use tokio_postgres::{Client, NoTls};
-use tracing::{instrument};
+use tracing::{info, instrument, error, debug};
 use native_tls::TlsConnector;
 use postgres_native_tls::MakeTlsConnector;
 
@@ -11,63 +11,47 @@ use super::traits::*;
 /// PostgreSQL 数据库驱动 - 基于 tokio-postgres 的底层实现
 pub struct PostgreSqlDatabase {
     client: Option<Client>,
+    current_config: Option<ConnectionConfig>,
 }
 
 impl PostgreSqlDatabase {
     pub fn new() -> Self {
-        Self { client: None }
+        Self { client: None, current_config: None }
     }
-}
 
-#[async_trait]
-impl DatabaseOperations for PostgreSqlDatabase {
-    #[instrument(skip(self, config))]
-    async fn test_connection(&self, config: &ConnectionConfig) -> DbResult<bool> {
+    async fn create_client(config: &ConnectionConfig) -> DbResult<Client> {
+        let db_name = config.database.as_deref().unwrap_or("postgres");
         let conn_str = format!(
             "host={} port={} user={} password={} dbname={}",
-            config.host,
-            config.port,
-            config.username,
-            config.password,
-            config.database.as_deref().unwrap_or("postgres")
+            config.host, config.port, config.username, config.password, db_name
         );
         
         if config.ssl {
             let connector = TlsConnector::builder().danger_accept_invalid_certs(true).build().map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
             let connector = MakeTlsConnector::new(connector);
             let (client, connection) = tokio_postgres::connect(&conn_str, connector).await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
-            tokio::spawn(async move { if let Err(e) = connection.await { eprintln!("connection error: {}", e); } });
-            client.query("SELECT 1", &[]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+            tokio::spawn(async move { if let Err(e) = connection.await { error!("PostgreSQL SSL 连接异常: {}", e); } });
+            Ok(client)
         } else {
             let (client, connection) = tokio_postgres::connect(&conn_str, NoTls).await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
-            tokio::spawn(async move { if let Err(e) = connection.await { eprintln!("connection error: {}", e); } });
-            client.query("SELECT 1", &[]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+            tokio::spawn(async move { if let Err(e) = connection.await { error!("PostgreSQL 连接异常: {}", e); } });
+            Ok(client)
         }
+    }
+}
+
+#[async_trait]
+impl DatabaseOperations for PostgreSqlDatabase {
+    async fn test_connection(&self, config: &ConnectionConfig) -> DbResult<bool> {
+        let client = Self::create_client(config).await?;
+        client.query("SELECT 1", &[]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(true)
     }
 
-    #[instrument(skip(self, config))]
     async fn connect(&mut self, config: ConnectionConfig) -> DbResult<()> {
-        let conn_str = format!(
-            "host={} port={} user={} password={} dbname={}",
-            config.host,
-            config.port,
-            config.username,
-            config.password,
-            config.database.as_deref().unwrap_or("postgres")
-        );
-
-        if config.ssl {
-            let connector = TlsConnector::builder().danger_accept_invalid_certs(true).build().map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
-            let connector = MakeTlsConnector::new(connector);
-            let (client, connection) = tokio_postgres::connect(&conn_str, connector).await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
-            tokio::spawn(async move { if let Err(e) = connection.await { eprintln!("connection error: {}", e); } });
-            self.client = Some(client);
-        } else {
-            let (client, connection) = tokio_postgres::connect(&conn_str, NoTls).await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
-            tokio::spawn(async move { if let Err(e) = connection.await { eprintln!("connection error: {}", e); } });
-            self.client = Some(client);
-        }
+        let client = Self::create_client(&config).await?;
+        self.client = Some(client);
+        self.current_config = Some(config);
         Ok(())
     }
 
@@ -76,11 +60,29 @@ impl DatabaseOperations for PostgreSqlDatabase {
         Ok(())
     }
 
+    async fn switch_database(&mut self, database: &str) -> DbResult<()> {
+        let mut config = self.current_config.clone().ok_or(DbError::Other("未找到初始配置".into()))?;
+        if config.database.as_deref() == Some(database) {
+            return Ok(());
+        }
+        
+        info!(new_db = %database, "PostgreSQL 正在切换数据库...");
+        config.database = Some(database.to_string());
+        
+        let client = Self::create_client(&config).await?;
+        self.client = Some(client);
+        self.current_config = Some(config);
+        Ok(())
+    }
+
     #[instrument(skip(self, sql))]
     async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<QueryResult> {
         let start = Instant::now();
         let client = self.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
         
+        // 记录当前执行的数据库上下文日志
+        debug!(sql = %sql.replace('\n', " "), "执行查询");
+
         let messages = client.simple_query(sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         
         let mut final_columns = Vec::new();
@@ -164,8 +166,6 @@ impl DatabaseOperations for PostgreSqlDatabase {
     async fn get_table_structure(&self, table: &str, schema: Option<&str>, _db: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
         let client = self.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
         let schema_name = schema.unwrap_or("public");
-        
-        // 改用更精准的底层查询，利用 format_type 获取包括 geometry 在内的真实类型名
         let sql = "
             SELECT 
                 a.attname as column_name,
@@ -177,35 +177,21 @@ impl DatabaseOperations for PostgreSqlDatabase {
             JOIN pg_class c ON a.attrelid = c.oid
             JOIN pg_namespace n ON c.relnamespace = n.oid
             LEFT JOIN pg_attrdef d ON a.attrelid = d.adrelid AND a.attnum = d.adnum
-            WHERE c.relname = $1 
-              AND n.nspname = $2 
-              AND a.attnum > 0 
-              AND NOT a.attisdropped
+            WHERE c.relname = $1 AND n.nspname = $2 AND a.attnum > 0 AND NOT a.attisdropped
             ORDER BY a.attnum;
         ";
-        
         let rows = client.query(sql, &[&table, &schema_name]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
-        
         let pk_sql = "SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) WHERE i.indrelid = ($1::text)::regclass AND i.indisprimary";
         let pk_rows = client.query(pk_sql, &[&format!("{}.{}", schema_name, table)]).await.unwrap_or_default();
         let pk_cols: Vec<String> = pk_rows.into_iter().map(|r| r.get(0)).collect();
-
         Ok(rows.into_iter().map(|r| {
             let name: String = r.get(0);
-            let is_pk = pk_cols.contains(&name);
             let max_len: i32 = r.get(4);
-            
             ColumnInfo {
-                name, 
-                data_type: r.get(1), 
-                nullable: r.get::<_, String>(2) == "YES",
-                default_value: r.try_get(3).ok(), 
-                is_primary_key: is_pk, 
-                is_auto_increment: false,
-                comment: None, 
-                character_maximum_length: if max_len > 0 { Some(max_len as i64) } else { None }, 
-                numeric_precision: None, 
-                numeric_scale: None,
+                name, data_type: r.get(1), nullable: r.get::<_, String>(2) == "YES",
+                default_value: r.try_get(3).ok(), is_primary_key: pk_cols.contains(&name), is_auto_increment: false,
+                comment: None, character_maximum_length: if max_len > 0 { Some(max_len as i64) } else { None }, 
+                numeric_precision: None, numeric_scale: None,
             }
         }).collect())
     }
@@ -215,7 +201,6 @@ impl DatabaseOperations for PostgreSqlDatabase {
         let schema_name = schema.unwrap_or("public");
         let sql = "SELECT i.relname as index_name, a.attname as column_name, ix.indisunique as is_unique, ix.indisprimary as is_primary FROM pg_class t JOIN pg_index ix ON t.oid = ix.indrelid JOIN pg_class i ON i.oid = ix.indexrelid JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) JOIN pg_namespace n ON n.oid = t.relnamespace WHERE t.relname = $1 AND n.nspname = $2";
         let rows = client.query(sql, &[&table, &schema_name]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
-        
         let mut map: HashMap<String, IndexInfo> = HashMap::new();
         for r in rows {
             let name: String = r.get(0);
