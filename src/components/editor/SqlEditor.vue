@@ -549,9 +549,10 @@ function removeFromHistory(item: SqlHistoryItem) {
 
 async function refreshAutocomplete() {
   const connId = props.connectionId || connectionStore.activeConnectionId
-  if (!completionProvider || !connId) return message.warning('请先连接到数据库')
+  if (!connId) return message.warning('请先连接到数据库')
   try {
-    await completionProvider.refresh()
+    autocompleteManager.clearCache(connId)
+    updateAutocompleteContext()
     message.success('自动补全数据已刷新')
   } catch (error: any) { message.error(`刷新失败: ${error}`) }
 }
@@ -559,7 +560,7 @@ async function refreshAutocomplete() {
 async function setSelectedDatabase(database: string) {
   if (availableDatabases.value.length === 0) await loadAvailableDatabases()
   selectedDatabase.value = database
-  if (completionProvider) completionProvider.setCurrentDatabase(database || null)
+  updateAutocompleteContext()
 }
 
 // 暴露所有控制方法给父组件

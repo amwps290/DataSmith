@@ -189,7 +189,6 @@ export class SqlAutocompleteManager implements monaco.languages.CompletionItemPr
     const upperText = textUntilPosition.toUpperCase()
     const tokens = textUntilPosition.trim().split(/\s+/)
     const lastToken = tokens[tokens.length - 1]?.toUpperCase() || ''
-    const secondLastToken = tokens[tokens.length - 2]?.toUpperCase() || ''
 
     // 1. 关键字
     for (const keyword of data.keywords) {

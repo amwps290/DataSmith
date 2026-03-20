@@ -358,7 +358,7 @@ function callActiveEditor(method: string, ...args: any[]) {
   if (editor && editor[method]) editor[method](...args)
 }
 
-function handleToolbarDbChange(val: string) { callActiveEditor('handleDatabaseChange', val) }
+function handleToolbarDbChange(val: any) { callActiveEditor('handleDatabaseChange', String(val || '')) }
 
 onMounted(() => { if (isSqlSupported.value) handleNewQuery({}) })
 

@@ -308,6 +308,7 @@ interface TreeNode {
   children?: TreeNode[]
   isLeaf?: boolean
   metadata?: any
+  isAutoExpanded?: boolean
 }
 
 const props = defineProps<{
@@ -317,6 +318,13 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits(['table-selected', 'database-selected', 'new-query', 'design-table', 'view-structure'])
+
+// 判断当前数据库是否支持 SQL
+const isSqlSupported = computed(() => {
+  if (!props.dbType) return true
+  const nonSqlTypes = ['redis', 'mongodb', 'elasticsearch']
+  return !nonSqlTypes.includes(props.dbType.toLowerCase())
+})
 
 // 递归过滤树节点
 const filterNodes = (nodes: TreeNode[], search: string): TreeNode[] => {

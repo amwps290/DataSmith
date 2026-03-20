@@ -44,7 +44,7 @@
                 <span v-else-if="column.dataIndex === 'is_auto_increment'">
                   <a-checkbox :checked="record.is_auto_increment" disabled />
                 </span>
-                <span v-else>{{ record[column.dataIndex] }}</span>
+                <span v-else>{{ typeof column.dataIndex === 'string' ? record[column.dataIndex] : '' }}</span>
               </template>
 
               <!-- 编辑模式下的单元格渲染 -->
