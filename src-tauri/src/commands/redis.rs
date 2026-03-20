@@ -60,7 +60,7 @@ pub async fn execute_redis_command(
 
     let manager = state.connection_manager.lock().await;
     let connections = manager
-        .get_connection(&connection_id)
+        .get_db_instance(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -102,7 +102,7 @@ pub async fn get_redis_info(
 ) -> Result<HashMap<String, String>, String> {
     let manager = state.connection_manager.lock().await;
     let connections = manager
-        .get_connection(&connection_id)
+        .get_db_instance(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -128,7 +128,7 @@ pub async fn get_redis_key_value(
 ) -> Result<RedisKeyDetail, String> {
     let manager = state.connection_manager.lock().await;
     let connections = manager
-        .get_connection(&connection_id)
+        .get_db_instance(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -184,7 +184,7 @@ pub async fn set_redis_key_value(
 ) -> Result<(), String> {
     let manager = state.connection_manager.lock().await;
     let connections = manager
-        .get_connection(&connection_id)
+        .get_db_instance(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -213,7 +213,7 @@ pub async fn delete_redis_key(
 ) -> Result<(), String> {
     let manager = state.connection_manager.lock().await;
     let connections = manager
-        .get_connection(&connection_id)
+        .get_db_instance(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
 

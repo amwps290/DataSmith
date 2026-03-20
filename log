@@ -1,14 +1,10 @@
-Error: src/components/database/DatabaseTree.vue(45,32): error TS2339: Property 'isSqlSupported' does not exist on type 'CreateComponentPublicInstanceWithMixins<ToResolvedProps<__VLS_Props, { "table-selected": (...args: any[]) => void; "database-selected": (...args: any[]) => void; "new-query": (...args: any[]) => void; "design-table": (...args: any[]) => void; "view-structure": (...args: any[]) => void; }>, ... 24 more ..., {}>'.
-Error: src/components/database/DatabaseTree.vue(49,35): error TS2339: Property 'isSqlSupported' does not exist on type 'CreateComponentPublicInstanceWithMixins<ToResolvedProps<__VLS_Props, { "table-selected": (...args: any[]) => void; "database-selected": (...args: any[]) => void; "new-query": (...args: any[]) => void; "design-table": (...args: any[]) => void; "view-structure": (...args: any[]) => void; }>, ... 24 more ..., {}>'.
-Error: src/components/database/DatabaseTree.vue(54,35): error TS2339: Property 'isSqlSupported' does not exist on type 'CreateComponentPublicInstanceWithMixins<ToResolvedProps<__VLS_Props, { "table-selected": (...args: any[]) => void; "database-selected": (...args: any[]) => void; "new-query": (...args: any[]) => void; "design-table": (...args: any[]) => void; "view-structure": (...args: any[]) => void; }>, ... 24 more ..., {}>'.
-Error: src/components/database/DatabaseTree.vue(55,32): error TS2339: Property 'isSqlSupported' does not exist on type 'CreateComponentPublicInstanceWithMixins<ToResolvedProps<__VLS_Props, { "table-selected": (...args: any[]) => void; "database-selected": (...args: any[]) => void; "new-query": (...args: any[]) => void; "design-table": (...args: any[]) => void; "view-structure": (...args: any[]) => void; }>, ... 24 more ..., {}>'.
-Error: src/components/database/DatabaseTree.vue(59,32): error TS2339: Property 'isSqlSupported' does not exist on type 'CreateComponentPublicInstanceWithMixins<ToResolvedProps<__VLS_Props, { "table-selected": (...args: any[]) => void; "database-selected": (...args: any[]) => void; "new-query": (...args: any[]) => void; "design-table": (...args: any[]) => void; "view-structure": (...args: any[]) => void; }>, ... 24 more ..., {}>'.
-Error: src/components/database/DatabaseTree.vue(342,9): error TS2353: Object literal may only specify known properties, and 'isAutoExpanded' does not exist in type 'TreeNode'.
-Error: src/components/editor/SqlEditor.vue(546,8): error TS2304: Cannot find name 'completionProvider'.
-Error: src/components/editor/SqlEditor.vue(548,11): error TS2304: Cannot find name 'completionProvider'.
-Error: src/components/editor/SqlEditor.vue(556,7): error TS2304: Cannot find name 'completionProvider'.
-Error: src/components/editor/SqlEditor.vue(556,27): error TS2304: Cannot find name 'completionProvider'.
-Error: src/services/sqlAutocomplete.ts(192,11): error TS6133: 'secondLastToken' is declared but its value is never read.
+Error: src/App.vue(13,23): error TS2307: Cannot find module 'vxe-pc-ui' or its corresponding type declarations.
+Error: src/components/data/TableDataGrid.vue(97,52): error TS2307: Cannot find module 'vxe-table' or its corresponding type declarations.
+Error: src/components/data/TableDataGrid.vue(167,39): error TS7006: Parameter 'r' implicitly has an 'any' type.
+Error: src/components/editor/SqlEditor.vue(68,40): error TS7031: Binding element 'key' implicitly has an 'any' type.
+Error: src/components/editor/SqlEditor.vue(160,52): error TS2307: Cannot find module 'vxe-table' or its corresponding type declarations.
+Error: src/main.ts(10,22): error TS2307: Cannot find module 'vxe-table' or its corresponding type declarations.
+Error: src/main.ts(12,19): error TS2307: Cannot find module 'vxe-pc-ui' or its corresponding type declarations.
 beforeBuildCommand `npm run build` failed with exit code 2
        Error [tauri_cli_node] beforeBuildCommand `npm run build` failed with exit code 2
 Error: Process completed with exit code 1.
