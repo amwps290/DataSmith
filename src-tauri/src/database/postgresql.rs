@@ -164,7 +164,26 @@ impl DatabaseOperations for PostgreSqlDatabase {
     async fn get_table_structure(&self, table: &str, schema: Option<&str>, _db: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
         let client = self.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
         let schema_name = schema.unwrap_or("public");
-        let sql = "SELECT column_name, data_type, is_nullable, column_default, character_maximum_length FROM information_schema.columns WHERE table_name = $1 AND table_schema = $2 ORDER BY ordinal_position";
+        
+        // 改用更精准的底层查询，利用 format_type 获取包括 geometry 在内的真实类型名
+        let sql = "
+            SELECT 
+                a.attname as column_name,
+                format_type(a.atttypid, a.atttypmod) as data_type,
+                CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END as is_nullable,
+                pg_get_expr(d.adbin, d.adrelid) as column_default,
+                CASE WHEN a.attlen = -1 THEN 0 ELSE a.attlen END as character_maximum_length
+            FROM pg_attribute a
+            JOIN pg_class c ON a.attrelid = c.oid
+            JOIN pg_namespace n ON c.relnamespace = n.oid
+            LEFT JOIN pg_attrdef d ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+            WHERE c.relname = $1 
+              AND n.nspname = $2 
+              AND a.attnum > 0 
+              AND NOT a.attisdropped
+            ORDER BY a.attnum;
+        ";
+        
         let rows = client.query(sql, &[&table, &schema_name]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         
         let pk_sql = "SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) WHERE i.indrelid = ($1::text)::regclass AND i.indisprimary";
@@ -174,10 +193,19 @@ impl DatabaseOperations for PostgreSqlDatabase {
         Ok(rows.into_iter().map(|r| {
             let name: String = r.get(0);
             let is_pk = pk_cols.contains(&name);
+            let max_len: i32 = r.get(4);
+            
             ColumnInfo {
-                name, data_type: r.get(1), nullable: r.get::<_, String>(2) == "YES",
-                default_value: r.get(3), is_primary_key: is_pk, is_auto_increment: false,
-                comment: None, character_maximum_length: r.get(4), numeric_precision: None, numeric_scale: None,
+                name, 
+                data_type: r.get(1), 
+                nullable: r.get::<_, String>(2) == "YES",
+                default_value: r.try_get(3).ok(), 
+                is_primary_key: is_pk, 
+                is_auto_increment: false,
+                comment: None, 
+                character_maximum_length: if max_len > 0 { Some(max_len as i64) } else { None }, 
+                numeric_precision: None, 
+                numeric_scale: None,
             }
         }).collect())
     }
