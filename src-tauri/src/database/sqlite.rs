@@ -1,483 +1,184 @@
 use async_trait::async_trait;
-use sqlx::{Column, Pool, Row, Sqlite, SqlitePool};
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::Instant;
+use std::sync::Mutex;
+use rusqlite::{Connection, types::ValueRef};
+use tracing::{debug, info, instrument};
 
 use super::traits::*;
 
-/// SQLite 数据库连接
+/// SQLite 数据库驱动 - 基于 rusqlite 的底层实现 (线程安全包装)
 pub struct SqliteDatabase {
-    pool: Option<Pool<Sqlite>>,
-    config: Option<ConnectionConfig>,
+    connection: Option<Mutex<Connection>>,
+    path: Option<String>,
 }
 
 impl SqliteDatabase {
     pub fn new() -> Self {
         Self {
-            pool: None,
-            config: None,
+            connection: None,
+            path: None,
         }
     }
 
-    /// 构建 SQLite 连接字符串
-    fn build_connection_string(config: &ConnectionConfig) -> String {
-        // SQLite 使用文件路径或 :memory:
-        // 我们使用 database 字段作为文件路径
-        if let Some(ref db_path) = config.database {
-            if db_path.is_empty() || db_path == ":memory:" {
-                "sqlite::memory:".to_string()
-            } else {
-                format!("sqlite:{}", db_path)
-            }
-        } else {
-            // 如果没有指定数据库，使用主机字段作为路径（为了兼容）
-            if config.host.is_empty() || config.host == ":memory:" {
-                "sqlite::memory:".to_string()
-            } else {
-                format!("sqlite:{}", config.host)
-            }
+    /// 创建新的 SQLite 数据库文件
+    pub fn create_database_file(path: &str) -> DbResult<()> {
+        if Path::new(path).exists() {
+            return Err(DbError::Other("文件已存在".to_string()));
         }
+        
+        Connection::open(path).map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+        info!(path = %path, "成功创建 SQLite 数据库文件");
+        Ok(())
+    }
+
+    /// 将 rusqlite 的行转换为 JSON
+    fn row_to_map(row: &rusqlite::Row) -> HashMap<String, serde_json::Value> {
+        let mut map = HashMap::new();
+        let column_names = row.as_ref().column_names();
+        
+        for (i, name) in column_names.iter().enumerate() {
+            let value = match row.get_ref_unwrap(i) {
+                ValueRef::Null => serde_json::Value::Null,
+                ValueRef::Integer(i) => serde_json::Value::Number(i.into()),
+                ValueRef::Real(f) => serde_json::Number::from_f64(f).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null),
+                ValueRef::Text(s) => {
+                    let s_str = std::str::from_utf8(s).unwrap_or("");
+                    serde_json::Value::String(s_str.to_string())
+                },
+                ValueRef::Blob(b) => {
+                    let hex = b.iter().map(|byte| format!("{:02x}", byte)).collect::<String>();
+                    serde_json::Value::String(format!("\\x{}", hex))
+                }
+            };
+            map.insert(name.to_string(), value);
+        }
+        map
     }
 }
 
 #[async_trait]
 impl DatabaseOperations for SqliteDatabase {
     async fn test_connection(&self, config: &ConnectionConfig) -> DbResult<bool> {
-        let connection_string = Self::build_connection_string(config);
-        
-        match SqlitePool::connect(&connection_string).await {
-            Ok(pool) => {
-                // 测试查询
-                let result = sqlx::query("SELECT 1")
-                    .fetch_one(&pool)
-                    .await;
-                
-                pool.close().await;
-                
-                match result {
-                    Ok(_) => Ok(true),
-                    Err(e) => Err(DbError::ConnectionFailed(e.to_string())),
-                }
+        let path = &config.host;
+        match Connection::open(path) {
+            Ok(conn) => {
+                conn.execute("SELECT 1", []).map_err(|e| DbError::QueryFailed(e.to_string()))?;
+                Ok(true)
             }
             Err(e) => Err(DbError::ConnectionFailed(e.to_string())),
         }
     }
 
     async fn connect(&mut self, config: ConnectionConfig) -> DbResult<()> {
-        let connection_string = Self::build_connection_string(&config);
-        
-        let pool = SqlitePool::connect(&connection_string)
-            .await
-            .map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
-        
-        self.pool = Some(pool);
-        self.config = Some(config);
-        
+        let path = config.host.clone();
+        let conn = Connection::open(&path).map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+        self.connection = Some(Mutex::new(conn));
+        self.path = Some(path);
         Ok(())
     }
 
     async fn disconnect(&mut self) -> DbResult<()> {
-        if let Some(pool) = self.pool.take() {
-            pool.close().await;
-        }
-        self.config = None;
+        self.connection = None;
         Ok(())
     }
 
+    #[instrument(skip(self, sql))]
     async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<QueryResult> {
-        let pool = self
-            .pool
-            .as_ref()
-            .ok_or_else(|| DbError::ConnectionFailed("未连接到数据库".to_string()))?;
-
         let start = Instant::now();
+        let mutex = self.connection.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let conn = mutex.lock().map_err(|e| DbError::Other(e.to_string()))?;
+        
+        let upper_sql = sql.trim().to_uppercase();
+        let is_select = upper_sql.starts_with("SELECT") || upper_sql.starts_with("PRAGMA") || upper_sql.starts_with("WITH");
 
-        // SQLite 中数据库是单个文件，忽略 database 参数
+        if is_select {
+            let mut stmt = conn.prepare(sql).map_err(|e| DbError::QueryFailed(e.to_string()))?;
+            let column_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+            
+            let rows_iter = stmt.query_map([], |row| {
+                Ok(Self::row_to_map(row))
+            }).map_err(|e| DbError::QueryFailed(e.to_string()))?;
 
-        // 智能分割SQL语句
-        let statements = self.split_sql_statements(sql);
-        println!("SQLite 分割后的SQL语句数量: {}", statements.len());
-        
-        if statements.is_empty() {
-            return Ok(QueryResult {
-                columns: vec![],
-                rows: vec![],
-                affected_rows: 0,
-                execution_time_ms: 0,
-            });
-        }
-        
-        // 如果只有一条语句，直接执行
-        if statements.len() == 1 {
-            return self.execute_single_statement_sqlite(pool, &statements[0], start).await;
-        }
-        
-        // 多条语句：依次执行
-        let mut total_affected_rows: u64 = 0;
-        let mut last_query_result: Option<QueryResult> = None;
-        
-        for (idx, stmt) in statements.iter().enumerate() {
-            println!("执行第 {} 条SQL: {}", idx + 1, stmt);
-            
-            // 判断是否为查询语句
-            let is_select = stmt.trim().to_uppercase().starts_with("SELECT")
-                || stmt.trim().to_uppercase().starts_with("PRAGMA")
-                || stmt.trim().to_uppercase().starts_with("EXPLAIN");
-            
-            if is_select {
-                // 查询语句
-                let rows = sqlx::query(stmt)
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|e| DbError::QueryFailed(format!("语句 {} 执行失败: {}", idx + 1, e)))?;
-                
-                // 保存最后一个查询结果
-                last_query_result = Some(self.process_query_result_sqlite(rows, start)?);
-            } else {
-                // 非查询语句
-                let result = sqlx::query(stmt)
-                    .execute(pool)
-                    .await
-                    .map_err(|e| DbError::QueryFailed(format!("语句 {} 执行失败: {}", idx + 1, e)))?;
-                
-                total_affected_rows += result.rows_affected();
+            let mut rows = Vec::new();
+            for row_result in rows_iter {
+                rows.push(row_result.map_err(|e| DbError::QueryFailed(e.to_string()))?);
             }
-        }
-        
-        // 返回结果：如果有查询结果则返回，否则返回累积的影响行数
-        if let Some(query_result) = last_query_result {
-            let mut result = query_result;
-            result.affected_rows += total_affected_rows;
-            Ok(result)
+
+            Ok(QueryResult {
+                columns: column_names,
+                rows,
+                affected_rows: 0,
+                execution_time_ms: start.elapsed().as_millis(),
+            })
         } else {
-            let duration = start.elapsed();
+            let affected = conn.execute(sql, []).map_err(|e| DbError::QueryFailed(e.to_string()))?;
             Ok(QueryResult {
                 columns: vec![],
                 rows: vec![],
-                affected_rows: total_affected_rows,
-                execution_time_ms: duration.as_millis(),
+                affected_rows: affected as u64,
+                execution_time_ms: start.elapsed().as_millis(),
             })
         }
     }
 
     async fn get_databases(&self) -> DbResult<Vec<DatabaseInfo>> {
-        // SQLite 是单文件数据库，固定返回 "main" 作为数据库名称
-        // 不显示文件路径，因为用户已经在连接名中看到了
-        Ok(vec![DatabaseInfo {
-            name: "main".to_string(),
-            charset: Some("UTF-8".to_string()),
-            collation: None,
-        }])
+        let name = self.path.as_ref()
+            .and_then(|p| Path::new(p).file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("main")
+            .to_string();
+        Ok(vec![DatabaseInfo { name, charset: Some("UTF-8".to_string()), collation: None }])
     }
 
     async fn get_tables(&self, _database: Option<&str>) -> DbResult<Vec<TableInfo>> {
-        let pool = self
-            .pool
-            .as_ref()
-            .ok_or_else(|| DbError::ConnectionFailed("未连接到数据库".to_string()))?;
+        let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name";
+        let res = self.execute_query(sql, None).await?;
+        Ok(res.rows.into_iter().map(|r| TableInfo {
+            name: r.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            schema: None, table_type: "TABLE".to_string(), engine: None, rows: None, size_mb: None, comment: None,
+        }).collect())
+    }
 
-        let rows = sqlx::query(
-            "SELECT 
-                name,
-                type
-             FROM sqlite_master 
-             WHERE type IN ('table', 'view') 
-               AND name NOT LIKE 'sqlite_%'
-             ORDER BY name"
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(|e| DbError::QueryFailed(e.to_string()))?;
-
-        let mut tables = Vec::new();
-        for row in rows {
-            let table_name: String = row.try_get(0).unwrap_or_default();
-            let table_type: String = row.try_get(1).unwrap_or_default();
-            
-            // 获取表的行数
-            let count_sql = format!("SELECT COUNT(*) as count FROM \"{}\"", table_name);
-            let count_row = sqlx::query(&count_sql)
-                .fetch_one(pool)
-                .await
-                .ok();
-            let row_count: Option<u64> = count_row
-                .and_then(|r| r.try_get::<i64, _>(0).ok())
-                .map(|n| n as u64);
-
-            tables.push(TableInfo {
-                name: table_name,
-                schema: None,
-                table_type: table_type.to_uppercase(),
-                engine: Some("SQLite".to_string()),
-                rows: row_count,
-                size_mb: None,
-                comment: None,
-            });
-        }
-
-        Ok(tables)
+    async fn get_views(&self, _database: Option<&str>) -> DbResult<Vec<TableInfo>> {
+        let sql = "SELECT name FROM sqlite_master WHERE type='view' ORDER BY name";
+        let res = self.execute_query(sql, None).await?;
+        Ok(res.rows.into_iter().map(|r| TableInfo {
+            name: r.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            schema: None, table_type: "VIEW".to_string(), engine: None, rows: None, size_mb: None, comment: None,
+        }).collect())
     }
 
     async fn get_table_structure(&self, table: &str, _schema: Option<&str>, _database: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
-        let pool = self
-            .pool
-            .as_ref()
-            .ok_or_else(|| DbError::ConnectionFailed("未连接到数据库".to_string()))?;
-
-        // 使用 PRAGMA table_info 获取表结构
-        let pragma_sql = format!("PRAGMA table_info(\"{}\")", table);
-        let rows = sqlx::query(&pragma_sql)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| DbError::QueryFailed(e.to_string()))?;
-
-        let mut columns = Vec::new();
-        for row in rows {
-            let column_name: String = row.try_get(1).unwrap_or_default();
-            let data_type: String = row.try_get(2).unwrap_or_default();
-            let not_null: i64 = row.try_get(3).unwrap_or(0);
-            let default_value: Option<String> = row.try_get(4).ok();
-            let is_pk: i64 = row.try_get(5).unwrap_or(0);
-
-            columns.push(ColumnInfo {
-                name: column_name,
-                data_type,
-                nullable: not_null == 0,
-                default_value,
-                is_primary_key: is_pk > 0,
-                is_auto_increment: false, // SQLite 的 AUTOINCREMENT 需要额外查询
-                comment: None,
-                character_maximum_length: None,
-                numeric_precision: None,
-                numeric_scale: None,
-            });
-        }
-
-        Ok(columns)
+        let sql = format!("PRAGMA table_info('{}')", table.replace("'", "''"));
+        let res = self.execute_query(&sql, None).await?;
+        Ok(res.rows.into_iter().map(|r| ColumnInfo {
+            name: r.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            data_type: r.get("type").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+            nullable: r.get("notnull").and_then(|v| v.as_i64()).map(|n| n == 0).unwrap_or(true),
+            default_value: r.get("dflt_value").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            is_primary_key: r.get("pk").and_then(|v| v.as_i64()).map(|n| n > 0).unwrap_or(false),
+            is_auto_increment: false, comment: None, character_maximum_length: None, numeric_precision: None, numeric_scale: None,
+        }).collect())
     }
 
     async fn get_indexes(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
-        let pool = self
-            .pool
-            .as_ref()
-            .ok_or_else(|| DbError::ConnectionFailed("未连接到数据库".to_string()))?;
-
-        // 获取索引列表
-        let pragma_sql = format!("PRAGMA index_list(\"{}\")", table);
-        let rows = sqlx::query(&pragma_sql)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| DbError::QueryFailed(e.to_string()))?;
-
+        let sql = format!("PRAGMA index_list('{}')", table.replace("'", "''"));
+        let res = self.execute_query(&sql, None).await?;
         let mut indexes = Vec::new();
-        for row in rows {
-            let index_name: String = row.try_get(1).unwrap_or_default();
-            let is_unique: i64 = row.try_get(2).unwrap_or(0);
-            
-            // 获取索引的列信息
-            let index_info_sql = format!("PRAGMA index_info(\"{}\")", index_name);
-            let col_rows = sqlx::query(&index_info_sql)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| DbError::QueryFailed(e.to_string()))?;
-
-            let mut columns = Vec::new();
-            for col_row in col_rows {
-                let column_name: String = col_row.try_get(2).unwrap_or_default();
-                columns.push(column_name);
-            }
-
-            indexes.push(IndexInfo {
-                name: index_name.clone(),
-                columns,
-                is_unique: is_unique > 0,
-                is_primary: index_name.starts_with("sqlite_autoindex"),
-                index_type: "BTREE".to_string(),
-            });
+        for r in res.rows {
+            let name = r.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let is_unique = r.get("unique").and_then(|v| v.as_i64()).map(|n| n > 0).unwrap_or(false);
+            let col_sql = format!("PRAGMA index_info('{}')", name.replace("'", "''"));
+            let col_res = self.execute_query(&col_sql, None).await?;
+            let columns = col_res.rows.into_iter()
+                .map(|cr| cr.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string())
+                .collect();
+            indexes.push(IndexInfo { name, columns, is_unique, is_primary: false, index_type: "BTREE".into() });
         }
-
         Ok(indexes)
     }
-    
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
+
+    fn as_any(&self) -> &dyn std::any::Any { self }
 }
-
-impl SqliteDatabase {
-    /// 分割SQL语句：智能处理字符串、注释中的分号
-    fn split_sql_statements(&self, sql: &str) -> Vec<String> {
-        let mut statements = Vec::new();
-        let mut current_statement = String::new();
-        let mut chars = sql.chars().peekable();
-        
-        while let Some(ch) = chars.next() {
-            match ch {
-                // 单行注释 --
-                '-' => {
-                    if chars.peek() == Some(&'-') {
-                        // 跳过直到行尾
-                        chars.next(); // 消耗第二个 -
-                        while let Some(&c) = chars.peek() {
-                            if c == '\n' {
-                                chars.next();
-                                break;
-                            }
-                            chars.next();
-                        }
-                    } else {
-                        current_statement.push(ch);
-                    }
-                }
-                // 多行注释 /* */
-                '/' => {
-                    if chars.peek() == Some(&'*') {
-                        chars.next(); // 消耗 *
-                        while let Some(c) = chars.next() {
-                            if c == '*' && chars.peek() == Some(&'/') {
-                                chars.next(); // 消耗 /
-                                break;
-                            }
-                        }
-                    } else {
-                        current_statement.push(ch);
-                    }
-                }
-                // 单引号字符串
-                '\'' => {
-                    current_statement.push(ch);
-                    while let Some(c) = chars.next() {
-                        current_statement.push(c);
-                        if c == '\'' {
-                            // 检查是否是转义的单引号 ''
-                            if chars.peek() == Some(&'\'') {
-                                current_statement.push(chars.next().unwrap());
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                }
-                // 双引号字符串（SQLite中双引号也可用于字符串）
-                '"' => {
-                    current_statement.push(ch);
-                    while let Some(c) = chars.next() {
-                        current_statement.push(c);
-                        if c == '"' {
-                            // 检查是否是转义的双引号 ""
-                            if chars.peek() == Some(&'"') {
-                                current_statement.push(chars.next().unwrap());
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                }
-                // 方括号标识符（SQLite特有）
-                '[' => {
-                    current_statement.push(ch);
-                    while let Some(c) = chars.next() {
-                        current_statement.push(c);
-                        if c == ']' {
-                            break;
-                        }
-                    }
-                }
-                // 分号 - 语句结束
-                ';' => {
-                    let trimmed = current_statement.trim();
-                    if !trimmed.is_empty() {
-                        statements.push(trimmed.to_string());
-                    }
-                    current_statement.clear();
-                }
-                // 其他字符
-                _ => {
-                    current_statement.push(ch);
-                }
-            }
-        }
-        
-        // 处理最后一条语句（没有分号结尾的情况）
-        let trimmed = current_statement.trim();
-        if !trimmed.is_empty() {
-            statements.push(trimmed.to_string());
-        }
-        
-        statements
-    }
-    
-    /// 执行单条SQL语句（SQLite）
-    async fn execute_single_statement_sqlite(
-        &self,
-        pool: &Pool<Sqlite>,
-        sql: &str,
-        start: std::time::Instant,
-    ) -> DbResult<QueryResult> {
-        // 判断是否为查询语句
-        let is_select = sql.trim().to_uppercase().starts_with("SELECT")
-            || sql.trim().to_uppercase().starts_with("PRAGMA")
-            || sql.trim().to_uppercase().starts_with("EXPLAIN");
-
-        if is_select {
-            // 查询操作
-            let rows = sqlx::query(sql)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| DbError::QueryFailed(e.to_string()))?;
-
-            self.process_query_result_sqlite(rows, start)
-        } else {
-            // 非查询操作（INSERT, UPDATE, DELETE 等）
-            let result = sqlx::query(sql)
-                .execute(pool)
-                .await
-                .map_err(|e| DbError::QueryFailed(e.to_string()))?;
-
-            Ok(QueryResult {
-                columns: vec![],
-                rows: vec![],
-                affected_rows: result.rows_affected(),
-                execution_time_ms: start.elapsed().as_millis(),
-            })
-        }
-    }
-    
-    /// 处理查询结果（SQLite）
-    fn process_query_result_sqlite(
-        &self,
-        rows: Vec<sqlx::sqlite::SqliteRow>,
-        start: std::time::Instant,
-    ) -> DbResult<QueryResult> {
-        let mut columns = Vec::new();
-        let mut result_rows = Vec::new();
-
-        if !rows.is_empty() {
-            // 获取列名
-            for column in rows[0].columns() {
-                columns.push(column.name().to_string());
-            }
-
-            // 转换行数据
-            for row in &rows {
-                let mut row_map = HashMap::new();
-                for (idx, column) in row.columns().iter().enumerate() {
-                    let value: Option<String> = row.try_get(idx).ok();
-                    row_map.insert(
-                        column.name().to_string(),
-                        serde_json::Value::String(value.unwrap_or_default()),
-                    );
-                }
-                result_rows.push(row_map);
-            }
-        }
-
-        Ok(QueryResult {
-            columns,
-            rows: result_rows,
-            affected_rows: rows.len() as u64,
-            execution_time_ms: start.elapsed().as_millis(),
-        })
-    }
-}
-

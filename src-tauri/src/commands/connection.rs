@@ -1,10 +1,11 @@
-use crate::database::{ConnectionConfig, DatabaseType};
+use crate::database::{ConnectionConfig, DatabaseType, sqlite::SqliteDatabase};
 use crate::models::{ConnectionTestResult, StoredConnection};
 use crate::utils::crypto;
 use crate::AppState;
 use serde_json::{json, Value};
 use tauri::{AppHandle, State};
 use tauri_plugin_store::StoreExt;
+use tracing::{info, instrument};
 
 /// 将 StoredConnection 转换为 ConnectionConfig
 fn stored_to_config(stored: &StoredConnection) -> Result<ConnectionConfig, String> {
@@ -44,8 +45,18 @@ fn stored_to_config_with_password(stored: &StoredConnection, password: &str) -> 
     }
 }
 
+/// 创建新的 SQLite 数据库文件
+#[tauri::command]
+#[instrument]
+pub async fn create_sqlite_database(path: String) -> Result<String, String> {
+    info!(path = %path, "收到创建 SQLite 数据库请求");
+    SqliteDatabase::create_database_file(&path).map_err(|e| e.to_string())?;
+    Ok("数据库创建成功".to_string())
+}
+
 /// 测试数据库连接
 #[tauri::command]
+#[instrument(skip(state, config))]
 pub async fn test_connection(
     config: Value,
     state: State<'_, AppState>,
@@ -64,7 +75,7 @@ pub async fn test_connection(
         Ok(_) => Ok(ConnectionTestResult {
             success: true,
             message: "连接成功".to_string(),
-            version: Some("8.0.35".to_string()), // TODO: 获取实际版本
+            version: None,
             ping_time_ms: start.elapsed().as_millis(),
         }),
         Err(e) => Ok(ConnectionTestResult {
@@ -174,6 +185,7 @@ pub async fn delete_connection(app: AppHandle, id: String) -> Result<bool, Strin
 
 /// 创建数据库连接
 #[tauri::command]
+#[instrument(skip(state, app))]
 pub async fn create_connection(
     app: AppHandle,
     connection_id: String,
@@ -203,6 +215,7 @@ pub async fn create_connection(
 
 /// 断开数据库连接
 #[tauri::command]
+#[instrument(skip(state))]
 pub async fn disconnect_database(
     connection_id: String,
     state: State<'_, AppState>,
@@ -213,4 +226,3 @@ pub async fn disconnect_database(
     
     Ok(())
 }
-
