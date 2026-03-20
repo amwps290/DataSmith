@@ -124,8 +124,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch, ref, computed, onActivated, nextTick, reactive } from 'vue'
 import * as monaco from 'monaco-editor'
-// @ts-ignore
-import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import { getSqlAutocompleteManager } from '@/services/sqlAutocomplete'
 import { DownOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
@@ -137,10 +135,29 @@ import SaveQueryDialog from './SaveQueryDialog.vue'
 import SqlSnippetsManager from './SqlSnippetsManager.vue'
 import type { VxeGridProps, VxeGridInstance, VxeGridEvents } from 'vxe-table'
 
-const props = defineProps<{ connectionId?: string; initialDatabase?: string; initialValue?: string; filePath?: string }>()
+const props = defineProps<{ 
+  connectionId?: string; 
+  initialDatabase?: string; 
+  initialValue?: string; 
+  filePath?: string;
+  tabId?: string; // 增加 Tab ID 传入
+}>()
+
 const emit = defineEmits(['contentChange', 'fileSaved', 'databasesLoaded'])
 const connectionStore = useConnectionStore()
 const appStore = useAppStore()
+
+// 1. 生成唯一的会话 ID
+const internalSessionId = ref(props.tabId || props.filePath || `editor-${Math.random().toString(36).substring(2, 9)}`)
+
+// 2. 计算复合连接 ID (用于后端路由到独立会话)
+const sessionConnectionId = computed(() => {
+  const baseId = props.connectionId || connectionStore.activeConnectionId
+  if (!baseId) return ''
+  // 将路径中的特殊字符清理，防止 ID 冲突
+  const sid = internalSessionId.value.replace(/[^a-zA-Z0-9]/g, '_')
+  return `${baseId}:tab_${sid}`
+})
 
 const editorContainer = ref<HTMLElement>()
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
@@ -209,7 +226,7 @@ async function executeQuery() {
 }
 
 async function fetchPageData(isAppend: boolean) {
-  const connId = props.connectionId || connectionStore.activeConnectionId
+  const connId = sessionConnectionId.value // 使用带隔离的 Session ID
   if (!connId) return
   const sql = editor?.getValue().trim()
   if (!sql) return message.warning('请输入 SQL')
@@ -231,7 +248,6 @@ async function fetchPageData(isAppend: boolean) {
       addMessage('success', `查询成功 (${result.affected_rows} 行)`)
       saveToHistory(sql)
     } else {
-      // 这里的逻辑稍微特殊：如果是多结果集，只追加到当前显示的
       gridOptions.data = [...(gridOptions.data || []), ...result.rows]
     }
   } catch (e: any) {
@@ -243,19 +259,24 @@ async function fetchPageData(isAppend: boolean) {
 
 function handleResultIndexChange({ key }: any) {
   currentResultIndex.value = Number(key)
-  // 如果切换了结果集，清空滚动状态（因为我们目前只支持单结果集的无限滚动追加）
   gridOptions.data = queryResults.value[currentResultIndex.value].rows
-  hasMore.value = false // 多结果集暂不支持交叉追加，设为 false
+  hasMore.value = false
 }
 
-// 其余逻辑（Monaco 初始化等）保持不变...
 function stopExecution() { executing.value = false; addMessage('info', '已停止') }
+
 async function formatSql() {
   if (!editor) return
-  const sql = editor.getValue(), connId = props.connectionId || connectionStore.activeConnectionId
+  const sql = editor.getValue(), connId = sessionConnectionId.value
   if (!sql.trim() || !connId) return
-  try { const formatted = await invoke<string>('beautify_sql', { connectionId: connId, sql }); editor.setValue(formatted) } catch (e: any) { message.error(e) }
+  try { 
+    const formatted = await invoke<string>('beautify_sql', { connectionId: connId, sql }); 
+    editor.setValue(formatted) 
+  } catch (e: any) { 
+    message.error(e) 
+  }
 }
+
 function clearEditor() { editor?.setValue(''); queryResults.value = []; messages.value = []; gridOptions.data = []; gridOptions.columns = []; }
 function handleQuerySaved() { message.success('已保存') }
 function insertSnippet(sql: string) { if (!editor) return; const selection = editor.getSelection(); editor.executeEdits('insert-snippet', [{ range: selection || editor.getSelection()!, text: sql }]); showSnippets.value = false }
@@ -263,13 +284,60 @@ function openHistory() { showHistory.value = true }
 function openSnippets() { showSnippets.value = true }
 function useHistorySql(sql: string) { editor?.setValue(sql); showHistory.value = false; }
 function saveToHistory(sql: string) { sqlHistory.value.unshift({ sql, timestamp: Date.now(), database: selectedDatabase.value }); if (sqlHistory.value.length > 100) sqlHistory.value.pop(); localStorage.setItem('sql_history', JSON.stringify(sqlHistory.value)) }
-async function refreshAutocomplete() { const connId = props.connectionId || connectionStore.activeConnectionId; if (!connId) return; autocompleteManager.clearCache(connId); updateAutocompleteContext(); message.success('已刷新') }
-async function setSelectedDatabase(database: string) { if (availableDatabases.value.length === 0) await loadAvailableDatabases(); selectedDatabase.value = database; updateAutocompleteContext() }
-async function handleSave(isAuto = false) { if (!editor || !props.filePath) return; const content = editor.getValue(); if (!content.trim()) return; try { await invoke('write_file', { path: props.filePath, content: content }); if (!isAuto) message.success('已保存') } catch (err: any) { if (!isAuto) message.error(`保存失败: ${err}`) } }
+
+async function refreshAutocomplete() { 
+  const baseId = props.connectionId || connectionStore.activeConnectionId; 
+  if (!baseId) return; 
+  autocompleteManager.clearCache(baseId); 
+  updateAutocompleteContext(); 
+  message.success('已刷新提示缓存') 
+}
+
+async function setSelectedDatabase(database: string) { 
+  if (availableDatabases.value.length === 0) await loadAvailableDatabases(); 
+  selectedDatabase.value = database; 
+  updateAutocompleteContext() 
+}
+
+async function handleSave(isAuto = false) { 
+  if (!editor || !props.filePath) return; 
+  const content = editor.getValue(); 
+  if (!content.trim()) return; 
+  try { 
+    await invoke('write_file', { path: props.filePath, content: content }); 
+    if (!isAuto) message.success('已保存') 
+  } catch (err: any) { 
+    if (!isAuto) message.error(`保存失败: ${err}`) 
+  } 
+}
+
 function startResize(e: MouseEvent) { isSplitResizing.value = true; const startY = e.clientY, startHeight = editorHeight.value; const doResize = (ev: MouseEvent) => { if (isSplitResizing.value) { editorHeight.value = Math.max(100, startHeight + (ev.clientY - startY)); calculateResultHeight() } }; const stopResize = () => { isSplitResizing.value = false; document.removeEventListener('mousemove', doResize); document.removeEventListener('mouseup', stopResize); document.body.style.cursor = '' }; document.body.style.cursor = 'row-resize'; document.addEventListener('mousemove', doResize); document.addEventListener('mouseup', stopResize) }
 function calculateResultHeight() { const totalHeight = window.innerHeight - 144; resultTableHeight.value = totalHeight - editorHeight.value - 100 }
-function updateAutocompleteContext() { const model = editor?.getModel(), connId = props.connectionId || connectionStore.activeConnectionId; if (model && connId && connectionStore.connections.length > 0) { const conn = connectionStore.connections.find(c => c.id === connId); autocompleteManager.bindModel(model, { connectionId: connId, database: selectedDatabase.value || null, dbType: conn?.db_type || null }) } }
-async function loadAvailableDatabases() { const connId = props.connectionId || connectionStore.activeConnectionId; if (!connId) return; loadingDatabases.value = true; try { const dbs = await invoke<any[]>('get_databases', { connectionId: connId }); availableDatabases.value = dbs; emit('databasesLoaded', dbs) } catch (e) { console.error(e) } finally { loadingDatabases.value = false } }
+
+function updateAutocompleteContext() { 
+  const model = editor?.getModel(), baseId = props.connectionId || connectionStore.activeConnectionId; 
+  if (model && baseId && connectionStore.connections.length > 0) { 
+    const conn = connectionStore.connections.find(c => c.id === baseId); 
+    autocompleteManager.bindModel(model, { connectionId: baseId, database: selectedDatabase.value || null, dbType: conn?.db_type || null }) 
+  } 
+}
+
+async function loadAvailableDatabases() { 
+  // 获取数据库列表通常使用 Metadata 连接即可
+  const baseId = props.connectionId || connectionStore.activeConnectionId; 
+  if (!baseId) return; 
+  loadingDatabases.value = true; 
+  try { 
+    const dbs = await invoke<any[]>('get_databases', { connectionId: baseId }); 
+    availableDatabases.value = dbs; 
+    emit('databasesLoaded', dbs) 
+  } catch (e) { 
+    console.error(e) 
+  } finally { 
+    loadingDatabases.value = false 
+  } 
+}
+
 function handleDatabaseChange(dbName: string) { selectedDatabase.value = dbName; updateAutocompleteContext() }
 
 onMounted(() => {
