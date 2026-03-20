@@ -23,17 +23,25 @@
     <div v-if="contextMenuVisible" class="context-menu-overlay" @click="contextMenuVisible = false">
       <div class="context-menu" :style="{ left: contextMenuX + 'px', top: contextMenuY + 'px' }" @click.stop>
         <a-menu @click="handleMenuClick">
+          <!-- 数据库级别 -->
           <template v-if="selectedNode?.type === 'database'">
             <a-menu-item v-if="isSqlSupported" key="new-query"><template #icon><FileTextOutlined /></template>新建查询脚本</a-menu-item>
             <a-menu-item v-if="isSqlSupported" key="open-scripts"><template #icon><FolderOpenOutlined /></template>打开已有脚本...</a-menu-item>
             <a-menu-divider />
-            <a-menu-item key="refresh"><template #icon><ReloadOutlined /></template>刷新数据库列表</a-menu-item>
+            <a-menu-item key="refresh"><template #icon><ReloadOutlined /></template>刷新数据库内容</a-menu-item>
           </template>
           
+          <!-- Schema 或 文件夹级别 -->
+          <template v-else-if="['schema', 'tables', 'views', 'schemas', 'functions', 'schema-tables', 'schema-views', 'schema-functions', 'schema-indexes'].includes(selectedNode?.type || '')">
+            <a-menu-item key="refresh"><template #icon><ReloadOutlined /></template>刷新</a-menu-item>
+          </template>
+          
+          <!-- 表级别 -->
           <template v-if="selectedNode?.type === 'table'">
             <a-menu-item key="view-data"><template #icon><TableOutlined /></template>查看数据</a-menu-item>
             <a-menu-item key="design-table"><template #icon><EditOutlined /></template>设计表</a-menu-item>
             <a-menu-divider />
+            <a-menu-item key="refresh"><template #icon><ReloadOutlined /></template>刷新字段</a-menu-item>
             <a-menu-item key="drop-table" danger><template #icon><DeleteOutlined /></template>删除表</a-menu-item>
           </template>
 
@@ -120,6 +128,26 @@ async function loadDatabases() {
       treeData.value = dbs.map(db => ({ key: `db-${db.name}`, title: db.name, type: 'database', isLeaf: false, metadata: db }))
     }
   } catch (e: any) { message.error(e) } finally { loading.value = false }
+}
+
+/**
+ * 局部刷新逻辑：关闭当前层级并清空缓存
+ */
+async function handleRefreshNode(node: TreeNode) {
+  // 1. 同步 UI 状态：从展开列表中移除，箭头会立即变回“折叠”状态
+  expandedKeys.value = expandedKeys.value.filter(k => k !== node.key)
+  
+  // 2. 清空缓存：将该节点的子节点数组设为 undefined
+  updateNodeInTree(treeData.value, node.key, (target) => {
+    target.children = undefined
+  })
+  
+  // 3. 强制更新树引用以触发 Vue 响应式
+  treeData.value = [...treeData.value]
+  
+  message.success(`已重置 "${node.title}" 的本地缓存`)
+  
+  // 提示：下一次用户点击该节点的箭头展开时，handleToggle 会自动调用 onLoadData 重新加载最新的第一层子节点
 }
 
 function updateNodeInTree(nodes: TreeNode[], targetKey: string, updater: (node: TreeNode) => void): boolean {
@@ -284,7 +312,7 @@ async function handleMenuClick({ key }: any) {
   contextMenuVisible.value = false; if (!selectedNode.value) return
   if (key === 'new-query') emit('new-query', { database: selectedNode.value.metadata.name || selectedNode.value.metadata.database, connectionId: props.connectionId })
   else if (key === 'open-scripts') handleOpenScripts()
-  else if (key === 'refresh') loadDatabases()
+  else if (key === 'refresh') handleRefreshNode(selectedNode.value) // 使用局部刷新逻辑
   else if (key === 'copy-name') { navigator.clipboard.writeText(selectedNode.value.title); message.success('已复制') }
 }
 
