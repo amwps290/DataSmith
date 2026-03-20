@@ -39,7 +39,6 @@
             <a-menu-item key="drop-table" danger><template #icon><DeleteOutlined /></template>删除表</a-menu-item>
           </template>
 
-          <!-- 通用 -->
           <a-menu-item key="copy-name"><template #icon><CopyOutlined /></template>复制名称</a-menu-item>
         </a-menu>
       </div>
@@ -94,7 +93,6 @@ const isSqlSupported = computed(() => {
 const loading = ref(false), treeData = ref<TreeNode[]>([]), expandedKeys = ref<string[]>([]), selectedKeys = ref<string[]>([]), loadingNodes = ref<Set<string>>(new Set())
 const contextMenuVisible = ref(false), contextMenuX = ref(0), contextMenuY = ref(0), selectedNode = ref<TreeNode | null>(null)
 
-// 过滤逻辑
 const filteredTreeData = computed(() => {
   if (!props.searchValue) return treeData.value
   const search = props.searchValue.toLowerCase()
@@ -121,6 +119,7 @@ async function loadDatabases() {
       ]
     } else {
       const dbs = await invoke<DatabaseInfo[]>('get_databases', { connectionId: props.connectionId })
+      // 直接显示数据库，不构造包裹层，解决重复 local 问题
       treeData.value = dbs.map(db => ({ key: `db-${db.name}`, title: db.name, type: 'database', isLeaf: false, metadata: db }))
     }
   } catch (e: any) { message.error(e) } finally { loading.value = false }
@@ -134,13 +133,11 @@ function updateNodeInTree(nodes: TreeNode[], targetKey: string, updater: (node: 
   return false
 }
 
-// 核心加载逻辑修复：增加 Schema 深度支持
 async function onLoadData(treeNode: TreeNode) {
   if (treeNode.children && treeNode.children.length > 0) return
   const connId = props.connectionId
   if (!connId) return
 
-  // 1. 展开数据库节点
   if (treeNode.type === 'database') {
     const dbName = treeNode.metadata.name
     let children: TreeNode[] = []
@@ -158,8 +155,6 @@ async function onLoadData(treeNode: TreeNode) {
     updateNodeInTree(treeData.value, treeNode.key, (n) => n.children = children)
     treeData.value = [...treeData.value]
   }
-
-  // 2. 加载 PostgreSQL Schemas
   else if (treeNode.type === 'schemas') {
     try {
       const res = await invoke<any[]>('get_schemas', { connectionId: connId, database: treeNode.metadata.database })
@@ -174,8 +169,6 @@ async function onLoadData(treeNode: TreeNode) {
       treeData.value = [...treeData.value]
     } catch (e: any) { message.error(e) }
   }
-
-  // 3. 展开 Schema 节点 (Tables, Views, Indexes 等文件夹)
   else if (treeNode.type === 'schema') {
     const db = treeNode.metadata.database
     const schema = treeNode.metadata.name
@@ -188,8 +181,6 @@ async function onLoadData(treeNode: TreeNode) {
     updateNodeInTree(treeData.value, treeNode.key, (n) => n.children = children)
     treeData.value = [...treeData.value]
   }
-
-  // 4. 加载 Schema 下的具体对象 (表、索引等)
   else if (['schema-tables', 'schema-views', 'tables', 'views'].includes(treeNode.type)) {
     const isSchema = treeNode.type.startsWith('schema-')
     const method = treeNode.type.includes('views') ? 'get_views' : (isSchema ? 'get_schema_tables' : 'get_tables')
@@ -210,8 +201,6 @@ async function onLoadData(treeNode: TreeNode) {
       treeData.value = [...treeData.value]
     } catch (e: any) { message.error(e) }
   }
-
-  // 5. 加载 Schema 索引
   else if (treeNode.type === 'schema-indexes') {
     try {
       const res = await invoke<any[]>('get_schema_indexes', { 
@@ -228,8 +217,6 @@ async function onLoadData(treeNode: TreeNode) {
       treeData.value = [...treeData.value]
     } catch (e: any) { message.error(e) }
   }
-
-  // 6. 加载字段
   else if (['table', 'view'].includes(treeNode.type)) {
     try {
       const res = await invoke<any[]>('get_table_structure', { 
