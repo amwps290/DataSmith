@@ -162,11 +162,11 @@ pub trait DatabaseOperations: Send + Sync {
     /// 测试连接
     async fn test_connection(&self, config: &ConnectionConfig) -> DbResult<bool>;
 
-    /// 连接数据库
-    async fn connect(&mut self, config: ConnectionConfig) -> DbResult<()>;
+    /// 连接数据库 - 改为 &self 以支持 Arc 共享
+    async fn connect(&self, config: ConnectionConfig) -> DbResult<()>;
 
-    /// 断开连接
-    async fn disconnect(&mut self) -> DbResult<()>;
+    /// 断开连接 - 改为 &self
+    async fn disconnect(&self) -> DbResult<()>;
 
     /// 执行查询
     async fn execute_query(&self, sql: &str, database: Option<&str>) -> DbResult<QueryResult>;
@@ -187,7 +187,8 @@ pub trait DatabaseOperations: Send + Sync {
         Ok(Vec::new())
     }
     
-    async fn switch_database(&mut self, _database: &str) -> DbResult<()> {
+    /// 切换数据库 - 改为 &self
+    async fn switch_database(&self, _database: &str) -> DbResult<()> {
         Ok(())
     }
     
