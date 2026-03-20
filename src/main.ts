@@ -15,25 +15,19 @@ import 'vxe-pc-ui/lib/style.css'
 // 设置 Monaco Editor 的 Worker 配置
 (window as any).MonacoEnvironment = {
   getWorkerUrl: function (_moduleId: string, label: string) {
-    if (label === 'json') {
-      return './monaco-editor/esm/vs/language/json/json.worker.js'
-    }
-    if (label === 'css' || label === 'scss' || label === 'less') {
-      return './monaco-editor/esm/vs/language/css/css.worker.js'
-    }
-    if (label === 'html' || label === 'handlebars' || label === 'razor') {
-      return './monaco-editor/esm/vs/language/html/html.worker.js'
-    }
-    if (label === 'typescript' || label === 'javascript') {
-      return './monaco-editor/esm/vs/language/typescript/ts.worker.js'
-    }
+    if (label === 'json') return './monaco-editor/esm/vs/language/json/json.worker.js'
+    if (label === 'css' || label === 'scss' || label === 'less') return './monaco-editor/esm/vs/language/css/css.worker.js'
+    if (label === 'html' || label === 'handlebars' || label === 'razor') return './monaco-editor/esm/vs/language/html/html.worker.js'
+    if (label === 'typescript' || label === 'javascript') return './monaco-editor/esm/vs/language/typescript/ts.worker.js'
     return './monaco-editor/esm/vs/editor/editor.worker.js'
   }
 }
 
 const app = createApp(App)
+const pinia = createPinia()
 
-app.use(createPinia())
+// 关键：必须在所有可能用到 Store 的插件之前安装 Pinia
+app.use(pinia)
 app.use(router)
 app.use(Antd)
 app.use(VxeUI)

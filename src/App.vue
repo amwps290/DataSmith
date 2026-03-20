@@ -7,7 +7,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, watch, onMounted } from 'vue'
 import { theme as antTheme } from 'ant-design-vue'
 import { useAppStore } from '@/stores/app'
 import { VxeUI } from 'vxe-pc-ui'
@@ -19,10 +19,12 @@ const themeConfig = computed(() => ({
   algorithm: isDark.value ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
 }))
 
-// 同步 vxe-table 主题
-watch(() => appStore.theme, (val) => {
-  VxeUI.setTheme(val === 'dark' ? 'dark' : 'light')
-}, { immediate: true })
+// 在组件挂载后再开始监听 Store 变化，确保 Pinia 已完全激活
+onMounted(() => {
+  watch(() => appStore.theme, (val) => {
+    VxeUI.setTheme(val === 'dark' ? 'dark' : 'light')
+  }, { immediate: true })
+})
 </script>
 
 <style>
@@ -37,4 +39,3 @@ watch(() => appStore.theme, (val) => {
   color: rgba(255, 255, 255, 0.85);
 }
 </style>
-

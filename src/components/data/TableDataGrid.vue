@@ -119,7 +119,7 @@ const gridOptions = reactive<VxeGridProps>({
   height: 'auto',
   loading: false,
   columnConfig: { resizable: true, drag: true },
-  rowConfig: { isCurrent: true, isHover: true, keyField: '__rowIndex' },
+  rowConfig: { isCurrent: true, isHover: true, keyField: '__rowIndex', height: 36 },
   checkboxConfig: { reserve: true, trigger: 'cell' },
   scrollX: { enabled: true, gt: 20 },
   scrollY: { enabled: true, gt: 50 }, // 开启纵向虚拟滚动
@@ -150,8 +150,13 @@ async function loadData() {
 
     gridOptions.columns = [
       { type: 'checkbox', width: 50, fixed: 'left' },
-      { type: 'seq', title: '#', width: 60, fixed: 'left' },
-      ...result.columns.map(col => ({ field: col, title: col, minWidth: 120, slots: { default: 'cell_default' } }))
+      ...result.columns.map(col => ({ 
+        field: col, 
+        title: col, 
+        minWidth: 120, 
+        showOverflow: true, // 禁用换行并显示省略号
+        slots: { default: 'cell_default' } 
+      }))
     ]
     gridOptions.data = result.rows.map((row, i) => ({ __rowIndex: offset + i, ...row }))
   } catch (e: any) { message.error(e) } finally { loading.value = false; gridOptions.loading = false }

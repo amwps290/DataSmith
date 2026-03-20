@@ -209,7 +209,7 @@ const gridOptions = reactive<VxeGridProps>({
   height: 'auto',
   loading: false,
   columnConfig: { resizable: true },
-  rowConfig: { isHover: true, isCurrent: true },
+  rowConfig: { isHover: true, isCurrent: true, height: 36 },
   scrollX: { enabled: true, gt: 20 },
   scrollY: { enabled: true, gt: 50 },
   columns: [],
@@ -306,11 +306,11 @@ async function handlePageChange(page: number) {
     
     // 更新 VxeGrid 配置
     gridOptions.columns = [
-      { type: 'seq', title: '#', width: 60, fixed: 'left' },
       ...result.columns.map(col => ({
         field: col,
         title: col,
         minWidth: 150,
+        showOverflow: true, // 禁用换行并显示省略号
         slots: { default: 'cell_default' }
       }))
     ]
