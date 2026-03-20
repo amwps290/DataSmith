@@ -104,6 +104,15 @@ pub struct FunctionInfo {
     pub comment: Option<String>,
 }
 
+/// 数据库元数据 - 扩展信息 (PostgreSQL 专用)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionInfo {
+    pub name: String,
+    pub version: String,
+    pub schema: Option<String>,
+    pub comment: Option<String>,
+}
+
 /// 数据库操作结果
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -174,33 +183,29 @@ pub trait DatabaseOperations: Send + Sync {
     /// 获取索引信息
     async fn get_indexes(&self, table: &str, schema: Option<&str>) -> DbResult<Vec<IndexInfo>>;
     
-    /// 获取视图列表（默认实现返回空列表）
     async fn get_views(&self, _database: Option<&str>) -> DbResult<Vec<TableInfo>> {
         Ok(Vec::new())
     }
     
-    /// 切换数据库（对于需要重新连接的数据库类型如 PostgreSQL）
-    /// 默认实现直接返回 Ok(())，表示不支持或不需要切换
     async fn switch_database(&mut self, _database: &str) -> DbResult<()> {
         Ok(())
     }
     
-    /// 获取 Any 引用，用于向下转型
     fn as_any(&self) -> &dyn std::any::Any;
 
-    /// 获取 schema 列表（默认实现返回空列表，仅 PostgreSQL 等支持 schema 的数据库需要实现）
     async fn get_schemas(&self, _database: Option<&str>) -> DbResult<Vec<SchemaInfo>> {
         Ok(Vec::new())
     }
 
-    /// 获取指定 schema 下的函数列表（默认实现返回空列表）
     async fn get_functions(&self, _database: Option<&str>, _schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
         Ok(Vec::new())
     }
 
-    /// 获取指定 schema 下的聚合函数列表（默认实现返回空列表）
     async fn get_aggregate_functions(&self, _database: Option<&str>, _schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
         Ok(Vec::new())
     }
-}
 
+    async fn get_extensions(&self, _database: Option<&str>) -> DbResult<Vec<ExtensionInfo>> {
+        Ok(Vec::new())
+    }
+}

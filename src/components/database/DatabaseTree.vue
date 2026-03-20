@@ -23,7 +23,6 @@
     <div v-if="contextMenuVisible" class="context-menu-overlay" @click="contextMenuVisible = false">
       <div class="context-menu" :style="{ left: contextMenuX + 'px', top: contextMenuY + 'px' }" @click.stop>
         <a-menu @click="handleMenuClick">
-          <!-- 数据库级别 -->
           <template v-if="selectedNode?.type === 'database'">
             <a-menu-item v-if="isSqlSupported" key="new-query"><template #icon><FileTextOutlined /></template>新建查询脚本</a-menu-item>
             <a-menu-item v-if="isSqlSupported" key="open-scripts"><template #icon><FolderOpenOutlined /></template>打开已有脚本...</a-menu-item>
@@ -31,7 +30,6 @@
             <a-menu-item key="refresh"><template #icon><ReloadOutlined /></template>刷新数据库列表</a-menu-item>
           </template>
           
-          <!-- 表级别 -->
           <template v-if="selectedNode?.type === 'table'">
             <a-menu-item key="view-data"><template #icon><TableOutlined /></template>查看数据</a-menu-item>
             <a-menu-item key="design-table"><template #icon><EditOutlined /></template>设计表</a-menu-item>
@@ -119,7 +117,6 @@ async function loadDatabases() {
       ]
     } else {
       const dbs = await invoke<DatabaseInfo[]>('get_databases', { connectionId: props.connectionId })
-      // 直接显示数据库，不构造包裹层，解决重复 local 问题
       treeData.value = dbs.map(db => ({ key: `db-${db.name}`, title: db.name, type: 'database', isLeaf: false, metadata: db }))
     }
   } catch (e: any) { message.error(e) } finally { loading.value = false }
@@ -186,9 +183,7 @@ async function onLoadData(treeNode: TreeNode) {
     const method = treeNode.type.includes('views') ? 'get_views' : (isSchema ? 'get_schema_tables' : 'get_tables')
     try {
       const res = await invoke<any[]>(method, { 
-        connectionId: connId, 
-        database: treeNode.metadata.database, 
-        schema: treeNode.metadata.schema || null 
+        connectionId: connId, database: treeNode.metadata.database, schema: treeNode.metadata.schema || null 
       })
       const children = res.map(t => ({
         key: `${treeNode.key}-${t.name}`,
@@ -207,13 +202,40 @@ async function onLoadData(treeNode: TreeNode) {
         connectionId: connId, database: treeNode.metadata.database, schema: treeNode.metadata.schema 
       })
       const children = res.map(idx => ({
-        key: `${treeNode.key}-${idx.index_name}`,
-        title: idx.index_name,
-        type: 'index',
-        isLeaf: true,
+        key: `${treeNode.key}-${idx.index_name}`, title: idx.index_name, type: 'index', isLeaf: true,
         metadata: { ...idx, database: treeNode.metadata.database, schema: treeNode.metadata.schema }
       }))
       updateNodeInTree(treeData.value, treeNode.key, (n) => n.children = children.length ? children : [{ key: `${treeNode.key}-empty`, title: '(无索引)', type: 'empty', isLeaf: true }])
+      treeData.value = [...treeData.value]
+    } catch (e: any) { message.error(e) }
+  }
+  else if (treeNode.type === 'schema-functions') {
+    try {
+      const res = await invoke<any[]>('get_schema_functions', { 
+        connectionId: connId, database: treeNode.metadata.database, schema: treeNode.metadata.schema 
+      })
+      const children = res.map(f => ({
+        key: `${treeNode.key}-${f.name}`,
+        title: `${f.name}(${f.arguments || ''})`,
+        type: 'function', isLeaf: true,
+        metadata: { ...f, database: treeNode.metadata.database, schema: treeNode.metadata.schema }
+      }))
+      updateNodeInTree(treeData.value, treeNode.key, (n) => n.children = children.length ? children : [{ key: `${treeNode.key}-empty`, title: '(无函数)', type: 'empty', isLeaf: true }])
+      treeData.value = [...treeData.value]
+    } catch (e: any) { message.error(e) }
+  }
+  else if (treeNode.type === 'database-extensions') {
+    try {
+      const res = await invoke<any[]>('get_database_extensions', { 
+        connectionId: connId, database: treeNode.metadata.database 
+      })
+      const children = res.map(ext => ({
+        key: `${treeNode.key}-${ext.name}`,
+        title: `${ext.name} (${ext.version})`,
+        type: 'extension', isLeaf: true,
+        metadata: { ...ext, database: treeNode.metadata.database }
+      }))
+      updateNodeInTree(treeData.value, treeNode.key, (n) => n.children = children.length ? children : [{ key: `${treeNode.key}-empty`, title: '(无扩展)', type: 'empty', isLeaf: true }])
       treeData.value = [...treeData.value]
     } catch (e: any) { message.error(e) }
   }
@@ -225,8 +247,7 @@ async function onLoadData(treeNode: TreeNode) {
       const children = res.map(c => ({
         key: `${treeNode.key}-col-${c.name}`,
         title: `${c.name}${c.data_type ? ' : ' + c.data_type : ''}${c.is_primary_key ? ' [PK]' : ''}`,
-        type: 'column',
-        isLeaf: true,
+        type: 'column', isLeaf: true,
         metadata: { ...c, database: treeNode.metadata.database, table: treeNode.metadata.name, schema: treeNode.metadata.schema }
       }))
       updateNodeInTree(treeData.value, treeNode.key, (n) => n.children = children.length ? children : [{ key: `${treeNode.key}-empty`, title: '(无字段)', type: 'empty', isLeaf: true }])
