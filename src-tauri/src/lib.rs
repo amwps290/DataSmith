@@ -5,9 +5,8 @@ pub mod utils;
 
 use database::ConnectionManager;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
-/// 应用状态
+/// 应用状态 - 移除全局 Mutex，因为 ConnectionManager 内部已实现细粒度锁
 pub struct AppState {
-    pub connection_manager: Arc<Mutex<ConnectionManager>>,
+    pub connection_manager: Arc<ConnectionManager>,
 }

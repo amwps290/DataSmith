@@ -42,7 +42,6 @@ pub async fn execute_redis_command(
 ) -> Result<RedisCommandResult, String> {
     let start = std::time::Instant::now();
 
-    // 解析命令和参数
     let parts: Vec<String> =
         shell_words::split(&command).map_err(|e| format!("解析命令失败: {}", e))?;
 
@@ -58,7 +57,7 @@ pub async fn execute_redis_command(
     let cmd = parts[0].to_uppercase();
     let args: Vec<String> = parts[1..].to_vec();
 
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     let connections = manager
         .get_db_instance(&connection_id)
         .await
@@ -69,7 +68,6 @@ pub async fn execute_redis_command(
         .get(&connection_id)
         .ok_or_else(|| "连接不存在".to_string())?;
 
-    // 向下转型为 RedisDatabase
     let redis_db = db
         .as_any()
         .downcast_ref::<RedisDatabase>()
@@ -100,7 +98,7 @@ pub async fn get_redis_info(
     connection_id: String,
     state: State<'_, AppState>,
 ) -> Result<HashMap<String, String>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     let connections = manager
         .get_db_instance(&connection_id)
         .await
@@ -126,7 +124,7 @@ pub async fn get_redis_key_value(
     key: String,
     state: State<'_, AppState>,
 ) -> Result<RedisKeyDetail, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     let connections = manager
         .get_db_instance(&connection_id)
         .await
@@ -142,7 +140,6 @@ pub async fn get_redis_key_value(
         .downcast_ref::<RedisDatabase>()
         .ok_or_else(|| "不是 Redis 连接".to_string())?;
 
-    // 获取键类型
     let key_type_value = redis_db
         .execute_command("TYPE", vec![key.clone()])
         .await
@@ -152,25 +149,11 @@ pub async fn get_redis_key_value(
         _ => "unknown".to_string(),
     };
 
-    // 获取 TTL
-    let ttl = redis_db
-        .get_key_ttl(&key)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // 获取值
-    let value = redis_db
-        .get_key_value(&key)
-        .await
-        .map_err(|e| e.to_string())?;
+    let ttl = redis_db.get_key_ttl(&key).await.map_err(|e| e.to_string())?;
+    let value = redis_db.get_key_value(&key).await.map_err(|e| e.to_string())?;
     let json_value = redis_value_to_json(value);
 
-    Ok(RedisKeyDetail {
-        key,
-        key_type,
-        ttl,
-        value: json_value,
-    })
+    Ok(RedisKeyDetail { key, key_type, ttl, value: json_value })
 }
 
 /// 设置键值
@@ -182,7 +165,7 @@ pub async fn set_redis_key_value(
     ttl: Option<u64>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     let connections = manager
         .get_db_instance(&connection_id)
         .await
@@ -198,10 +181,7 @@ pub async fn set_redis_key_value(
         .downcast_ref::<RedisDatabase>()
         .ok_or_else(|| "不是 Redis 连接".to_string())?;
 
-    redis_db
-        .set_key_value(&key, &value, ttl)
-        .await
-        .map_err(|e| e.to_string())
+    redis_db.set_key_value(&key, &value, ttl).await.map_err(|e| e.to_string())
 }
 
 /// 删除键
@@ -211,7 +191,7 @@ pub async fn delete_redis_key(
     key: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     let connections = manager
         .get_db_instance(&connection_id)
         .await
@@ -236,13 +216,9 @@ fn redis_value_to_json(value: redis::Value) -> serde_json::Value {
         redis::Value::Nil => serde_json::Value::Null,
         redis::Value::Int(i) => serde_json::json!(i),
         redis::Value::BulkString(data) => {
-            // 尝试将字节转换为字符串
             match String::from_utf8(data.clone()) {
                 Ok(s) => serde_json::Value::String(s),
-                Err(_) => {
-                    // 如果不是有效的 UTF-8，返回 base64 编码
-                    serde_json::Value::String(general_purpose::STANDARD.encode(&data))
-                }
+                Err(_) => serde_json::Value::String(general_purpose::STANDARD.encode(&data)),
             }
         }
         redis::Value::Array(values) => {
@@ -256,9 +232,7 @@ fn redis_value_to_json(value: redis::Value) -> serde_json::Value {
                 .into_iter()
                 .map(|(k, v)| {
                     let key = match k {
-                        redis::Value::BulkString(bytes) => {
-                            String::from_utf8_lossy(&bytes).to_string()
-                        }
+                        redis::Value::BulkString(bytes) => String::from_utf8_lossy(&bytes).to_string(),
                         redis::Value::SimpleString(s) => s,
                         _ => format!("{:?}", k),
                     };
@@ -267,22 +241,16 @@ fn redis_value_to_json(value: redis::Value) -> serde_json::Value {
                 .collect();
             serde_json::Value::Object(obj)
         }
-        redis::Value::Attribute {
-            data,
-            attributes: _,
-        } => {
-            // For attributes, just return the data part
-            redis_value_to_json(*data)
-        }
+        redis::Value::Attribute { data, .. } => redis_value_to_json(*data),
         redis::Value::Set(values) => {
             let arr: Vec<serde_json::Value> = values.into_iter().map(redis_value_to_json).collect();
             serde_json::Value::Array(arr)
         }
         redis::Value::Double(f) => serde_json::json!(f),
         redis::Value::Boolean(b) => serde_json::json!(b),
-        redis::Value::VerbatimString { format: _, text } => serde_json::Value::String(text),
+        redis::Value::VerbatimString { text, .. } => serde_json::Value::String(text),
         redis::Value::BigNumber(n) => serde_json::Value::String(format!("{}", n)),
-        redis::Value::Push { kind: _, data } => {
+        redis::Value::Push { data, .. } => {
             let arr: Vec<serde_json::Value> = data.into_iter().map(redis_value_to_json).collect();
             serde_json::Value::Array(arr)
         }

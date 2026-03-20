@@ -29,7 +29,7 @@ pub async fn get_databases(
     connection_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<DatabaseInfo>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     manager
         .get_databases(&connection_id)
@@ -45,7 +45,7 @@ pub async fn get_tables(
     database: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<TableInfo>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     manager
         .get_tables(&connection_id, database.as_deref())
@@ -62,7 +62,7 @@ pub async fn get_table_structure(
     database: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ColumnInfo>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     manager
         .get_table_structure(&connection_id, &table, schema.as_deref(), database.as_deref())
@@ -80,7 +80,7 @@ pub async fn view_table_data(
     limit: Option<u32>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let limit_clause = match limit {
         Some(l) => format!(" LIMIT {}", l),
@@ -129,7 +129,7 @@ pub async fn truncate_table(
     schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let db_type = manager
         .get_database_type(&connection_id)
@@ -154,7 +154,7 @@ pub async fn drop_table(
     schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let db_type = manager
         .get_database_type(&connection_id)
@@ -177,7 +177,7 @@ pub async fn get_views(
     database: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<TableInfo>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     manager
         .get_views(&connection_id, Some(&database))
@@ -192,7 +192,7 @@ pub async fn get_procedures(
     database: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let sql = format!(
         "SELECT ROUTINE_NAME, ROUTINE_TYPE, CREATED, LAST_ALTERED, ROUTINE_COMMENT
@@ -219,7 +219,7 @@ pub async fn get_functions(
     database: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let sql = format!(
         "SELECT ROUTINE_NAME, ROUTINE_TYPE, CREATED, LAST_ALTERED, ROUTINE_COMMENT
@@ -246,7 +246,7 @@ pub async fn get_triggers(
     database: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let sql = format!(
         "SELECT TRIGGER_NAME, EVENT_MANIPULATION, EVENT_OBJECT_TABLE, 
@@ -274,7 +274,7 @@ pub async fn get_events(
     database: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let sql = format!(
         "SELECT EVENT_NAME, STATUS, EVENT_TYPE, EXECUTE_AT, 
@@ -304,7 +304,7 @@ pub async fn drop_view(
     schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let db_type = manager
         .get_database_type(&connection_id)
@@ -328,7 +328,7 @@ pub async fn get_view_definition(
     database: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let sql = format!(
         "SELECT VIEW_DEFINITION FROM information_schema.VIEWS 
@@ -362,7 +362,7 @@ pub async fn drop_procedure(
     schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let db_type = manager
         .get_database_type(&connection_id)
@@ -397,7 +397,7 @@ pub async fn drop_function(
     schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let db_type = manager
         .get_database_type(&connection_id)
@@ -432,7 +432,7 @@ pub async fn drop_trigger(
     schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let db_type = manager
         .get_database_type(&connection_id)
@@ -467,7 +467,7 @@ pub async fn drop_event(
     _schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let db_type = manager
         .get_database_type(&connection_id)
@@ -499,7 +499,7 @@ pub async fn get_table_indexes(
     schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let db_type = manager
         .get_database_type(&connection_id)
@@ -601,7 +601,7 @@ pub async fn get_table_foreign_keys(
     schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     let db_type = manager
         .get_database_type(&connection_id)
@@ -688,7 +688,7 @@ pub async fn get_create_table_ddl(
     schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     println!("=== 获取 DDL: {}.{}.{:?} ===", database, table, schema);
 
@@ -833,7 +833,7 @@ pub async fn get_autocomplete_data(
     database: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<AutoCompleteData, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
     
     // 获取数据库列表
     let databases_info = manager
@@ -940,7 +940,7 @@ pub async fn get_schemas(
     database: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<SchemaInfo>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
 
     manager
         .get_schemas(&connection_id, database.as_deref())
@@ -956,7 +956,7 @@ pub async fn get_schema_tables(
     schema: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<TableInfo>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
 
     // 获取所有表，然后过滤指定 schema 的表
     let all_tables = manager
@@ -978,7 +978,7 @@ pub async fn get_schema_views(
     schema: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<TableInfo>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
 
     // 获取所有视图，然后过滤指定 schema 的视图
     let all_views = manager
@@ -1000,7 +1000,7 @@ pub async fn get_schema_functions(
     schema: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<FunctionInfo>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
 
     manager
         .get_functions(&connection_id, Some(&database), Some(&schema))
@@ -1016,7 +1016,7 @@ pub async fn get_schema_aggregate_functions(
     schema: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<FunctionInfo>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
 
     manager
         .get_aggregate_functions(&connection_id, Some(&database), Some(&schema))
@@ -1032,7 +1032,7 @@ pub async fn get_schema_indexes(
     schema: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
 
     let db_type = manager
         .get_database_type(&connection_id)
@@ -1081,7 +1081,7 @@ pub async fn get_database_extensions(
     database: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
 
     let db_type = manager
         .get_database_type(&connection_id)

@@ -9,25 +9,23 @@ mod utils;
 use database::ConnectionManager;
 use std::sync::Arc;
 use tauri::Manager;
-use tokio::sync::Mutex;
 
-/// 应用状态
+/// 应用状态 - 移除全局 Mutex，因为 ConnectionManager 内部已实现细粒度锁
 pub struct AppState {
-    pub connection_manager: Arc<Mutex<ConnectionManager>>,
+    pub connection_manager: Arc<ConnectionManager>,
 }
 
 fn main() {
-    // 初始化日志系统 (由于需要 AppHandle 拿路径，我们在 setup 中初始化或者在此处先用默认路径)
-    // 这里我们先定义一个 guard 变量
+    // 1. 初始化日志系统
     let mut _log_guard: Option<utils::logger::WorkerGuard> = None;
 
-    // 初始化加密系统
+    // 2. 初始化加密系统
     if let Err(e) = utils::crypto::initialize_master_key() {
         eprintln!("警告: 密钥初始化失败: {}", e);
     }
 
-    // 初始化连接管理器
-    let connection_manager = Arc::new(Mutex::new(ConnectionManager::new()));
+    // 3. 直接初始化连接管理器 (Arc 即可)
+    let connection_manager = Arc::new(ConnectionManager::new());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -95,13 +93,9 @@ fn main() {
             commands::redis::set_redis_key_value,
             commands::redis::delete_redis_key,
         ])
-        .setup(move |app| {
-            // 在此处初始化日志，以便拿到正确的 App 路径
+        .setup(|app| {
             let app_dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::current_dir().unwrap());
             let guard = utils::logger::init_logger(app_dir);
-            // 虽然 guard 在此处会被转移，但 tracing 是全局注册的，后台线程会持续运行。
-            // 在 Tauri 2.0 中，我们需要确保 guard 在整个应用生命周期存活。
-            // 一个简单做法是泄露它 (Box::leak) 或者将其存入全局变量。
             Box::leak(Box::new(guard));
 
             #[cfg(debug_assertions)]
@@ -114,4 +108,3 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-

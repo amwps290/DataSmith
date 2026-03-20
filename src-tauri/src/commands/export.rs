@@ -98,7 +98,7 @@ pub async fn export_table_ddl(
     table: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let manager = state.connection_manager.lock().await;
+    let manager = &state.connection_manager;
 
     // 获取表的 CREATE TABLE 语句
     let sql = format!("SHOW CREATE TABLE `{}`.`{}`", database, table);
