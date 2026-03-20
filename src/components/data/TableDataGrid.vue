@@ -164,7 +164,7 @@ async function loadData() {
 
 function handleCheckboxChange() {
   const records = gridRef.value?.getCheckboxRecords() || []
-  selectedRowKeys.value = records.map(r => r.__rowIndex)
+  selectedRowKeys.value = records.map((r: any) => r.__rowIndex)
 }
 
 function changePage(delta: number) { pagination.current += delta; loadData() }

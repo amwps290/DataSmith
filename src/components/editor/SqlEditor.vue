@@ -65,7 +65,7 @@
                     <DownOutlined />
                   </a-button>
                   <template #overlay>
-                    <a-menu @click="({ key }) => currentResultIndex = Number(key)">
+                    <a-menu @click="({ key }: any) => currentResultIndex = Number(key)">
                       <a-menu-item v-for="(res, idx) in queryResults" :key="idx">
                         结果集 {{ idx + 1 }} ({{ res.rows.length }} 行)
                       </a-menu-item>

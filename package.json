@@ -23,7 +23,10 @@
     "pinia": "^2.1.7",
     "vue": "^3.4.21",
     "vue-router": "^4.3.0",
-    "vue-virtual-scroller": "^2.0.0-beta.8"
+    "vue-virtual-scroller": "^2.0.0-beta.8",
+    "vxe-pc-ui": "^4.3.1",
+    "vxe-table": "^4.9.1",
+    "xe-utils": "^3.5.30"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.5.0",
