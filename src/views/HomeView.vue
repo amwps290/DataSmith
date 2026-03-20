@@ -3,7 +3,7 @@
     <!-- 顶部导航栏 -->
     <a-layout-header class="header">
       <div class="header-content">
-        <div class="logo">
+        <div class="logo" @click="handleNewQuery({})" style="cursor: pointer">
           <DatabaseOutlined style="font-size: 18px; margin-right: 6px" />
           <span class="title">DataSmith</span>
         </div>
@@ -20,11 +20,6 @@
                 <SettingOutlined />
                 设置
               </a-menu-item>
-              <a-menu-divider />
-              <a-menu-item key="exit">
-                <LogoutOutlined />
-                退出
-              </a-menu-item>
             </a-sub-menu>
             <a-sub-menu key="view">
               <template #title>视图</template>
@@ -38,42 +33,24 @@
                 {{ appStore.theme === 'light' ? '暗色' : '明亮' }}主题
               </a-menu-item>
             </a-sub-menu>
-            <a-sub-menu key="help">
-              <template #title>帮助</template>
-              <a-menu-item key="docs">
-                <FileTextOutlined />
-                文档
-              </a-menu-item>
-              <a-menu-item key="about" @click="showAbout = true">
-                <InfoCircleOutlined />
-                关于
-              </a-menu-item>
-            </a-sub-menu>
           </a-menu>
         </div>
         <div class="header-actions">
-          <a-button
-            type="text"
-            size="small"
-            :icon="h(SearchOutlined)"
-            @click="showGlobalSearch = true"
-            :disabled="!connectionStore.activeConnectionId"
-          >
-            全局搜索
-          </a-button>
-          <a-button type="text" size="small" :icon="h(BulbOutlined)" @click="appStore.toggleTheme()">
-          </a-button>
+          <a-space>
+            <a-button type="text" @click="showGlobalSearch = true">
+              <template #icon><SearchOutlined /></template>
+            </a-button>
+            <a-button type="primary" @click="showConnectionDialog = true">连接</a-button>
+          </a-space>
         </div>
       </div>
     </a-layout-header>
 
-    <!-- 主体区域：左右分割 -->
-    <div class="content-container">
-      <!-- 左侧：侧边栏 -->
+    <a-layout-content class="content-container">
+      <!-- 左侧：连接管理器 -->
       <div 
-        v-if="!appStore.sidebarCollapsed"
-        class="sidebar-wrapper"
-        :style="{ width: sidebarWidth + 'px' }"
+        class="sidebar-wrapper" 
+        :style="{ width: appStore.sidebarCollapsed ? '0' : sidebarWidth + 'px' }"
       >
         <div class="sidebar-inner">
           <ConnectionPanel 
@@ -108,13 +85,6 @@
                 <a-button type="text" size="small" :icon="h(StopOutlined)" @click="callActiveEditor('stopExecution')" :disabled="!activeEditorExecuting" />
               </a-tooltip>
               <a-divider type="vertical" />
-              <a-tooltip title="保存 (Ctrl+S)">
-                <a-button type="text" size="small" :icon="h(SaveOutlined)" @click="callActiveEditor('handleSave', 'save')" />
-              </a-tooltip>
-              <a-tooltip title="打开文件">
-                <a-button type="text" size="small" :icon="h(FolderOpenOutlined)" @click="callActiveEditor('handleOpen')" />
-              </a-tooltip>
-              <a-divider type="vertical" />
               <a-tooltip title="格式化 SQL">
                 <a-button type="text" size="small" :icon="h(FormatPainterOutlined)" @click="callActiveEditor('formatSql')" />
               </a-tooltip>
@@ -127,7 +97,7 @@
               <a-tooltip title="代码片段">
                 <a-button type="text" size="small" :icon="h(CodeOutlined)" @click="callActiveEditor('openSnippets')" />
               </a-tooltip>
-              <a-tooltip title="刷新补全">
+              <a-tooltip title="刷新补全数据">
                 <a-button type="text" size="small" :icon="h(ReloadOutlined)" @click="callActiveEditor('refreshAutocomplete')" />
               </a-tooltip>
             </a-space>
@@ -174,74 +144,33 @@
             </template>
             
             <div class="tab-content-wrapper">
-              <SqlEditor
-                v-if="tab.type === 'query'"
-                :ref="(el) => setSqlEditorRef(el, tab.key)"
-                :connection-id="tab.connectionId"
-                :initial-database="tab.database"
-                :initial-value="tab.content"
-                :file-path="tab.filePath"
-                @content-change="(val) => handleContentChange(tab.key, val)"
-                @file-saved="(path, title) => handleFileSaved(tab.key, path, title)"
-                @databases-loaded="(dbs) => availableDatabases = dbs"
-              />
-              <TableDataGrid
-                v-else-if="tab.type === 'data'"
-                :connection-id="tab.connectionId!"
-                :database="tab.database!"
-                :table="tab.table!"
-                :schema="tab.schema"
-              />
-              <TableDesigner
-                v-else-if="tab.type === 'design'"
-                :connection-id="tab.connectionId!"
-                :database="tab.database!"
-                :table="tab.table!"
-                :schema="tab.schema"
-                :read-only="tab.readOnly"
-              />
-              <RedisEditor
-                v-else-if="tab.type === 'redis'"
-                :ref="redisEditorRef"
-              />
+              <KeepAlive><SqlEditor v-if="tab.type === 'query'" :key="tab.key" :ref="(el) => setSqlEditorRef(el, tab.key)" :connection-id="tab.connectionId" :initial-database="tab.database" :initial-value="tab.content" :file-path="tab.filePath" @content-change="(val) => handleContentChange(tab.key, val)" @file-saved="(path, title) => handleFileSaved(tab.key, path, title)" @databases-loaded="(dbs) => availableDatabases = dbs" /><TableDataGrid v-else-if="tab.type === 'data'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" /><TableDesigner v-else-if="tab.type === 'design'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" :read-only="tab.readOnly" /><RedisEditor v-else-if="tab.type === 'redis'" :key="tab.key" :ref="redisEditorRef" /></KeepAlive>
             </div>
           </a-tab-pane>
         </a-tabs>
 
         <!-- 空状态 -->
         <div v-if="dataTabs.length === 0" class="empty-workspace">
-          <a-empty
-            v-if="!connectionStore.activeConnectionId"
-            description="请选择一个数据库连接开始使用"
-          >
-            <a-button type="primary" size="small" @click="showConnectionDialog = true">
-              创建连接
-            </a-button>
-          </a-empty>
-          <a-empty
-            v-else
-            description="点击上方 + 号或左侧数据库开始查询"
-          >
-            <a-button type="primary" size="small" @click="handleNewQuery({})">
-              新建 SQL 查询
-            </a-button>
+          <a-empty description="从左侧选择表开始探索">
+            <template #extra>
+              <a-button type="primary" @click="handleNewQuery({})">新建查询 (Ctrl+N)</a-button>
+            </template>
           </a-empty>
         </div>
       </div>
-    </div>
+    </a-layout-content>
 
-    <!-- 后续弹出框逻辑保持不变 -->
-
-    <!-- Tab 右键菜单 -->
-    <a-dropdown
-      v-model:open="contextMenuVisible"
-      :trigger="['contextmenu']"
-      :overlayStyle="{ position: 'fixed', left: contextMenuPosition.x + 'px', top: contextMenuPosition.y + 'px' }"
-    >
-      <div style="position: fixed; left: 0; top: 0; width: 0; height: 0;"></div>
+    <!-- 右键菜单 -->
+    <a-dropdown :open="contextMenuVisible" :trigger="['contextmenu']">
+      <div 
+        v-if="contextMenuVisible"
+        class="context-menu-overlay"
+        @click="contextMenuVisible = false"
+        :style="{ left: contextMenuPosition.x + 'px', top: contextMenuPosition.y + 'px' }"
+      ></div>
       <template #overlay>
-        <a-menu @click="handleContextMenuClick">
-          <a-menu-item key="close" :disabled="!currentContextTab.closable">
+        <a-menu @click="handleContextMenuClick" class="context-menu">
+          <a-menu-item key="close">
             <CloseOutlined />
             关闭当前标签
           </a-menu-item>
@@ -301,11 +230,11 @@
 <script setup lang="ts">
 import { h, reactive, ref, computed, nextTick, onMounted } from 'vue'
 import { 
-  DatabaseOutlined, BulbOutlined, PlusOutlined, SettingOutlined, LogoutOutlined, 
-  MenuOutlined, FileTextOutlined, InfoCircleOutlined, SearchOutlined, 
+  DatabaseOutlined, BulbOutlined, PlusOutlined, SettingOutlined, 
+  MenuOutlined, FileTextOutlined, SearchOutlined, 
   CloseOutlined, CloseCircleOutlined, CloseSquareOutlined, 
   VerticalRightOutlined, VerticalLeftOutlined, TableOutlined, EditOutlined,
-  CaretRightOutlined, StopOutlined, SaveOutlined, FolderOpenOutlined,
+  CaretRightOutlined, StopOutlined,
   FormatPainterOutlined, ClearOutlined, HistoryOutlined, CodeOutlined, ReloadOutlined
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
@@ -322,7 +251,6 @@ const appStore = useAppStore()
 const connectionStore = useConnectionStore()
 const showConnectionDialog = ref(false)
 const showSettings = ref(false)
-const showAbout = ref(false)
 const showGlobalSearch = ref(false)
 const mainTabKey = ref('')
 const editingConnection = ref<any>(null)
@@ -479,6 +407,10 @@ function startResize(e: MouseEvent) {
   document.addEventListener('mousemove', dr); document.addEventListener('mouseup', sr)
 }
 function handleEditConnection(c: any) { editingConnection.value = c; showConnectionDialog.value = true; }
+
+watch(mainTabKey, (newKey, oldKey) => {
+  console.log(`=== Tab 切换: ${oldKey} -> ${newKey} ===`)
+})
 </script>
 
 <style scoped>
@@ -489,42 +421,29 @@ function handleEditConnection(c: any) { editingConnection.value = c; showConnect
 .logo { display: flex; align-items: center; font-size: 20px; font-weight: bold; color: #1890ff; }
 .header-menu { flex: 1; margin-left: 24px; }
 .top-menu { border-bottom: none; background: transparent; }
-
 .content-container { flex: 1; display: flex; flex-direction: row; overflow: hidden; position: relative; }
-
 .sidebar-wrapper { background: #fafafa; border-right: 1px solid #e8e8e8; height: 100%; overflow: hidden; flex-shrink: 0; }
 .dark-mode .sidebar-wrapper { background: #141414; border-right-color: #303030; }
 .sidebar-inner { height: 100%; overflow: auto; padding: 0 8px; }
-
 .sidebar-resizer { width: 4px; cursor: col-resize; background: transparent; transition: background 0.2s; z-index: 10; }
 .sidebar-resizer:hover { background: #1890ff; }
-
 .main-workspace { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #fff; min-width: 0; }
 .dark-mode .main-workspace { background: #1f1f1f; }
-
-.global-sql-toolbar {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 0 12px; height: 40px; background: #f5f5f5; border-bottom: 1px solid #d9d9d9; flex-shrink: 0;
-}
+.global-sql-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 0 12px; height: 40px; background: #f5f5f5; border-bottom: 1px solid #d9d9d9; flex-shrink: 0; }
 .dark-mode .global-sql-toolbar { background: #1a1a1a; border-bottom-color: #303030; }
-
-.toolbar-left :deep(.ant-btn-text) {
-  width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
-  border-radius: 4px; color: #595959; font-size: 16px;
-}
+.toolbar-left :deep(.ant-btn-text) { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 4px; color: #595959; font-size: 16px; }
 .dark-mode .toolbar-left :deep(.ant-btn-text) { color: #aaa; }
 .toolbar-left :deep(.ant-btn-text:hover) { background: rgba(0,0,0,0.06); color: #1890ff; }
 .execute-btn { color: #52c41a !important; }
-
 .db-label { font-size: 12px; color: #8c8c8c; margin-right: 8px; }
-
 .workspace-tabs { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .workspace-tabs :deep(.ant-tabs-nav) { margin-bottom: 0; padding: 0 4px; background: #f0f0f0; flex-shrink: 0; }
 .dark-mode .workspace-tabs :deep(.ant-tabs-nav) { background: #141414; }
 .workspace-tabs :deep(.ant-tabs-content) { flex: 1; height: 100%; overflow: hidden; }
 .workspace-tabs :deep(.ant-tabs-tabpane) { height: 100%; display: flex; flex-direction: column; }
-
 .tab-content-wrapper { flex: 1; height: 100%; overflow: hidden; position: relative; }
-
 .empty-workspace { flex: 1; display: flex; align-items: center; justify-content: center; }
+.context-menu-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9999; }
+.context-menu { position: absolute; background: #fff; border-radius: 4px; border: 1px solid #d9d9d9; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 10000; min-width: 120px; }
+.dark-mode .context-menu { background: #1f1f1f; border-color: #303030; }
 </style>

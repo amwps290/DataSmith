@@ -284,6 +284,7 @@ import {
   ExportOutlined,
   ImportOutlined,
   DeleteOutlined,
+  EditOutlined,
   ClearOutlined,
   CaretRightOutlined,
   FileTextOutlined,

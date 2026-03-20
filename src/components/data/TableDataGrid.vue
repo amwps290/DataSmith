@@ -120,7 +120,18 @@
 </template>
 
 <script setup lang="ts">
-import { h, nextTick, ref, onMounted, onUnmounted, watch, computed} from 'vue'
+import { h, nextTick, ref, onMounted, onUnmounted, watch, computed, onActivated, onDeactivated } from 'vue'
+
+onActivated(() => {
+  const start = performance.now()
+  console.log('[TableDataGrid] 组件已激活')
+  updateTableHeight()
+  console.log(`[TableDataGrid] 激活更新耗时: ${(performance.now() - start).toFixed(2)}ms`)
+})
+
+onDeactivated(() => {
+  console.log('[TableDataGrid] 组件已进入缓存')
+})
 import {
   ReloadOutlined,
   PlusOutlined,
