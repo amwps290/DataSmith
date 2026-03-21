@@ -1,19 +1,19 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::time::Instant;
-use sqlx::{MySqlPool, mysql::MySqlPoolOptions, Row, Column, ValueRef};
+use mysql_async::{prelude::*, Pool, Opts, Row, Value};
 use tokio::sync::Mutex;
-use tracing::{info, instrument};
+use tracing::{info, instrument, debug};
 
 use super::traits::*;
 
 /// MySQL 数据库驱动状态
 struct MySqlState {
-    pool: Option<MySqlPool>,
+    pool: Option<Pool>,
     config: Option<ConnectionConfig>,
 }
 
-/// MySQL 数据库驱动 - 基于 sqlx 的实现 (内部可变性)
+/// MySQL 数据库驱动 - 基于 mysql_async 的原生实现
 pub struct MySqlDatabase {
     state: Mutex<MySqlState>,
 }
@@ -25,32 +25,30 @@ impl MySqlDatabase {
         }
     }
 
-    async fn create_pool(config: &ConnectionConfig) -> DbResult<MySqlPool> {
+    fn create_opts(config: &ConnectionConfig) -> Opts {
         let db_name = config.database.as_deref().unwrap_or("");
         let url = format!(
-            "mysql://{}:{}@{}:{}/{}",
+            "mysql://{}:{}@{}:{}/{}?prefer_socket=false&multi_statements=true",
             config.username, config.password, config.host, config.port, db_name
         );
-
-        MySqlPoolOptions::new()
-            .max_connections(config.pool_size)
-            .acquire_timeout(std::time::Duration::from_secs(config.connection_timeout))
-            .connect(&url)
-            .await
-            .map_err(|e| DbError::ConnectionFailed(e.to_string()))
+        Opts::from_url(&url).unwrap_or_default()
     }
 }
 
 #[async_trait]
 impl DatabaseOperations for MySqlDatabase {
     async fn test_connection(&self, config: &ConnectionConfig) -> DbResult<bool> {
-        let pool = Self::create_pool(config).await?;
-        sqlx::query("SELECT 1").execute(&pool).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        let opts = Self::create_opts(config);
+        let pool = Pool::new(opts);
+        let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+        conn.query_drop("SELECT 1").await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        pool.disconnect().await.ok();
         Ok(true)
     }
 
     async fn connect(&self, config: ConnectionConfig) -> DbResult<()> {
-        let pool = Self::create_pool(&config).await?;
+        let opts = Self::create_opts(&config);
+        let pool = Pool::new(opts);
         let mut state = self.state.lock().await;
         state.pool = Some(pool);
         state.config = Some(config);
@@ -59,7 +57,9 @@ impl DatabaseOperations for MySqlDatabase {
 
     async fn disconnect(&self) -> DbResult<()> {
         let mut state = self.state.lock().await;
-        state.pool = None;
+        if let Some(pool) = state.pool.take() {
+            pool.disconnect().await.map_err(|e| DbError::Other(e.to_string()))?;
+        }
         state.config = None;
         Ok(())
     }
@@ -72,11 +72,15 @@ impl DatabaseOperations for MySqlDatabase {
             return Ok(());
         }
         
-        info!(new_db = %database, "MySQL 正在切换数据库...");
+        info!(new_db = %database, "MySQL 正在物理重连以切换数据库...");
         config.database = Some(database.to_string());
         
-        let pool = Self::create_pool(&config).await?;
-        state.pool = Some(pool);
+        let opts = Self::create_opts(&config);
+        let pool = Pool::new(opts);
+        
+        if let Some(old_pool) = state.pool.replace(pool) {
+            tokio::spawn(async move { old_pool.disconnect().await.ok(); });
+        }
         state.config = Some(config);
         Ok(())
     }
@@ -86,113 +90,144 @@ impl DatabaseOperations for MySqlDatabase {
         let start = Instant::now();
         let state = self.state.lock().await;
         let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
 
-        // MySQL 通过 sqlx fetch_all 目前一次只返回一个结果集
-        // 如果要支持多结果集，后续可以调研 fetch_many
-        let rows = sqlx::query(sql)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        debug!(sql = %sql.replace('\n', " "), "执行 MySQL 查询");
 
-        let mut columns = Vec::new();
-        let mut final_rows = Vec::new();
+        // 彻底解决多结果集 API 复杂性：手动拆分语句顺序执行
+        // 虽然驱动支持 multi_statements，但顺序执行更易于获取每个语句的元数据
+        let sqls: Vec<&str> = sql.split(';').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let mut results = Vec::new();
 
-        if !rows.is_empty() {
-            columns = rows[0].columns().iter().map(|c| c.name().to_string()).collect();
+        for s in sqls {
+            let start_stmt = Instant::now();
+            let rows: Vec<Row> = conn.query(s).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+            
+            let mut columns = Vec::new();
+            if let Some(first_row) = rows.first() {
+                columns = first_row.columns().iter().map(|c| c.name_str().to_string()).collect();
+            }
+            
+            let mut final_rows = Vec::new();
             for row in rows {
                 let mut row_map = HashMap::new();
-                for col in row.columns() {
-                    let name = col.name();
-                    let value: serde_json::Value = match row.try_get_raw(name) {
-                        Ok(v) if v.is_null() => serde_json::Value::Null,
-                        _ => {
-                            row.try_get::<String, _>(name).map(serde_json::Value::String).unwrap_or(serde_json::Value::Null)
-                        }
+                for (i, col_name) in columns.iter().enumerate() {
+                    let value: Value = row.get(i).unwrap_or(Value::NULL);
+                    let json_val = match value {
+                        Value::NULL => serde_json::Value::Null,
+                        Value::Bytes(b) => serde_json::Value::String(String::from_utf8_lossy(&b).into_owned()),
+                        Value::Int(i) => serde_json::Value::Number(i.into()),
+                        Value::UInt(u) => serde_json::Value::Number(u.into()),
+                        Value::Float(f) => serde_json::Value::Number(serde_json::Number::from_f64(f as f64).unwrap_or(serde_json::Number::from(0))),
+                        Value::Double(d) => serde_json::Value::Number(serde_json::Number::from_f64(d).unwrap_or(serde_json::Number::from(0))),
+                        Value::Date(y, m, d, h, i, s, ms) => serde_json::Value::String(format!("{}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}", y, m, d, h, i, s, ms)),
+                        Value::Time(neg, d, h, m, s, ms) => serde_json::Value::String(format!("{}{}:{:02}:{:02}:{:02}.{:03}", if neg { "-" } else { "" }, d, h, m, s, ms)),
                     };
-                    row_map.insert(name.to_string(), value);
+                    row_map.insert(col_name.clone(), json_val);
                 }
                 final_rows.push(row_map);
             }
+            
+            results.push(QueryResult {
+                columns,
+                rows: final_rows,
+                affected_rows: conn.affected_rows(),
+                execution_time_ms: start_stmt.elapsed().as_millis(),
+            });
         }
 
-        Ok(vec![QueryResult {
-            columns,
-            rows: final_rows,
-            affected_rows: 0,
-            execution_time_ms: start.elapsed().as_millis(),
-        }])
+        if results.is_empty() {
+            results.push(QueryResult {
+                columns: vec![],
+                rows: vec![],
+                affected_rows: 0,
+                execution_time_ms: start.elapsed().as_millis(),
+            });
+        }
+
+        Ok(results)
     }
 
     async fn get_databases(&self) -> DbResult<Vec<DatabaseInfo>> {
-        let state = self.state.lock().await;
-        let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
-        let rows = sqlx::query("SHOW DATABASES").fetch_all(pool).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
-        Ok(rows.into_iter().map(|r| DatabaseInfo { name: r.get(0), charset: None, collation: None }).collect())
+        let results = self.execute_query("SHOW DATABASES", None).await?;
+        if let Some(res) = results.first() {
+            Ok(res.rows.iter().map(|r| DatabaseInfo { 
+                name: r.values().next().and_then(|v| v.as_str()).unwrap_or("").to_string(), 
+                charset: None, collation: None 
+            }).collect())
+        } else {
+            Ok(vec![])
+        }
     }
 
     async fn get_tables(&self, database: Option<&str>) -> DbResult<Vec<TableInfo>> {
-        let state = self.state.lock().await;
-        let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
         let sql = if let Some(db) = database {
             format!("SELECT TABLE_NAME, TABLE_COMMENT, TABLE_ROWS, DATA_LENGTH FROM information_schema.TABLES WHERE TABLE_SCHEMA = '{}'", db)
         } else {
             "SHOW TABLES".to_string()
         };
         
-        let rows = sqlx::query(&sql).fetch_all(pool).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
-        Ok(rows.into_iter().map(|r| TableInfo {
-            name: r.get(0),
-            schema: None,
-            table_type: "TABLE".into(),
-            engine: None,
-            rows: r.try_get(2).ok(),
-            size_mb: r.try_get::<i64, _>(3).ok().map(|s| s as f64 / 1024.0 / 1024.0),
-            comment: r.try_get(1).ok(),
-        }).collect())
+        let results = self.execute_query(&sql, None).await?;
+        if let Some(res) = results.first() {
+            Ok(res.rows.iter().map(|r| TableInfo {
+                name: r.get("TABLE_NAME").or_else(|| r.values().next()).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                schema: None,
+                table_type: "TABLE".into(),
+                engine: None,
+                rows: r.get("TABLE_ROWS").and_then(|v| v.as_u64()),
+                size_mb: r.get("DATA_LENGTH").and_then(|v| v.as_f64()).map(|s| s / 1024.0 / 1024.0),
+                comment: r.get("TABLE_COMMENT").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            }).collect())
+        } else {
+            Ok(vec![])
+        }
     }
 
     async fn get_table_structure(&self, table: &str, _schema: Option<&str>, database: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
-        let state = self.state.lock().await;
-        let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
         let schema = database.unwrap_or("");
         let sql = format!("SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, EXTRA, COLUMN_COMMENT FROM information_schema.COLUMNS WHERE TABLE_NAME = '{}' AND TABLE_SCHEMA = '{}' ORDER BY ORDINAL_POSITION", table, schema);
         
-        let rows = sqlx::query(&sql).fetch_all(pool).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
-        Ok(rows.into_iter().map(|r| {
-            let key: String = r.get(4);
-            ColumnInfo {
-                name: r.get(0),
-                data_type: r.get(1),
-                nullable: r.get::<String, _>(2) == "YES",
-                default_value: r.try_get(3).ok(),
-                is_primary_key: key == "PRI",
-                is_auto_increment: r.get::<String, _>(5).contains("auto_increment"),
-                comment: r.try_get(6).ok(),
-                character_maximum_length: None,
-                numeric_precision: None,
-                numeric_scale: None,
-            }
-        }).collect())
+        let results = self.execute_query(&sql, None).await?;
+        if let Some(res) = results.first() {
+            Ok(res.rows.iter().map(|r| {
+                let key = r.get("COLUMN_KEY").and_then(|v| v.as_str()).unwrap_or("");
+                ColumnInfo {
+                    name: r.get("COLUMN_NAME").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    data_type: r.get("DATA_TYPE").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    nullable: r.get("IS_NULLABLE").and_then(|v| v.as_str()) == Some("YES"),
+                    default_value: r.get("COLUMN_DEFAULT").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    is_primary_key: key == "PRI",
+                    is_auto_increment: r.get("EXTRA").and_then(|v| v.as_str()).unwrap_or("").contains("auto_increment"),
+                    comment: r.get("COLUMN_COMMENT").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    character_maximum_length: None,
+                    numeric_precision: None,
+                    numeric_scale: None,
+                }
+            }).collect())
+        } else {
+            Ok(vec![])
+        }
     }
 
     async fn get_indexes(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
-        let state = self.state.lock().await;
-        let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
-        let rows = sqlx::query(&format!("SHOW INDEX FROM {}", table)).fetch_all(pool).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
-        
+        let results = self.execute_query(&format!("SHOW INDEX FROM {}", table), None).await?;
         let mut map: HashMap<String, IndexInfo> = HashMap::new();
-        for r in rows {
-            let name: String = r.get(2);
-            let col: String = r.get(4);
-            let is_unique: i64 = r.get(1);
-            let entry = map.entry(name.clone()).or_insert(IndexInfo {
-                name,
-                columns: vec![],
-                is_unique: is_unique == 0,
-                is_primary: r.get::<String, _>(2) == "PRIMARY",
-                index_type: r.get(10),
-            });
-            entry.columns.push(col);
+        
+        if let Some(res) = results.first() {
+            for r in &res.rows {
+                let name = r.get("Key_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let col = r.get("Column_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let non_unique = r.get("Non_unique").and_then(|v| v.as_i64()).unwrap_or(1);
+                
+                let entry = map.entry(name.clone()).or_insert(IndexInfo {
+                    name,
+                    columns: vec![],
+                    is_unique: non_unique == 0,
+                    is_primary: r.get("Key_name").and_then(|v| v.as_str()) == Some("PRIMARY"),
+                    index_type: r.get("Index_type").and_then(|v| v.as_str()).unwrap_or("BTREE").to_string(),
+                });
+                entry.columns.push(col);
+            }
         }
         Ok(map.into_values().collect())
     }
