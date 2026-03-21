@@ -85,6 +85,7 @@
     "open_scripts": "打开已有脚本...",
     "refresh_db": "刷新数据库内容",
     "view_data": "查看数据",
+    "view_ddl": "查看 DDL",
     "design_table": "设计表",
     "drop_table": "删除表",
     "copy_name": "复制名称",
@@ -132,6 +133,9 @@
     "discard_changes": "放弃修改",
     "discard_confirm": "确定要放弃所有未保存的修改吗？",
     "update_fail": "更新失败",
-    "cell_modified": "已修改"
+    "cell_modified": "已修改",
+    "cell_viewer": "单元格查看器",
+    "format_json": "格式化 JSON",
+    "copy_content": "复制内容"
   }
 }

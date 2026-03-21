@@ -80,5 +80,9 @@ pub async fn get_schema_indexes(_connection_id: String, _database: String, _sche
 #[tauri::command] pub async fn drop_trigger(_c: String, _t: String, _d: Option<String>, _s: Option<String>) -> Result<(), String> { Ok(()) }
 #[tauri::command] pub async fn drop_event(_c: String, _e: String, _d: Option<String>, _s: Option<String>) -> Result<(), String> { Ok(()) }
 #[tauri::command] pub async fn get_table_foreign_keys(_c: String, _t: String, _s: Option<String>) -> Result<Vec<Value>, String> { Ok(vec![]) }
-#[tauri::command] pub async fn get_create_table_ddl(_c: String, _t: String, _d: Option<String>, _s: Option<String>) -> Result<String, String> { Ok("".into()) }
+#[tauri::command]
+pub async fn get_create_table_ddl(connection_id: String, table: String, database: Option<String>, schema: Option<String>, state: State<'_, AppState>) -> Result<String, String> {
+    state.connection_manager.get_table_ddl(&connection_id, &table, schema.as_deref(), database.as_deref()).await.map_err(|e| e.to_string())
+}
+
 #[tauri::command] pub async fn get_autocomplete_data(_c: String, _d: Option<String>) -> Result<Value, String> { Ok(serde_json::json!({})) }

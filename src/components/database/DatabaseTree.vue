@@ -36,6 +36,7 @@
           
           <template v-if="selectedNode?.type === 'table'">
             <a-menu-item key="view-data"><template #icon><TableOutlined /></template>{{ $t('tree.view_data') }}</a-menu-item>
+            <a-menu-item key="view-ddl"><template #icon><CodeOutlined /></template>{{ $t('tree.view_ddl') }}</a-menu-item>
             <a-menu-item key="design-table"><template #icon><EditOutlined /></template>{{ $t('tree.design_table') }}</a-menu-item>
             <a-menu-divider />
             <a-menu-item key="refresh"><template #icon><ReloadOutlined /></template>{{ $t('common.refresh') }}</a-menu-item>
@@ -46,6 +47,11 @@
         </a-menu>
       </div>
     </div>
+
+    <!-- DDL 预览弹窗 -->
+    <a-modal v-model:open="showDdlModal" :title="`DDL: ${selectedNode?.title}`" width="800px" :footer="null">
+      <div ref="ddlEditorContainer" style="height: 500px; border: 1px solid #d9d9d9"></div>
+    </a-modal>
 
     <!-- 脚本列表弹窗 -->
     <a-modal v-model:open="showScriptsModal" :title="$t('tree.open_scripts')" :footer="null" width="500px">
@@ -63,17 +69,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import * as monaco from 'monaco-editor'
 import {
   TableOutlined, ReloadOutlined, CopyOutlined,
   FolderOpenOutlined, DeleteOutlined, EditOutlined,
-  FileTextOutlined
+  FileTextOutlined, CodeOutlined
 } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { DatabaseInfo } from '@/types/database'
 import { useConnectionStore } from '@/stores/connection'
+import { useAppStore } from '@/stores/app'
 import TreeNodeItem from './TreeNodeItem.vue'
 
 interface TreeNode {
@@ -82,12 +90,16 @@ interface TreeNode {
 }
 
 const { t } = useI18n()
+const appStore = useAppStore()
 const props = defineProps<{ connectionId: string | null; dbType?: string; searchValue?: string; }>()
 const emit = defineEmits(['table-selected', 'database-selected', 'new-query', 'design-table', 'view-structure', 'open-scripts'])
 const connectionStore = useConnectionStore()
 
 const loading = ref(false), treeData = ref<TreeNode[]>([]), expandedKeys = ref<string[]>([]), selectedKeys = ref<string[]>([]), loadingNodes = ref<Set<string>>(new Set())
 const contextMenuVisible = ref(false), contextMenuX = ref(0), contextMenuY = ref(0), selectedNode = ref<TreeNode | null>(null)
+
+const showDdlModal = ref(false), ddlEditorContainer = ref<HTMLElement>()
+let ddlEditor: monaco.editor.IStandaloneCodeEditor | null = null
 
 const filteredTreeData = computed(() => {
   if (!props.searchValue) return treeData.value
@@ -228,6 +240,29 @@ async function handleMenuClick({ key }: any) {
   else if (key === 'open-scripts') { showScriptsModal.value = true; loadingScripts.value = true; try { savedScripts.value = await invoke<any[]>('list_db_scripts', { connectionId: props.connectionId, database: selectedNode.value.metadata.name || selectedNode.value.metadata.database }) } finally { loadingScripts.value = false } }
   else if (key === 'refresh') handleRefreshNode(selectedNode.value)
   else if (key === 'copy-name') { navigator.clipboard.writeText(selectedNode.value.title); message.success(t('common.copy')) }
+  else if (key === 'view-ddl') {
+    try {
+      const ddl = await invoke<string>('get_create_table_ddl', { 
+        connectionId: props.connectionId, 
+        table: selectedNode.value.metadata.name || selectedNode.value.title,
+        database: selectedNode.value.metadata.database,
+        schema: selectedNode.value.metadata.schema
+      })
+      showDdlModal.value = true
+      await nextTick()
+      if (ddlEditorContainer.value) {
+        if (ddlEditor) ddlEditor.dispose()
+        ddlEditor = monaco.editor.create(ddlEditorContainer.value, {
+          value: ddl,
+          language: 'sql',
+          theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs',
+          readOnly: true,
+          automaticLayout: true,
+          minimap: { enabled: false }
+        })
+      }
+    } catch (e: any) { message.error(e) }
+  }
 }
 
 async function openSavedScript(s: any) { try { const content = await invoke<string>('read_file', { path: s.path }); emit('new-query', { database: selectedNode.value?.metadata.database || selectedNode.value?.title, connectionId: props.connectionId, content, filePath: s.path, title: s.name }); showScriptsModal.value = false } catch (e: any) { message.error(e) } }

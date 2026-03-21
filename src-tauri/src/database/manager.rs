@@ -209,6 +209,12 @@ impl ConnectionManager {
         db.get_aggregate_functions(database, schema).await
     }
 
+    pub async fn get_table_ddl(&self, composite_id: &str, table: &str, schema: Option<&str>, database: Option<&str>) -> DbResult<String> {
+        let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
+        db.get_table_ddl(table, schema).await
+    }
+
     pub async fn get_extensions(&self, composite_id: &str, database: Option<&str>) -> DbResult<Vec<ExtensionInfo>> {
         let db = self.get_db_ref(composite_id).await?;
         self.ensure_db_context(db.clone(), database).await?;

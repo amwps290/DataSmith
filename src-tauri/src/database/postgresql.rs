@@ -259,30 +259,42 @@ impl DatabaseOperations for PostgreSqlDatabase {
         Ok(map.into_values().collect())
     }
 
-    async fn get_functions(&self, _database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+    async fn get_table_ddl(&self, table: &str, schema: Option<&str>) -> DbResult<String> {
         let schema_name = schema.unwrap_or("public");
-        let sql = "SELECT p.proname, n.nspname, pg_catalog.pg_get_function_result(p.oid), pg_catalog.pg_get_function_arguments(p.oid), l.lanname, obj_description(p.oid, 'pg_proc') FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang WHERE n.nspname = $1 AND p.prokind != 'a' ORDER BY p.proname";
-        let rows = client.query(sql, &[&schema_name]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
-        Ok(rows.into_iter().map(|r| FunctionInfo { name: r.get(0), schema: Some(r.get(1)), return_type: Some(r.get(2)), arguments: Some(r.get(3)), language: Some(r.get(4)), function_type: "function".into(), comment: r.try_get(5).ok() }).collect())
-    }
-
-    async fn get_aggregate_functions(&self, _database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
+        let columns = self.get_table_structure(table, Some(schema_name), None).await?;
+        
         let state = self.state.lock().await;
         let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
-        let schema_name = schema.unwrap_or("public");
-        let sql = "SELECT p.proname, n.nspname, pg_catalog.pg_get_function_result(p.oid), pg_catalog.pg_get_function_arguments(p.oid), obj_description(p.oid, 'pg_proc') FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = $1 AND p.prokind = 'a' ORDER BY p.proname";
-        let rows = client.query(sql, &[&schema_name]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
-        Ok(rows.into_iter().map(|r| FunctionInfo { name: r.get(0), schema: Some(r.get(1)), return_type: Some(r.get(2)), arguments: Some(r.get(3)), language: None, function_type: "aggregate".into(), comment: r.try_get(4).ok() }).collect())
-    }
+        
+        // 1. 检查是否为视图
+        let view_sql = "SELECT pg_get_viewdef(c.oid, true) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'v'";
+        let view_rows = client.query(view_sql, &[&schema_name, &table]).await.unwrap_or_default();
+        
+        if let Some(row) = view_rows.first() {
+            let definition: String = row.get(0);
+            return Ok(format!("CREATE OR REPLACE VIEW \"{}\".\"{}\" AS\n{}", schema_name, table, definition));
+        }
 
-    async fn get_extensions(&self, _database: Option<&str>) -> DbResult<Vec<ExtensionInfo>> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
-        let sql = "SELECT extname, extversion, n.nspname, obj_description(e.oid, 'pg_extension') FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace ORDER BY extname";
-        let rows = client.query(sql, &[]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
-        Ok(rows.into_iter().map(|r| ExtensionInfo { name: r.get(0), version: r.get(1), schema: Some(r.get(2)), comment: r.try_get(3).ok() }).collect())
+        // 2. 否则按表处理，重构 CREATE TABLE 语句
+        let mut ddl = format!("CREATE TABLE \"{}\".\"{}\" (\n", schema_name, table);
+        let mut col_defs = Vec::new();
+        let mut pks = Vec::new();
+
+        for col in columns {
+            let mut def = format!("  \"{}\" {}", col.name, col.data_type);
+            if !col.nullable { def.push_str(" NOT NULL"); }
+            if let Some(ref d) = col.default_value { def.push_str(&format!(" DEFAULT {}", d)); }
+            col_defs.push(def);
+            if col.is_primary_key { pks.push(format!("\"{}\"", col.name)); }
+        }
+
+        ddl.push_str(&col_defs.join(",\n"));
+        if !pks.is_empty() {
+            ddl.push_str(&format!(",\n  PRIMARY KEY ({})", pks.join(", ")));
+        }
+        ddl.push_str("\n);");
+
+        Ok(ddl)
     }
 
     async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {

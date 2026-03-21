@@ -169,6 +169,17 @@ impl DatabaseOperations for SqliteDatabase {
         Ok(indexes)
     }
 
+    async fn get_table_ddl(&self, table: &str, _schema: Option<&str>) -> DbResult<String> {
+        let sql = format!("SELECT sql FROM sqlite_master WHERE name = '{}'", table.replace("'", "''"));
+        let results = self.execute_query(&sql, None).await?;
+        if let Some(res) = results.first() {
+            if let Some(row) = res.rows.first() {
+                return Ok(row.get("sql").and_then(|v| v.as_str()).unwrap_or("").to_string());
+            }
+        }
+        Err(DbError::Other("无法获取 DDL".into()))
+    }
+
     async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         let explain_sql = format!("EXPLAIN QUERY PLAN {}", sql);
         self.execute_query(&explain_sql, database).await

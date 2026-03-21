@@ -85,6 +85,7 @@
     "open_scripts": "Open Scripts...",
     "refresh_db": "Refresh Database",
     "view_data": "View Data",
+    "view_ddl": "View DDL",
     "design_table": "Design Table",
     "drop_table": "Drop Table",
     "copy_name": "Copy Name",
@@ -132,6 +133,9 @@
     "discard_changes": "Discard Changes",
     "discard_confirm": "Are you sure you want to discard all unsaved changes?",
     "update_fail": "Update failed",
-    "cell_modified": "Modified"
+    "cell_modified": "Modified",
+    "cell_viewer": "Cell Viewer",
+    "format_json": "Format JSON",
+    "copy_content": "Copy Content"
   }
 }

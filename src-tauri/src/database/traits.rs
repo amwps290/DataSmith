@@ -188,6 +188,11 @@ pub trait DatabaseOperations: Send + Sync {
     /// 获取索引信息
     async fn get_indexes(&self, table: &str, schema: Option<&str>) -> DbResult<Vec<IndexInfo>>;
     
+    /// 获取表/视图的 DDL (CREATE 语句)
+    async fn get_table_ddl(&self, _table: &str, _schema: Option<&str>) -> DbResult<String> {
+        Err(DbError::Other("该数据库类型不支持 DDL 生成".into()))
+    }
+    
     async fn get_views(&self, _database: Option<&str>) -> DbResult<Vec<TableInfo>> {
         Ok(Vec::new())
     }

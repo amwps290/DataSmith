@@ -236,7 +236,7 @@ impl DatabaseOperations for MySqlDatabase {
     }
 
     async fn get_indexes(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
-        let results = self.execute_query(&format!("SHOW INDEX FROM {}", table), None).await?;
+        let results = self.execute_query(&format!("SHOW INDEX FROM `{}`", table), None).await?;
         let mut map: HashMap<String, IndexInfo> = HashMap::new();
         
         if let Some(res) = results.first() {
@@ -256,6 +256,18 @@ impl DatabaseOperations for MySqlDatabase {
             }
         }
         Ok(map.into_values().collect())
+    }
+
+    async fn get_table_ddl(&self, table: &str, _schema: Option<&str>) -> DbResult<String> {
+        let sql = format!("SHOW CREATE TABLE `{}`", table);
+        let results = self.execute_query(&sql, None).await?;
+        if let Some(res) = results.first() {
+            if let Some(row) = res.rows.first() {
+                // MySQL 返回两列：Table 和 Create Table
+                return Ok(row.get("Create Table").or_else(|| row.values().nth(1)).and_then(|v| v.as_str()).unwrap_or("").to_string());
+            }
+        }
+        Err(DbError::Other("无法获取 DDL".into()))
     }
 
     async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
