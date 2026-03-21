@@ -61,8 +61,8 @@ pub async fn get_table_indexes(connection_id: String, table: String, schema: Opt
 }
 
 #[tauri::command]
-pub async fn get_schema_indexes(_connection_id: String, _database: String, _schema: String, _state: State<'_, AppState>) -> Result<Vec<IndexInfo>, String> {
-    Ok(vec![])
+pub async fn get_schema_indexes(connection_id: String, database: String, schema: String, state: State<'_, AppState>) -> Result<Vec<IndexInfo>, String> {
+    state.connection_manager.get_schema_indexes(&connection_id, Some(&database), Some(&schema)).await.map_err(|e| e.to_string())
 }
 
 // 占位指令，后续完善

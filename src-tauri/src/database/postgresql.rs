@@ -259,6 +259,22 @@ impl DatabaseOperations for PostgreSqlDatabase {
         Ok(map.into_values().collect())
     }
 
+    async fn get_schema_indexes(&self, _database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
+        let state = self.state.lock().await;
+        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let schema_name = schema.unwrap_or("public");
+        let sql = "SELECT i.relname, a.attname, ix.indisunique, ix.indisprimary FROM pg_index ix JOIN pg_class i ON i.oid = ix.indexrelid JOIN pg_class t ON t.oid = ix.indrelid JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) JOIN pg_namespace n ON n.oid = i.relnamespace WHERE n.nspname = $1";
+        let rows = client.query(sql, &[&schema_name]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        let mut map: HashMap<String, IndexInfo> = HashMap::new();
+        for r in rows {
+            let name: String = r.get(0);
+            let col: String = r.get(1);
+            let entry = map.entry(name.clone()).or_insert(IndexInfo { name, columns: vec![], is_unique: r.get(2), is_primary: r.get(3), index_type: "BTREE".into() });
+            entry.columns.push(col);
+        }
+        Ok(map.into_values().collect())
+    }
+
     async fn get_table_ddl(&self, table: &str, schema: Option<&str>) -> DbResult<String> {
         let schema_name = schema.unwrap_or("public");
         let columns = self.get_table_structure(table, Some(schema_name), None).await?;

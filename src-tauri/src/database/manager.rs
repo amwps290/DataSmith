@@ -199,8 +199,13 @@ impl ConnectionManager {
 
     pub async fn get_indexes(&self, composite_id: &str, table: &str, schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
         let db = self.get_db_ref(composite_id).await?;
-        // 索引通常是基于当前 schema/table，目前维持原样
         db.get_indexes(table, schema).await
+    }
+
+    pub async fn get_schema_indexes(&self, composite_id: &str, database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
+        let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
+        db.get_schema_indexes(database, schema).await
     }
 
     pub async fn get_aggregate_functions(&self, composite_id: &str, database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {

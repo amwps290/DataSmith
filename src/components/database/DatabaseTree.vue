@@ -195,9 +195,14 @@ async function onLoadData(treeNode: TreeNode) {
     } catch (e: any) { message.error(e) }
   }
   else if (['schema-indexes', 'schema-functions', 'database-extensions'].includes(treeNode.type)) {
+    const isExtension = treeNode.type === 'database-extensions'
     const method = treeNode.type === 'schema-indexes' ? 'get_schema_indexes' : (treeNode.type === 'schema-functions' ? 'get_schema_functions' : 'get_database_extensions')
     try {
-      const res = await invoke<any[]>(method, { connectionId: connId, database: treeNode.metadata.database, schema: treeNode.metadata.schema })
+      // 扩展信息 (database-extensions) 不接受 schema 参数，需对齐后端指令
+      const params: any = { connectionId: connId, database: treeNode.metadata.database }
+      if (!isExtension) params.schema = treeNode.metadata.schema
+      
+      const res = await invoke<any[]>(method, params)
       const children = res.map(item => ({ key: `${treeNode.key}-${item.name || item.index_name}`, title: item.name || item.index_name, type: 'leaf', isLeaf: true, metadata: { ...item, database: treeNode.metadata.database, schema: treeNode.metadata.schema } }))
       updateNodeInTree(treeData.value, treeNode.key, (n) => n.children = children.length ? children : [{ key: `${treeNode.key}-empty`, title: t('tree.empty'), type: 'empty', isLeaf: true }])
       treeData.value = [...treeData.value]

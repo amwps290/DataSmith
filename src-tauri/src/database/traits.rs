@@ -187,6 +187,11 @@ pub trait DatabaseOperations: Send + Sync {
 
     /// 获取索引信息
     async fn get_indexes(&self, table: &str, schema: Option<&str>) -> DbResult<Vec<IndexInfo>>;
+
+    /// 获取 Schema 下的所有索引
+    async fn get_schema_indexes(&self, _database: Option<&str>, _schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
+        Ok(Vec::new())
+    }
     
     /// 获取表/视图的 DDL (CREATE 语句)
     async fn get_table_ddl(&self, _table: &str, _schema: Option<&str>) -> DbResult<String> {
