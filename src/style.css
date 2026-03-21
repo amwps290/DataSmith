@@ -1,6 +1,19 @@
+* {
+  box-sizing: border-box;
+  /* 禁用全局文字选中 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 允许交互区域选中文字 */
+input, textarea, [contenteditable="true"], .monaco-editor, .vxe-grid, .history-sql, .message-text, .ant-modal-content, code, pre {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
 :root {
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 13px; /* 从 14-16px 降至 13px */
+  font-size: 13px;
   line-height: 1.5;
   font-weight: 400;
 
@@ -11,7 +24,7 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  -moz-osx-smoothing: grayscale;
 }
 
 body {
@@ -27,7 +40,6 @@ body {
   height: 100vh;
 }
 
-/* 全局 Ant Design 覆盖，实现紧凑 UI */
 .ant-btn {
   padding: 2px 8px;
   height: 28px;
@@ -66,10 +78,9 @@ body {
 
 .ant-table-small .ant-table-thead > tr > th,
 .ant-table-small .ant-table-tbody > tr > td {
-  padding: 4px 8px !important; /* 数据网格极度紧凑 */
+  padding: 4px 8px !important;
 }
 
-/* 滚动条美化 */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

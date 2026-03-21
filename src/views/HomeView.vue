@@ -1,13 +1,16 @@
 <template>
-  <a-layout class="main-layout">
-    <!-- 顶部导航栏 -->
-    <a-layout-header class="header">
+  <a-layout class="main-layout" :class="{ 'dark-mode': appStore.theme === 'dark' }">
+    <!-- 顶部标题栏 (原生 header 确保拖拽可靠性) -->
+    <header class="header" @mousedown="handleHeaderMouseDown">
       <div class="header-content">
-        <div class="logo" @click="handleNewQuery({})" style="cursor: pointer">
+        <!-- Logo -->
+        <div class="logo">
           <DatabaseOutlined style="font-size: 18px; margin-right: 6px" />
           <span class="title">DataSmith</span>
         </div>
-        <div class="header-menu">
+        
+        <!-- 菜单区域 (阻止冒泡，避免触发拖拽) -->
+        <div class="header-menu" @mousedown.stop>
           <a-menu mode="horizontal" :selected-keys="[]" class="top-menu">
             <a-sub-menu key="file">
               <template #title>{{ $t('common.file') }}</template>
@@ -31,16 +34,29 @@
             </a-sub-menu>
           </a-menu>
         </div>
-        <div class="header-actions">
-          <a-space>
-            <a-button type="text" @click="showGlobalSearch = true">
+
+        <!-- 动作区与窗口控制 (阻止冒泡) -->
+        <div class="header-actions" @mousedown.stop>
+          <a-space :size="0">
+            <a-button type="text" size="small" @click="showGlobalSearch = true" class="search-btn">
               <template #icon><SearchOutlined /></template>
             </a-button>
-            <a-button type="primary" @click="showConnectionDialog = true">{{ $t('common.run') }}</a-button>
+            
+            <div class="window-controls">
+              <div class="win-btn" title="最小化" @click="minimizeWindow">
+                <Icon icon="fluent:subtract-16-filled" />
+              </div>
+              <div class="win-btn" title="最大化/还原" @click="toggleMaximize">
+                <Icon :icon="isMaximized ? 'fluent:square-multiple-16-regular' : 'fluent:square-16-regular'" />
+              </div>
+              <div class="win-btn close" title="关闭" @click="closeWindow">
+                <Icon icon="fluent:dismiss-16-filled" />
+              </div>
+            </div>
           </a-space>
         </div>
       </div>
-    </a-layout-header>
+    </header>
 
     <a-layout-content class="content-container">
       <div class="sidebar-wrapper" :style="{ width: appStore.sidebarCollapsed ? '0' : sidebarWidth + 'px' }">
@@ -147,24 +163,6 @@
       </div>
     </a-layout-content>
 
-    <!-- 设置弹窗 -->
-    <a-modal v-model:open="showSettings" :title="$t('common.settings')" @ok="handleSaveSettings">
-      <a-form :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
-        <a-form-item :label="$t('common.theme')">
-          <a-radio-group v-model:value="settingsForm.theme">
-            <a-radio value="light">{{ appStore.language === 'zh-CN' ? '明亮' : 'Light' }}</a-radio>
-            <a-radio value="dark">{{ appStore.language === 'zh-CN' ? '暗色' : 'Dark' }}</a-radio>
-          </a-radio-group>
-        </a-form-item>
-        <a-form-item :label="$t('common.language')">
-          <a-radio-group v-model:value="settingsForm.language">
-            <a-radio value="zh-CN">中文</a-radio>
-            <a-radio value="en-US">English</a-radio>
-          </a-radio-group>
-        </a-form-item>
-      </a-form>
-    </a-modal>
-
     <ConnectionDialog v-model:visible="showConnectionDialog" :editing-connection="editingConnection" @close="editingConnection = null" />
     <GlobalSearch v-model:visible="showGlobalSearch" :connection-id="connectionStore.activeConnectionId" @view-data="handleTableSelected" />
   </a-layout>
@@ -173,6 +171,8 @@
 <script setup lang="ts">
 import { reactive, ref, computed, nextTick, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Icon } from '@iconify/vue'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { 
   DatabaseOutlined, BulbOutlined, PlusOutlined, SettingOutlined, 
   MenuOutlined, FileTextOutlined, SearchOutlined, 
@@ -197,6 +197,8 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const connectionStore = useConnectionStore()
 const workspaceStore = useWorkspaceStore()
+const appWindow = getCurrentWindow()
+
 const showConnectionDialog = ref(false)
 const showSettings = ref(false)
 const showGlobalSearch = ref(false)
@@ -206,8 +208,29 @@ const sqlEditorRefs = reactive<Record<string, any>>({})
 const redisEditorRef = ref<any>(null)
 const availableDatabases = ref<any[]>([])
 const sidebarWidth = ref(280)
+const isMaximized = ref(false)
 
 const settingsForm = reactive({ theme: appStore.theme, language: appStore.language })
+
+// 编程式拖拽逻辑：解决 Linux 下属性无效的问题
+async function handleHeaderMouseDown(e: MouseEvent) {
+  // 仅左键点击且当前不是点击在按钮/菜单上时触发拖拽
+  if (e.button === 0) {
+    try {
+      await appWindow.startDragging()
+    } catch (err) {
+      console.error('拖拽失败:', err)
+    }
+  }
+}
+
+// 窗口控制
+async function minimizeWindow() { await appWindow.minimize() }
+async function toggleMaximize() { 
+  await appWindow.toggleMaximize()
+  isMaximized.value = await appWindow.isMaximized()
+}
+async function closeWindow() { await appWindow.close() }
 
 function openSettings() {
   settingsForm.theme = appStore.theme
@@ -262,7 +285,15 @@ const activeEditorExecuting = computed(() => sqlEditorRefs[mainTabKey.value]?.ex
 
 function callActiveEditor(method: string, ...args: any[]) { const editor = sqlEditorRefs[mainTabKey.value]; if (editor && editor[method]) editor[method](...args) }
 function handleToolbarDbChange(val: any) { callActiveEditor('handleDatabaseChange', String(val || '')) }
-onMounted(() => { restoreSession() })
+
+onMounted(async () => { 
+  restoreSession()
+  try {
+    isMaximized.value = await appWindow.isMaximized()
+    appWindow.onResized(async () => { isMaximized.value = await appWindow.isMaximized() })
+  } catch (e) { console.error(e) }
+})
+
 function setSqlEditorRef(el: any, key: string) { if (el) sqlEditorRefs[key] = el; else delete sqlEditorRefs[key]; }
 function handleContentChange(key: string, val: string) { const t = dataTabs.value.find(t => t.key === key); if (t) t.content = val; }
 function handleFileSaved(key: string, path: string, title: string) {
@@ -332,12 +363,34 @@ function handleEditConnection(c: any) { editingConnection.value = c; showConnect
 
 <style scoped>
 .main-layout { height: 100vh; width: 100vw; display: flex; flex-direction: column; overflow: hidden; }
-.header { height: 64px; padding: 0 16px; background: #fff; border-bottom: 1px solid #f0f0f0; flex-shrink: 0; z-index: 100; }
+.header { 
+  height: 40px; 
+  background: #fff; 
+  border-bottom: 1px solid #f0f0f0; 
+  flex-shrink: 0; 
+  z-index: 100; 
+  padding: 0;
+  overflow: hidden;
+}
 .dark-mode .header { background: #1f1f1f; border-bottom-color: #303030; }
-.header-content { display: flex; justify-content: space-between; align-items: center; height: 100%; }
-.logo { display: flex; align-items: center; font-size: 20px; font-weight: bold; color: #1890ff; }
-.header-menu { flex: 1; margin-left: 24px; }
-.top-menu { border-bottom: none; background: transparent; }
+
+.header-content { display: flex; justify-content: space-between; align-items: center; height: 100%; width: 100%; }
+
+.logo { display: flex; align-items: center; font-size: 16px; font-weight: bold; color: #1890ff; padding: 0 16px; height: 100%; }
+.header-menu { flex: 1; height: 100%; display: flex; align-items: center; }
+.top-menu { border-bottom: none; background: transparent; height: 100%; line-height: 40px; width: 100%; }
+.top-menu :deep(.ant-menu-submenu-title) { height: 40px !important; line-height: 40px !important; padding: 0 12px; }
+
+.header-actions { display: flex; align-items: center; height: 100%; padding-right: 0; }
+.search-btn { margin-right: 8px; }
+
+.window-controls { display: flex; height: 100%; }
+.win-btn { display: inline-flex; justify-content: center; align-items: center; width: 46px; height: 100%; cursor: pointer; transition: background-color 0.2s; font-size: 14px; color: #595959; }
+.dark-mode .win-btn { color: #aaa; }
+.win-btn:hover { background-color: rgba(0, 0, 0, 0.05); }
+.dark-mode .win-btn:hover { background-color: rgba(255, 255, 255, 0.1); }
+.win-btn.close:hover { background-color: #e81123 !important; color: #fff !important; }
+
 .content-container { flex: 1; display: flex; flex-direction: row; overflow: hidden; position: relative; }
 .sidebar-wrapper { background: #fafafa; border-right: 1px solid #e8e8e8; height: 100%; overflow: hidden; flex-shrink: 0; }
 .dark-mode .sidebar-wrapper { background: #141414; border-right-color: #303030; }
@@ -363,7 +416,4 @@ function handleEditConnection(c: any) { editingConnection.value = c; showConnect
 .workspace-tabs :deep(.ant-tabs-tabpane) { height: 100%; display: flex; flex-direction: column; }
 .tab-content-wrapper { flex: 1; height: 100%; overflow: hidden; position: relative; }
 .empty-workspace { flex: 1; display: flex; align-items: center; justify-content: center; }
-.context-menu-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9999; }
-.context-menu { position: absolute; background: #fff; border-radius: 4px; border: 1px solid #d9d9d9; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 10000; min-width: 120px; }
-.dark-mode .context-menu { background: #1f1f1f; border-color: #303030; }
 </style>
