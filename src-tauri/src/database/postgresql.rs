@@ -89,65 +89,73 @@ impl DatabaseOperations for PostgreSqlDatabase {
     }
 
     #[instrument(skip(self, sql))]
-    async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<QueryResult> {
+    async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         let start = Instant::now();
         let state = self.state.lock().await;
         let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
         
         debug!(sql = %sql.replace('\n', " "), "执行查询");
 
-        // 1. 先尝试执行 simple_query (文本协议)
+        // 1. 执行 simple_query (文本协议)，它能自动处理多条语句
         let messages = client.simple_query(sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         
-        let mut final_columns = Vec::new();
-        let mut final_rows = Vec::new();
-        let mut total_affected = 0;
+        let mut results = Vec::new();
+        let mut current_columns = Vec::new();
+        let mut current_rows = Vec::new();
 
         for msg in messages {
             match msg {
                 tokio_postgres::SimpleQueryMessage::Row(row) => {
-                    if final_columns.is_empty() {
-                        for i in 0..row.len() { final_columns.push(format!("col_{}", i)); }
+                    // 如果是新的结果集（列名数组为空），初始化临时列名
+                    if current_columns.is_empty() {
+                        for i in 0..row.len() {
+                            current_columns.push(format!("col_{}", i));
+                        }
                     }
                     let mut row_map = HashMap::new();
                     for i in 0..row.len() {
                         let val = row.get(i).map(|s| serde_json::Value::String(s.to_string())).unwrap_or(serde_json::Value::Null);
                         row_map.insert(format!("col_{}", i), val);
                     }
-                    final_rows.push(row_map);
+                    current_rows.push(row_map);
                 },
-                tokio_postgres::SimpleQueryMessage::CommandComplete(count) => { total_affected += count; },
+                tokio_postgres::SimpleQueryMessage::CommandComplete(count) => {
+                    // 语句执行完成，打包当前结果集
+                    results.push(QueryResult {
+                        columns: current_columns.clone(),
+                        rows: current_rows.clone(),
+                        affected_rows: count,
+                        execution_time_ms: start.elapsed().as_millis(),
+                    });
+                    // 重置临时容器，准备下一个结果集
+                    current_columns.clear();
+                    current_rows.clear();
+                },
                 _ => {}
             }
         }
 
-        // 2. 如果有结果，尝试通过 binary query 补全列名元数据
-        if !final_rows.is_empty() {
-            if let Ok(meta_rows) = client.query(sql, &[]).await {
-                if !meta_rows.is_empty() {
-                    final_columns.clear();
-                    for col in meta_rows[0].columns() { final_columns.push(col.name().to_string()); }
-                    let mut mapped_rows = Vec::new();
-                    for old_row in final_rows {
-                        let mut new_row = HashMap::new();
-                        for (i, name) in final_columns.iter().enumerate() {
-                            if let Some(val) = old_row.get(&format!("col_{}", i)) {
-                                new_row.insert(name.clone(), val.clone());
-                            }
-                        }
-                        mapped_rows.push(new_row);
-                    }
-                    final_rows = mapped_rows;
-                }
-            }
+        // 处理没有显式 CommandComplete 的剩余数据（防御性编程）
+        if !current_rows.is_empty() || !current_columns.is_empty() {
+            results.push(QueryResult {
+                columns: current_columns,
+                rows: current_rows,
+                affected_rows: 0,
+                execution_time_ms: start.elapsed().as_millis(),
+            });
         }
 
-        Ok(QueryResult {
-            columns: final_columns,
-            rows: final_rows,
-            affected_rows: total_affected,
-            execution_time_ms: start.elapsed().as_millis(),
-        })
+        // 如果一条结果都没有（比如执行了空语句），返回一个空的成功结果
+        if results.is_empty() {
+            results.push(QueryResult {
+                columns: vec![],
+                rows: vec![],
+                affected_rows: 0,
+                execution_time_ms: start.elapsed().as_millis(),
+            });
+        }
+
+        Ok(results)
     }
 
     async fn get_databases(&self) -> DbResult<Vec<DatabaseInfo>> {
@@ -254,7 +262,7 @@ impl DatabaseOperations for PostgreSqlDatabase {
         Ok(rows.into_iter().map(|r| ExtensionInfo { name: r.get(0), version: r.get(1), schema: Some(r.get(2)), comment: r.try_get(3).ok() }).collect())
     }
 
-    async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<QueryResult> {
+    async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         let explain_sql = format!("EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON) {}", sql);
         self.execute_query(&explain_sql, database).await
     }

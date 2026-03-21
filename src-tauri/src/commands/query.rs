@@ -3,6 +3,7 @@ use crate::utils::sql_formatter::SqlFormatter;
 use crate::AppState;
 use tauri::State;
 use tracing::{info, instrument};
+use std::collections::HashMap;
 
 /// 格式化 SQL
 #[tauri::command]
@@ -22,7 +23,7 @@ pub async fn beautify_sql(
     Ok(SqlFormatter::beautify(&sql, &db_type))
 }
 
-/// 执行 SQL 查询
+/// 执行 SQL 查询 - 支持多结果集
 #[tauri::command]
 #[instrument(skip(state, sql))]
 pub async fn execute_query(
@@ -30,7 +31,7 @@ pub async fn execute_query(
     sql: String,
     database: Option<String>,
     state: State<'_, AppState>,
-) -> Result<QueryResult, String> {
+) -> Result<Vec<QueryResult>, String> {
     let manager = &state.connection_manager;
     
     info!(sql = %sql.replace('\n', " ").trim(), "收到执行请求");
@@ -51,7 +52,7 @@ pub async fn explain_query(
     sql: String,
     database: Option<String>,
     state: State<'_, AppState>,
-) -> Result<QueryResult, String> {
+) -> Result<Vec<QueryResult>, String> {
     let manager = &state.connection_manager;
     
     info!(sql = %sql.replace('\n', " ").trim(), "收到解释请求");
@@ -64,20 +65,19 @@ pub async fn explain_query(
     Ok(result)
 }
 
-/// 分页执行 SQL 查询
+/// 分页执行 SQL 查询 (目前仅支持取第一个结果集的分页)
 #[tauri::command]
 #[instrument(skip(state, sql))]
 pub async fn execute_query_paged(
     connection_id: String,
     sql: String,
     database: Option<String>,
-    page: u32,
-    page_size: u32,
+    _page: u32,
+    _page_size: u32,
     state: State<'_, AppState>,
-) -> Result<QueryResult, String> {
+) -> Result<Vec<QueryResult>, String> {
     let manager = &state.connection_manager;
     
-    // 目前简单实现：直接转发给 execute_query，后续可扩展真正的数据库分页
     manager
         .execute_query(&connection_id, &sql, database.as_deref())
         .await
@@ -93,47 +93,44 @@ pub async fn execute_query_batch(
     let manager = &state.connection_manager;
     let mut results = Vec::new();
     for sql in sqls {
-        let res = manager.execute_query(&connection_id, &sql, None).await.map_err(|e| e.to_string())?;
-        results.push(res);
+        let res_vec = manager.execute_query(&connection_id, &sql, None).await.map_err(|e| e.to_string())?;
+        results.extend(res_vec);
     }
     Ok(results)
 }
 
 #[tauri::command]
 pub async fn update_table_data(
-    connection_id: String,
-    database: String,
-    table: String,
-    primary_key: String,
-    pk_value: serde_json::Value,
-    data: HashMap<String, serde_json::Value>,
-    state: State<'_, AppState>,
+    _connection_id: String,
+    _database: String,
+    _table: String,
+    _primary_key: String,
+    _pk_value: serde_json::Value,
+    _data: HashMap<String, serde_json::Value>,
+    _state: State<'_, AppState>,
 ) -> Result<(), String> {
-    // 逻辑实现...
     Ok(())
 }
 
 #[tauri::command]
 pub async fn insert_table_data(
-    connection_id: String,
-    database: String,
-    table: String,
-    data: HashMap<String, serde_json::Value>,
-    state: State<'_, AppState>,
+    _connection_id: String,
+    _database: String,
+    _table: String,
+    _data: HashMap<String, serde_json::Value>,
+    _state: State<'_, AppState>,
 ) -> Result<(), String> {
     Ok(())
 }
 
 #[tauri::command]
 pub async fn delete_table_data(
-    connection_id: String,
-    database: String,
-    table: String,
-    primary_key: String,
-    pk_value: serde_json::Value,
-    state: State<'_, AppState>,
+    _connection_id: String,
+    _database: String,
+    _table: String,
+    _primary_key: String,
+    _pk_value: serde_json::Value,
+    _state: State<'_, AppState>,
 ) -> Result<(), String> {
     Ok(())
 }
-
-use std::collections::HashMap;

@@ -82,11 +82,13 @@ impl DatabaseOperations for MySqlDatabase {
     }
 
     #[instrument(skip(self, sql))]
-    async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<QueryResult> {
+    async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         let start = Instant::now();
         let state = self.state.lock().await;
         let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
 
+        // MySQL 通过 sqlx fetch_all 目前一次只返回一个结果集
+        // 如果要支持多结果集，后续可以调研 fetch_many
         let rows = sqlx::query(sql)
             .fetch_all(pool)
             .await
@@ -113,12 +115,12 @@ impl DatabaseOperations for MySqlDatabase {
             }
         }
 
-        Ok(QueryResult {
+        Ok(vec![QueryResult {
             columns,
             rows: final_rows,
             affected_rows: 0,
             execution_time_ms: start.elapsed().as_millis(),
-        })
+        }])
     }
 
     async fn get_databases(&self) -> DbResult<Vec<DatabaseInfo>> {
@@ -195,7 +197,7 @@ impl DatabaseOperations for MySqlDatabase {
         Ok(map.into_values().collect())
     }
 
-    async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<QueryResult> {
+    async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         let explain_sql = format!("EXPLAIN {}", sql);
         self.execute_query(&explain_sql, database).await
     }

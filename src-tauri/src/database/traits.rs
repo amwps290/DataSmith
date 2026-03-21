@@ -168,8 +168,8 @@ pub trait DatabaseOperations: Send + Sync {
     /// 断开连接 - 改为 &self
     async fn disconnect(&self) -> DbResult<()>;
 
-    /// 执行查询
-    async fn execute_query(&self, sql: &str, database: Option<&str>) -> DbResult<QueryResult>;
+    /// 执行查询 - 支持多结果集
+    async fn execute_query(&self, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>>;
 
     /// 获取数据库列表
     async fn get_databases(&self) -> DbResult<Vec<DatabaseInfo>>;
@@ -193,7 +193,7 @@ pub trait DatabaseOperations: Send + Sync {
     }
     
     /// 获取执行计划
-    async fn explain_query(&self, _sql: &str, _database: Option<&str>) -> DbResult<QueryResult> {
+    async fn explain_query(&self, _sql: &str, _database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         Err(DbError::Other("该数据库类型不支持执行计划分析".into()))
     }
     

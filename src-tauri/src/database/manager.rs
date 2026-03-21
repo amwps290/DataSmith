@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, instrument, span, Level};
+use tracing::{debug, error, info, instrument};
 
 use super::traits::*;
 #[cfg(feature = "mysql")]
@@ -129,23 +129,19 @@ impl ConnectionManager {
         Ok(())
     }
 
-    // --- 极致并发代理方法：获取 Arc 引用后立即释放读锁 ---
+    // --- 代理方法：转发给具体驱动 ---
 
-    pub async fn execute_query(&self, composite_id: &str, sql: &str, database: Option<&str>) -> DbResult<QueryResult> {
+    pub async fn execute_query(&self, composite_id: &str, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         let db = self.get_db_ref(composite_id).await?;
         
-        // 如果指定了数据库，尝试切换
         if let Some(db_name) = database {
             let mut conns = self.connections.write().await;
             let real_id = if composite_id.contains(':') { composite_id.to_string() } else { format!("{}:metadata", composite_id) };
             if let Some(db_instance) = conns.get_mut(&real_id) {
-                // 注意：switch_database 内部会处理是否真的需要重连
                 db_instance.switch_database(db_name).await?;
             }
         }
 
-        // 在此处，connections 的锁已经释放
-        debug!(session = %composite_id, target_db = ?database, "开始执行查询 (Map 锁已释放)");
         db.execute_query(sql, database).await
     }
 
@@ -205,7 +201,7 @@ impl ConnectionManager {
         db.get_extensions(database).await
     }
 
-    pub async fn explain_query(&self, composite_id: &str, sql: &str, database: Option<&str>) -> DbResult<QueryResult> {
+    pub async fn explain_query(&self, composite_id: &str, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         let db = self.get_db_ref(composite_id).await?;
         db.explain_query(sql, database).await
     }

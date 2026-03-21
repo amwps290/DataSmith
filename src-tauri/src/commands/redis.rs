@@ -1,190 +1,125 @@
 use crate::database::redis::RedisDatabase;
 use crate::AppState;
-use base64::{engine::general_purpose, Engine as _};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use tauri::State;
-
-/// Redis 命令执行结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RedisCommandResult {
-    pub success: bool,
-    pub result: Option<serde_json::Value>,
-    pub error: Option<String>,
-    pub execution_time_ms: u128,
-}
-
-/// Redis 键值信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RedisKeyInfo {
-    pub key: String,
-    pub key_type: String,
-    pub ttl: i64,
-    pub size: Option<usize>,
-    pub encoding: Option<String>,
-}
-
-/// Redis 键值详情
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RedisKeyDetail {
-    pub key: String,
-    pub key_type: String,
-    pub ttl: i64,
-    pub value: serde_json::Value,
-}
+use std::collections::HashMap;
 
 /// 执行 Redis 命令
 #[tauri::command]
 pub async fn execute_redis_command(
     connection_id: String,
     command: String,
+    args: Vec<String>,
     state: State<'_, AppState>,
-) -> Result<RedisCommandResult, String> {
-    let start = std::time::Instant::now();
-
-    let parts: Vec<String> =
-        shell_words::split(&command).map_err(|e| format!("解析命令失败: {}", e))?;
-
-    if parts.is_empty() {
-        return Ok(RedisCommandResult {
-            success: false,
-            result: None,
-            error: Some("命令不能为空".to_string()),
-            execution_time_ms: start.elapsed().as_millis(),
-        });
-    }
-
-    let cmd = parts[0].to_uppercase();
-    let args: Vec<String> = parts[1..].to_vec();
-
+) -> Result<serde_json::Value, String> {
     let manager = &state.connection_manager;
-    let connections = manager
-        .get_db_instance(&connection_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let db_instance = manager.get_db_instance(&connection_id).await.map_err(|e| e.to_string())?;
+    let conns = db_instance.read().await;
+    
+    let real_id = if connection_id.contains(':') {
+        connection_id.clone()
+    } else {
+        format!("{}:metadata", connection_id)
+    };
 
-    let connections_guard = connections.read().await;
-    let db = connections_guard
-        .get(&connection_id)
-        .ok_or_else(|| "连接不存在".to_string())?;
+    let db = conns.get(&real_id).ok_or("连接不存在")?;
+    let redis_db = db.as_any().downcast_ref::<RedisDatabase>().ok_or("不是 Redis 连接")?;
 
-    let redis_db = db
-        .as_any()
-        .downcast_ref::<RedisDatabase>()
-        .ok_or_else(|| "不是 Redis 连接".to_string())?;
-
-    match redis_db.execute_command(&cmd, args).await {
-        Ok(value) => {
-            let json_value = redis_value_to_json(value);
-            Ok(RedisCommandResult {
-                success: true,
-                result: Some(json_value),
-                error: None,
-                execution_time_ms: start.elapsed().as_millis(),
-            })
-        }
-        Err(e) => Ok(RedisCommandResult {
-            success: false,
-            result: None,
-            error: Some(e.to_string()),
-            execution_time_ms: start.elapsed().as_millis(),
-        }),
+    match redis_db.execute_command(&command, args).await {
+        Ok(val) => Ok(redis_value_to_json(val)),
+        Err(e) => Err(e.to_string()),
     }
 }
 
-/// 获取 Redis 服务器信息
+/// 获取 Redis 信息
 #[tauri::command]
 pub async fn get_redis_info(
     connection_id: String,
     state: State<'_, AppState>,
 ) -> Result<HashMap<String, String>, String> {
     let manager = &state.connection_manager;
-    let connections = manager
-        .get_db_instance(&connection_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let db_instance = manager.get_db_instance(&connection_id).await.map_err(|e| e.to_string())?;
+    let conns = db_instance.read().await;
+    
+    let real_id = if connection_id.contains(':') {
+        connection_id.clone()
+    } else {
+        format!("{}:metadata", connection_id)
+    };
 
-    let connections_guard = connections.read().await;
-    let db = connections_guard
-        .get(&connection_id)
-        .ok_or_else(|| "连接不存在".to_string())?;
+    let db = conns.get(&real_id).ok_or("连接不存在")?;
+    let redis_db = db.as_any().downcast_ref::<RedisDatabase>().ok_or("不是 Redis 连接")?;
 
-    let redis_db = db
-        .as_any()
-        .downcast_ref::<RedisDatabase>()
-        .ok_or_else(|| "不是 Redis 连接".to_string())?;
-
-    redis_db.get_server_info().await.map_err(|e| e.to_string())
+    let info_str = redis_db.get_server_info().await.map_err(|e| e.to_string())?;
+    
+    let mut info_map = HashMap::new();
+    for line in info_str.lines() {
+        if line.starts_with('#') || line.trim().is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(2, ':').collect();
+        if parts.len() == 2 {
+            info_map.insert(parts[0].to_string(), parts[1].to_string());
+        }
+    }
+    
+    Ok(info_map)
 }
 
-/// 获取键值
+/// 获取 Redis Key 的值和 TTL
 #[tauri::command]
 pub async fn get_redis_key_value(
     connection_id: String,
     key: String,
     state: State<'_, AppState>,
-) -> Result<RedisKeyDetail, String> {
+) -> Result<serde_json::Value, String> {
     let manager = &state.connection_manager;
-    let connections = manager
-        .get_db_instance(&connection_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let connections_guard = connections.read().await;
-    let db = connections_guard
-        .get(&connection_id)
-        .ok_or_else(|| "连接不存在".to_string())?;
-
-    let redis_db = db
-        .as_any()
-        .downcast_ref::<RedisDatabase>()
-        .ok_or_else(|| "不是 Redis 连接".to_string())?;
-
-    let key_type_value = redis_db
-        .execute_command("TYPE", vec![key.clone()])
-        .await
-        .map_err(|e| e.to_string())?;
-    let key_type = match key_type_value {
-        redis::Value::SimpleString(s) => s,
-        _ => "unknown".to_string(),
+    let db_instance = manager.get_db_instance(&connection_id).await.map_err(|e| e.to_string())?;
+    let conns = db_instance.read().await;
+    
+    let real_id = if connection_id.contains(':') {
+        connection_id.clone()
+    } else {
+        format!("{}:metadata", connection_id)
     };
+
+    let db = conns.get(&real_id).ok_or("连接不存在")?;
+    let redis_db = db.as_any().downcast_ref::<RedisDatabase>().ok_or("不是 Redis 连接")?;
 
     let ttl = redis_db.get_key_ttl(&key).await.map_err(|e| e.to_string())?;
     let value = redis_db.get_key_value(&key).await.map_err(|e| e.to_string())?;
-    let json_value = redis_value_to_json(value);
 
-    Ok(RedisKeyDetail { key, key_type, ttl, value: json_value })
+    Ok(serde_json::json!({
+        "value": value,
+        "ttl": ttl,
+    }))
 }
 
-/// 设置键值
+/// 设置 Redis Key 的值
 #[tauri::command]
 pub async fn set_redis_key_value(
     connection_id: String,
     key: String,
     value: String,
-    ttl: Option<u64>,
+    ttl: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let manager = &state.connection_manager;
-    let connections = manager
-        .get_db_instance(&connection_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let db_instance = manager.get_db_instance(&connection_id).await.map_err(|e| e.to_string())?;
+    let conns = db_instance.read().await;
+    
+    let real_id = if connection_id.contains(':') {
+        connection_id.clone()
+    } else {
+        format!("{}:metadata", connection_id)
+    };
 
-    let connections_guard = connections.read().await;
-    let db = connections_guard
-        .get(&connection_id)
-        .ok_or_else(|| "连接不存在".to_string())?;
-
-    let redis_db = db
-        .as_any()
-        .downcast_ref::<RedisDatabase>()
-        .ok_or_else(|| "不是 Redis 连接".to_string())?;
+    let db = conns.get(&real_id).ok_or("连接不存在")?;
+    let redis_db = db.as_any().downcast_ref::<RedisDatabase>().ok_or("不是 Redis 连接")?;
 
     redis_db.set_key_value(&key, &value, ttl).await.map_err(|e| e.to_string())
 }
 
-/// 删除键
+/// 删除 Redis Key
 #[tauri::command]
 pub async fn delete_redis_key(
     connection_id: String,
@@ -192,79 +127,39 @@ pub async fn delete_redis_key(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let manager = &state.connection_manager;
-    let connections = manager
-        .get_db_instance(&connection_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let db_instance = manager.get_db_instance(&connection_id).await.map_err(|e| e.to_string())?;
+    let conns = db_instance.read().await;
+    
+    let real_id = if connection_id.contains(':') {
+        connection_id.clone()
+    } else {
+        format!("{}:metadata", connection_id)
+    };
 
-    let connections_guard = connections.read().await;
-    let db = connections_guard
-        .get(&connection_id)
-        .ok_or_else(|| "连接不存在".to_string())?;
-
-    let redis_db = db
-        .as_any()
-        .downcast_ref::<RedisDatabase>()
-        .ok_or_else(|| "不是 Redis 连接".to_string())?;
+    let db = conns.get(&real_id).ok_or("连接不存在")?;
+    let redis_db = db.as_any().downcast_ref::<RedisDatabase>().ok_or("不是 Redis 连接")?;
 
     redis_db.delete_key(&key).await.map_err(|e| e.to_string())
 }
 
-/// 将 Redis Value 转换为 JSON
+/// 将 Redis 的 Value 转换为 JSON Value (适配 1.0.2 版本变体名)
 fn redis_value_to_json(value: redis::Value) -> serde_json::Value {
     match value {
         redis::Value::Nil => serde_json::Value::Null,
-        redis::Value::Int(i) => serde_json::json!(i),
-        redis::Value::BulkString(data) => {
-            match String::from_utf8(data.clone()) {
-                Ok(s) => serde_json::Value::String(s),
-                Err(_) => serde_json::Value::String(general_purpose::STANDARD.encode(&data)),
+        redis::Value::Int(i) => serde_json::Value::Number(i.into()),
+        redis::Value::BulkString(d) => {
+            if let Ok(s) = String::from_utf8(d) {
+                serde_json::Value::String(s)
+            } else {
+                serde_json::Value::String("Binary Data".to_string())
             }
-        }
-        redis::Value::Array(values) => {
-            let arr: Vec<serde_json::Value> = values.into_iter().map(redis_value_to_json).collect();
-            serde_json::Value::Array(arr)
-        }
+        },
+        redis::Value::Array(v) => {
+            let list: Vec<serde_json::Value> = v.into_iter().map(redis_value_to_json).collect();
+            serde_json::Value::Array(list)
+        },
         redis::Value::SimpleString(s) => serde_json::Value::String(s),
         redis::Value::Okay => serde_json::Value::String("OK".to_string()),
-        redis::Value::Map(map) => {
-            let obj: serde_json::Map<String, serde_json::Value> = map
-                .into_iter()
-                .map(|(k, v)| {
-                    let key = match k {
-                        redis::Value::BulkString(bytes) => String::from_utf8_lossy(&bytes).to_string(),
-                        redis::Value::SimpleString(s) => s,
-                        _ => format!("{:?}", k),
-                    };
-                    (key, redis_value_to_json(v))
-                })
-                .collect();
-            serde_json::Value::Object(obj)
-        }
-        redis::Value::Attribute { data, .. } => redis_value_to_json(*data),
-        redis::Value::Set(values) => {
-            let arr: Vec<serde_json::Value> = values.into_iter().map(redis_value_to_json).collect();
-            serde_json::Value::Array(arr)
-        }
-        redis::Value::Double(f) => serde_json::json!(f),
-        redis::Value::Boolean(b) => serde_json::json!(b),
-        redis::Value::VerbatimString { text, .. } => serde_json::Value::String(text),
-        redis::Value::BigNumber(n) => serde_json::Value::String(format!("{}", n)),
-        redis::Value::Push { data, .. } => {
-            let arr: Vec<serde_json::Value> = data.into_iter().map(redis_value_to_json).collect();
-            serde_json::Value::Array(arr)
-        }
-        redis::Value::ServerError(err) => {
-            serde_json::json!({
-                "error": true,
-                "message": err.details().unwrap_or("Unknown error"),
-                "kind": format!("{:?}", err.kind())
-            })
-        }
-        _ => serde_json::json!({
-            "error": true,
-            "message": "Unsupported redis value type",
-            "debug": format!("{:?}", value)
-        }),
+        _ => serde_json::Value::String(format!("{:?}", value)),
     }
 }

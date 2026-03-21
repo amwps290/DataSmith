@@ -102,16 +102,18 @@ pub async fn export_table_ddl(
 
     // 获取表的 CREATE TABLE 语句
     let sql = format!("SHOW CREATE TABLE `{}`.`{}`", database, table);
-    let result = manager
+    let results = manager
         .execute_query(&connection_id, &sql, Some(&database))
         .await
         .map_err(|e| format!("获取表结构失败: {}", e))?;
 
     // SHOW CREATE TABLE 返回的结果中，第二列是 CREATE TABLE 语句
-    if let Some(row) = result.rows.first() {
-        if let Some(create_stmt) = row.get("Create Table") {
-            if let Some(ddl) = create_stmt.as_str() {
-                return Ok(ddl.to_string());
+    if let Some(result) = results.first() {
+        if let Some(row) = result.rows.first() {
+            if let Some(create_stmt) = row.get("Create Table") {
+                if let Some(ddl) = create_stmt.as_str() {
+                    return Ok(ddl.to_string());
+                }
             }
         }
     }
