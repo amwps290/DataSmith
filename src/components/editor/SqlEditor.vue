@@ -33,7 +33,8 @@
             <div class="table-wrapper">
               <vxe-grid
                 :ref="(el: any) => setGridRef(el, index)"
-                v-bind="getGridOptions(result)"
+                v-bind="getGridOptions(result, index)"
+                @scroll="(params: any) => handleScroll({ ...params, index })"
               >
                 <template #cell_default="{ row, column }">
                   <span :class="{ 'null-text': row[column.field] === null }">
@@ -138,17 +139,86 @@ const showSnippets = ref(false)
 const gridRefs = reactive<Record<number, any>>({})
 function setGridRef(el: any, index: number) { if (el) gridRefs[index] = el; else delete gridRefs[index]; }
 
-function getGridOptions(result: QueryResult): VxeGridProps {
+// 结果集状态追踪
+const queryResultStates = reactive<Record<number, {
+  pagination: { current: number; pageSize: number };
+  loading: boolean;
+  hasMore: boolean;
+  sql: string;
+}>>({})
+
+function getGridOptions(result: QueryResult, index: number): VxeGridProps {
+  const state = queryResultStates[index]
   return {
     border: true,
     height: 'auto',
-    loading: false,
+    loading: state?.loading || false,
     columnConfig: { resizable: true },
     rowConfig: { isHover: true, isCurrent: true, height: 36 },
     scrollX: { enabled: true, gt: 20 },
     scrollY: { enabled: true, gt: 0 },
     columns: result.columns.map(col => ({ field: col, title: col, minWidth: 150, showOverflow: true, slots: { default: 'cell_default' } })),
     data: result.rows
+  }
+}
+
+// 滚动触发加载
+const handleScroll = ({ isY, scrollTop, bodyHeight, scrollHeight, index }: any) => {
+  if (isY && !executing.value && queryResultStates[index]?.hasMore && !queryResultStates[index]?.loading) {
+    if (scrollTop + bodyHeight + 50 >= scrollHeight) {
+      loadNextPage(index)
+    }
+  }
+}
+
+async function loadNextPage(index: number) {
+  const state = queryResultStates[index]
+  if (!state || state.loading || !state.hasMore) return
+  
+  state.loading = true
+  state.pagination.current++
+  const offset = (state.pagination.current - 1) * state.pagination.pageSize
+  
+  // 剥离末尾分号以追加 LIMIT
+  let baseSql = state.sql.trim()
+  if (baseSql.endsWith(';')) baseSql = baseSql.slice(0, -1).trim()
+
+  // 判定逻辑：剥离注释后检查特征
+  const cleanSql = baseSql
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(--|#).*$/gm, '')
+    .trim()
+  
+  const normalizedClean = cleanSql.toUpperCase()
+  const isSelect = normalizedClean.startsWith('SELECT')
+  const hasLimit = /\bLIMIT\b/i.test(normalizedClean)
+
+  // 仅针对单条 SELECT 语句且不含 LIMIT 的情况尝试追加
+  if (isSelect && !hasLimit && !cleanSql.includes(';')) {
+    const pagedSql = `${baseSql} LIMIT ${state.pagination.pageSize} OFFSET ${offset};`
+    try {
+      const results = await invoke<QueryResult[]>('execute_query', {
+        connectionId: sessionConnectionId.value,
+        sql: pagedSql,
+        database: selectedDatabase.value || null,
+      })
+      if (results.length > 0) {
+        const result = results[0]
+        state.hasMore = result.rows.length === state.pagination.pageSize
+        const newRows = [...queryResults.value[index].rows, ...result.rows]
+        queryResults.value[index] = { ...queryResults.value[index], rows: newRows }
+      } else {
+        state.hasMore = false
+      }
+    } catch (e: any) {
+      message.error(e)
+      state.hasMore = false
+    } finally {
+      state.loading = false
+    }
+  } else {
+    state.hasMore = false
+    state.loading = false
   }
 }
 
@@ -160,28 +230,80 @@ async function executeQuery() {
   
   const selection = editor?.getSelection()
   const model = editor?.getModel()
-  let sql = editor?.getValue().trim() || ''
+  let fullSql = editor?.getValue().trim() || ''
   let isSelection = false
 
   if (selection && model && !selection.isEmpty()) {
     const selectedText = model.getValueInRange(selection).trim()
-    if (selectedText) { sql = selectedText; isSelection = true; }
+    if (selectedText) { fullSql = selectedText; isSelection = true; }
   }
 
-  if (!sql) return message.warning(t('editor.input_sql_warn'))
+  if (!fullSql) return message.warning(t('editor.input_sql_warn'))
 
   executing.value = true
   queryResults.value = []
+  Object.keys(queryResultStates).forEach(k => delete queryResultStates[Number(k)])
+  
   if (isSelection) addMessage('info', t('editor.executing_selection'))
 
   try {
+    // 1. 拆分 SQL 语句 (简单拆分，实际可更复杂)
+    const statements = fullSql.split(';').map(s => s.trim()).filter(s => s.length > 0)
+    if (statements.length === 0) {
+      executing.value = false
+      return
+    }
+
+    // 2. 为每一条符合条件的语句注入分页限制，并记录原始语句
+    const processedStatements: string[] = []
+    const statementConfigs: { sql: string; canPage: boolean }[] = []
+
+    for (const stmt of statements) {
+      // 判定逻辑：剥离注释后检查是否以 SELECT 开头
+      const cleanStmt = stmt
+        .replace(/\/\*[\s\S]*?\*\//g, '') // 移除块注释
+        .replace(/(--|#).*$/gm, '')       // 移除行注释
+        .trim()
+      
+      const normalizedClean = cleanStmt.toUpperCase()
+      // 检查是否为 SELECT 且不含 LIMIT 关键字（使用正则单词边界匹配）
+      const isSelect = normalizedClean.startsWith('SELECT')
+      const hasLimit = /\bLIMIT\b/i.test(normalizedClean)
+      const canPage = isSelect && !hasLimit
+      
+      statementConfigs.push({ sql: stmt, canPage })
+      if (canPage) {
+        // 在原始语句（保留注释）末尾追加 LIMIT
+        processedStatements.push(`${stmt} LIMIT 100`)
+      } else {
+        processedStatements.push(stmt)
+      }
+    }
+
+    // 3. 合并回一个脚本发送给后端
+    const finalSql = processedStatements.join('; ') + ';'
+
     const results = await invoke<QueryResult[]>('execute_query', {
       connectionId: connId,
-      sql,
+      sql: finalSql,
       database: selectedDatabase.value || null,
     })
     
     queryResults.value = results
+    
+    // 4. 为每个结果集绑定其对应的原始语句和分页状态
+    results.forEach((r, i) => {
+      // 注意：如果结果集数量多于语句数量（某些数据库特性），安全起见做个兜底
+      const config = statementConfigs[i] || { sql: statements[statements.length - 1], canPage: false }
+      
+      queryResultStates[i] = {
+        pagination: { current: 1, pageSize: 100 },
+        loading: false,
+        hasMore: config.canPage && r.rows.length === 100,
+        sql: config.sql // 存储该结果集对应的原始单条 SQL
+      }
+    })
+
     if (results.length > 0) {
       resultTabKey.value = 'result-0'
       const totalAffected = results.reduce((acc, r) => acc + r.affected_rows, 0)
@@ -189,7 +311,7 @@ async function executeQuery() {
     } else {
       resultTabKey.value = 'messages'
     }
-    saveToHistory(sql)
+    saveToHistory(fullSql)
   } catch (e: any) {
     message.error(`${t('connection.fail')}: ${e}`)
     addMessage('error', String(e))

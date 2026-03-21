@@ -168,8 +168,19 @@ async function loadData(isAppend: boolean) {
     if (filterCondition.value) sql += ` WHERE ${filterCondition.value}`
     sql += ` LIMIT ${pagination.pageSize} OFFSET ${offset}`
     
-    const result = await invoke<QueryResult>('execute_query', { connectionId: props.connectionId, sql, database: props.database })
+    // execute_query 返回 Result<Vec<QueryResult>, String>，所以前端收到的是 QueryResult[]
+    const results = await invoke<QueryResult[]>('execute_query', { connectionId: props.connectionId, sql, database: props.database })
+    const result = results[0]
     
+    if (!result) {
+      hasMore.value = false
+      if (!isAppend) {
+        gridOptions.columns = []
+        gridOptions.data = []
+      }
+      return
+    }
+
     // 如果返回的数据少于页大小，说明没有更多了
     hasMore.value = result.rows.length === pagination.pageSize
 

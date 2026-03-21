@@ -105,17 +105,23 @@ impl DatabaseOperations for PostgreSqlDatabase {
 
         for msg in messages {
             match msg {
+                tokio_postgres::SimpleQueryMessage::RowDescription(columns) => {
+                    // 获取真实的列名
+                    current_columns = columns.iter().map(|c| c.name().to_string()).collect();
+                },
                 tokio_postgres::SimpleQueryMessage::Row(row) => {
-                    // 如果是新的结果集（列名数组为空），初始化临时列名
+                    // 如果由于某种原因没有获取到 RowDescription，则使用占位符
                     if current_columns.is_empty() {
                         for i in 0..row.len() {
-                            current_columns.push(format!("col_{}", i));
+                            current_columns.push(format!("column_{}", i + 1));
                         }
                     }
+                    
                     let mut row_map = HashMap::new();
                     for i in 0..row.len() {
+                        let col_name = current_columns.get(i).cloned().unwrap_or_else(|| format!("column_{}", i + 1));
                         let val = row.get(i).map(|s| serde_json::Value::String(s.to_string())).unwrap_or(serde_json::Value::Null);
-                        row_map.insert(format!("col_{}", i), val);
+                        row_map.insert(col_name, val);
                     }
                     current_rows.push(row_map);
                 },
