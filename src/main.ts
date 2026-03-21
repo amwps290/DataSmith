@@ -4,6 +4,7 @@ import Antd from 'ant-design-vue'
 import 'ant-design-vue/dist/reset.css'
 import App from './App.vue'
 import router from './router'
+import i18n from './i18n'
 import './style.css'
 
 // 引入 vxe-table 高性能表格库
@@ -29,6 +30,7 @@ const pinia = createPinia()
 // 关键：必须在所有可能用到 Store 的插件之前安装 Pinia
 app.use(pinia)
 app.use(router)
+app.use(i18n)
 app.use(Antd)
 app.use(VxeUI)
 app.use(VxeTable)

@@ -3,10 +3,10 @@
     <div class="grid-toolbar">
       <a-space>
         <a-button :icon="h(ReloadOutlined)" @click="refresh" :loading="loading">
-          刷新
+          {{ $t('common.refresh') }}
         </a-button>
         <a-button :icon="h(PlusOutlined)" @click="addRow">
-          新增
+          {{ $t('common.add') }}
         </a-button>
         <a-button 
           :icon="h(DeleteOutlined)" 
@@ -14,33 +14,33 @@
           :disabled="selectedRowKeys.length === 0"
           @click="deleteSelected"
         >
-          删除
+          {{ $t('common.delete') }}
         </a-button>
         <a-divider type="vertical" />
         <a-button :icon="h(FilterOutlined)" @click="showFilterDialog = true">
-          筛选
+          {{ $t('data.filter') }}
         </a-button>
         <a-dropdown>
           <template #overlay>
             <a-menu @click="handleExport">
-              <a-menu-item key="csv">导出为 CSV</a-menu-item>
-              <a-menu-item key="json">导出为 JSON</a-menu-item>
-              <a-menu-item key="sql">导出为 SQL INSERT</a-menu-item>
+              <a-menu-item key="csv">{{ $t('data.export_csv') }}</a-menu-item>
+              <a-menu-item key="json">{{ $t('data.export_json') }}</a-menu-item>
+              <a-menu-item key="sql">{{ $t('data.export_sql') }}</a-menu-item>
             </a-menu>
           </template>
           <a-button :icon="h(ExportOutlined)">
-            导出
+            {{ $t('data.export') }}
           </a-button>
         </a-dropdown>
       </a-space>
       
       <div class="toolbar-right">
         <div class="data-info">
-          已加载 {{ gridOptions.data?.length || 0 }} 行
+          {{ $t('editor.loaded_rows', { n: gridOptions.data?.length || 0 }) }}
           <span v-if="loading" class="loading-text">
-            <a-spin size="small" style="margin-left: 8px" /> 加载中...
+            <a-spin size="small" style="margin-left: 8px" /> {{ $t('common.loading') }}
           </span>
-          <span v-else-if="!hasMore" class="end-text"> (已加载全部)</span>
+          <span v-else-if="!hasMore" class="end-text"> {{ $t('data.loaded_all') }}</span>
         </div>
       </div>
     </div>
@@ -64,20 +64,20 @@
     </div>
 
     <!-- 单元格编辑器 -->
-    <a-modal v-model:open="showEditor" :title="`编辑单元格: ${editingField}`" @ok="saveEdit" width="600px" :confirm-loading="saving">
+    <a-modal v-model:open="showEditor" :title="$t('data.edit_cell', { field: editingField })" @ok="saveEdit" width="600px" :confirm-loading="saving">
       <a-form layout="vertical">
-        <a-form-item label="当前值">
+        <a-form-item :label="$t('data.current_value')">
           <a-textarea v-model:value="editingValue" :rows="8" class="editor-textarea" />
         </a-form-item>
-        <a-checkbox v-model:checked="isSetNull">设为 NULL</a-checkbox>
+        <a-checkbox v-model:checked="isSetNull">{{ $t('data.set_null') }}</a-checkbox>
       </a-form>
     </a-modal>
 
     <!-- 筛选对话框 -->
-    <a-modal v-model:open="showFilterDialog" title="数据筛选" @ok="applyFilter">
+    <a-modal v-model:open="showFilterDialog" :title="$t('data.data_filter')" @ok="applyFilter">
       <a-form layout="vertical">
-        <a-form-item label="WHERE 条件">
-          <a-textarea v-model:value="filterCondition" :rows="4" placeholder="例如: id > 100 AND status = 'active'" />
+        <a-form-item :label="$t('data.where_condition')">
+          <a-textarea v-model:value="filterCondition" :rows="4" :placeholder="$t('data.filter_placeholder')" />
         </a-form-item>
       </a-form>
     </a-modal>
@@ -86,6 +86,7 @@
 
 <script setup lang="ts">
 import { h, ref, watch, computed, reactive } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   ReloadOutlined, PlusOutlined, DeleteOutlined, FilterOutlined,
   ExportOutlined
@@ -96,6 +97,7 @@ import type { QueryResult } from '@/types/database'
 import { useConnectionStore } from '@/stores/connection'
 import type { VxeGridProps, VxeGridInstance, VxeGridEvents } from 'vxe-table'
 
+const { t } = useI18n()
 const props = defineProps<{ connectionId: string; database: string; table: string; schema?: string }>()
 const connectionStore = useConnectionStore()
 const gridRef = ref<VxeGridInstance>()
@@ -212,7 +214,7 @@ function handleCellDblClick({ row, column }: any) {
 }
 
 async function saveEdit() {
-  if (primaryKeys.value.length === 0) return message.error('无主键，无法执行精准更新')
+  if (primaryKeys.value.length === 0) return message.error(t('data.no_pk_error'))
   saving.value = true
   const newValue = isSetNull.value ? null : editingValue.value
   try {
@@ -221,14 +223,14 @@ async function saveEdit() {
     }).join(' AND ')
     await invoke('update_table_data', { connectionId: props.connectionId, database: props.database, table: props.table, schema: props.schema, column: editingField.value, value: newValue === null ? null : String(newValue), whereClause: where })
     editingRow.value[editingField.value] = newValue
-    showEditor.value = false; message.success('更新成功')
+    showEditor.value = false; message.success(t('data.update_success'))
   } catch (e: any) { message.error(e) } finally { saving.value = false }
 }
 
-function addRow() { message.info('新增行功能待完善') }
+function addRow() { message.info(t('data.new_row_not_implemented')) }
 async function deleteSelected() {
   Modal.confirm({
-    title: '确认删除', content: `确定删除选中的 ${selectedRowKeys.value.length} 行数据吗？`, okType: 'danger',
+    title: t('common.delete'), content: t('data.delete_confirm_n', { n: selectedRowKeys.value.length }), okType: 'danger',
     async onOk() {
       try {
         const records = gridRef.value?.getCheckboxRecords() || []
@@ -238,7 +240,7 @@ async function deleteSelected() {
           }).join(' AND ')
           await invoke('delete_table_data', { connectionId: props.connectionId, database: props.database, table: props.table, schema: props.schema, whereClause: where })
         }
-        message.success('删除成功'); refresh()
+        message.success(t('data.delete_success')); refresh()
       } catch (e: any) { message.error(e) }
     }
   })
@@ -248,7 +250,7 @@ async function handleExport({ key }: any) {
   try {
     const sql = `SELECT * FROM ${tableRef()}${filterCondition.value ? ' WHERE ' + filterCondition.value : ''}`
     const path = await invoke<string>(`export_to_${key}`, { connectionId: props.connectionId, database: props.database, table: props.table, query: sql })
-    message.success(`导出完成: ${path}`)
+    message.success(t('data.export_success', { path }))
   } catch (e: any) { message.error(e) }
 }
 

@@ -2,18 +2,18 @@
   <div class="tree-node" :class="{ 'is-connection': node.type === 'connection' }">
     <div
       :class="['tree-node-content', { selected: isSelected }]"
-      :style="{ paddingLeft: (level * 15 + 20) + 'px' }"
+      :style="{ paddingLeft: (level * 15 + 8) + 'px' }"
       @click="handleClick"
       @dblclick="handleDblClick"
       @contextmenu="handleContextMenu"
     >
-      <!-- 垂直引导线 -->
+      <!-- 垂直引导线：修正起始位置为 16px -->
       <div 
         v-for="i in (level + (isExpanded && hasChildren ? 1 : 0))" 
         :key="i"
         class="tree-line"
         :class="{ 'is-current': i === level + 1 }"
-        :style="{ left: ((i-1) * 15 + 27) + 'px' }"
+        :style="{ left: ((i-1) * 15 + 16) + 'px' }"
       ></div>
 
       <!-- 展开/折叠箭头 -->
@@ -80,7 +80,6 @@ function getIconConfig(node: TreeNode) {
   const type = node.type
   const metadata = node.metadata || {}
   
-  // 1. 品牌图标 (针对连接层)
   if (type === 'connection') {
     const dbType = (metadata.db_type || '').toLowerCase()
     if (dbType.includes('postgres')) return { icon: 'logos:postgresql', class: 'brand-icon' }
@@ -91,49 +90,20 @@ function getIconConfig(node: TreeNode) {
     return { icon: 'ph:database-duotone', color: '#1890ff' }
   }
 
-  // 2. 字段图标 (精细化处理)
   if (type === 'column') {
     if (metadata.is_primary_key) return { icon: 'ph:key-duotone', color: '#faad14' }
-    
     const dataType = (metadata.data_type || '').toLowerCase()
-    
-    // 数字类型
-    if (dataType.includes('int') || dataType.includes('num') || dataType.includes('float') || dataType.includes('double') || dataType.includes('decimal') || dataType.includes('serial')) 
-      return { icon: 'ph:hash-bold', color: '#1890ff' }
-    
-    // 日期/时间类型
-    if (dataType.includes('date') || dataType.includes('time') || dataType.includes('interval')) 
-      return { icon: 'ph:calendar-blank-duotone', color: '#722ed1' }
-    
-    // 布尔类型
-    if (dataType.includes('bool')) 
-      return { icon: 'ph:toggle-left-duotone', color: '#52c41a' }
-    
-    // JSON/对象类型
-    if (dataType.includes('json') || dataType.includes('xml')) 
-      return { icon: 'ph:brackets-curly-bold', color: '#fa8c16' }
-    
-    // 标识符/UUID 类型
-    if (dataType.includes('uuid') || dataType.includes('guid')) 
-      return { icon: 'ph:id-badge-duotone', color: '#607d8b' }
-    
-    // 地理空间类型
-    if (dataType.includes('geometry') || dataType.includes('geography') || dataType.includes('point')) 
-      return { icon: 'ph:map-trifold-duotone', color: '#43a047' }
-    
-    // 二进制/大对象类型
-    if (dataType.includes('blob') || dataType.includes('binary') || dataType.includes('bytea')) 
-      return { icon: 'ph:file-zip-duotone', color: '#795548' }
-    
-    // 数组类型
-    if (dataType.includes('[]') || dataType.includes('array')) 
-      return { icon: 'ph:list-dashes-bold', color: '#00bcd4' }
-
-    // 默认字符串/文本类型
+    if (dataType.includes('int') || dataType.includes('num') || dataType.includes('float') || dataType.includes('double') || dataType.includes('decimal') || dataType.includes('serial')) return { icon: 'ph:hash-bold', color: '#1890ff' }
+    if (dataType.includes('date') || dataType.includes('time') || dataType.includes('interval')) return { icon: 'ph:calendar-blank-duotone', color: '#722ed1' }
+    if (dataType.includes('bool')) return { icon: 'ph:toggle-left-duotone', color: '#52c41a' }
+    if (dataType.includes('json') || dataType.includes('xml')) return { icon: 'ph:brackets-curly-bold', color: '#fa8c16' }
+    if (dataType.includes('uuid') || dataType.includes('guid')) return { icon: 'ph:id-badge-duotone', color: '#607d8b' }
+    if (dataType.includes('geometry') || dataType.includes('geography') || dataType.includes('point')) return { icon: 'ph:map-trifold-duotone', color: '#43a047' }
+    if (dataType.includes('blob') || dataType.includes('binary') || dataType.includes('bytea')) return { icon: 'ph:file-zip-duotone', color: '#795548' }
+    if (dataType.includes('[]') || dataType.includes('array')) return { icon: 'ph:list-dashes-bold', color: '#00bcd4' }
     return { icon: 'ph:text-t-bold', color: '#8c8c8c' }
   }
 
-  // 3. 数据库对象图标
   const configMap: Record<string, any> = {
     database: { icon: 'ph:database-duotone', color: '#fa8c16' },
     schemas: { icon: 'ph:folders-duotone', color: '#8c8c8c' },
@@ -153,7 +123,6 @@ function getIconConfig(node: TreeNode) {
     extension: { icon: 'ph:puzzle-piece-duotone', color: '#1890ff' },
     'empty': { icon: 'ph:info-duotone', color: '#bfbfbf' }
   }
-
   return configMap[type] || { icon: 'ph:file-text-duotone', color: '#8c8c8c' }
 }
 </script>

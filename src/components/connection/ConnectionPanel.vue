@@ -1,14 +1,14 @@
 <template>
   <div class="connection-panel">
     <div class="panel-header">
-      <span class="panel-title">连接管理器</span>
+      <span class="panel-title">{{ $t('connection.manager') }}</span>
       <a-button
         type="text"
         size="small"
         :icon="h(PlusOutlined)"
         @click="$emit('add-connection')"
       >
-        新建
+        {{ $t('common.new') }}
       </a-button>
     </div>
 
@@ -16,7 +16,7 @@
       <div class="search-wrapper">
         <a-input
           v-model:value="searchText"
-          placeholder="搜索连接或数据库对象..."
+          :placeholder="$t('common.search')"
           size="small"
           :bordered="false"
           allow-clear
@@ -101,7 +101,7 @@
 
       <a-empty
         v-if="filteredConnections.length === 0"
-        description="暂无连接"
+        :description="$t('connection.no_connections')"
         :image="Empty.PRESENTED_IMAGE_SIMPLE"
         style="margin-top: 40px"
       />
@@ -120,18 +120,18 @@
       >
         <a-menu @click="handleMenuClick" size="small">
           <a-menu-item key="connect" v-if="getConnectionStatus(selectedConnection?.id || '') !== 'connected'">
-            <LinkOutlined /> 连接
+            <LinkOutlined /> {{ $t('common.run') }}
           </a-menu-item>
           <a-menu-item key="disconnect" v-if="getConnectionStatus(selectedConnection?.id || '') === 'connected'">
-            <DisconnectOutlined /> 断开连接
+            <DisconnectOutlined /> {{ $t('common.close') }}
           </a-menu-item>
           <a-menu-divider v-if="getConnectionStatus(selectedConnection?.id || '') === 'connected' && canCreateDatabase" />
           <a-menu-item key="create-database" v-if="getConnectionStatus(selectedConnection?.id || '') === 'connected' && canCreateDatabase">
-            <DatabaseOutlined /> 新建数据库
+            <DatabaseOutlined /> {{ $t('common.new') }}{{ $t('common.database') }}
           </a-menu-item>
           <a-menu-divider />
-          <a-menu-item key="edit"><EditOutlined /> 编辑</a-menu-item>
-          <a-menu-item key="delete" danger><DeleteOutlined /> 删除</a-menu-item>
+          <a-menu-item key="edit"><EditOutlined /> {{ $t('common.edit') }}</a-menu-item>
+          <a-menu-item key="delete" danger><DeleteOutlined /> {{ $t('common.delete') }}</a-menu-item>
         </a-menu>
       </div>
     </div>
@@ -147,6 +147,7 @@
 
 <script setup lang="ts">
 import { h, computed, ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { 
   DatabaseOutlined, PlusOutlined, LinkOutlined, EditOutlined, DeleteOutlined, 
   DisconnectOutlined, DownOutlined, RightOutlined, SearchOutlined
@@ -158,6 +159,7 @@ import DatabaseTree from '@/components/database/DatabaseTree.vue'
 import CreateDatabaseDialog from '@/components/database/CreateDatabaseDialog.vue'
 import { Icon } from '@iconify/vue'
 
+const { t } = useI18n()
 const emit = defineEmits(['add-connection', 'edit-connection', 'table-selected', 'database-selected', 'new-query', 'design-table', 'view-structure', 'open-scripts'])
 
 const connectionStore = useConnectionStore()
@@ -228,8 +230,8 @@ async function handleConnectToDatabase(conn: ConnectionConfig) {
     const newExpanded = new Set(expandedConnections.value)
     newExpanded.add(conn.id)
     expandedConnections.value = newExpanded
-    message.success(`已连接到 ${conn.name}`)
-  } catch (error: any) { connectionStore.updateConnectionStatus(conn.id, 'error'); message.error(`连接失败: ${error}`) }
+    message.success(`${t('connection.success')}: ${conn.name}`)
+  } catch (error: any) { connectionStore.updateConnectionStatus(conn.id, 'error'); message.error(`${t('connection.fail')}: ${error}`) }
 }
 
 async function handleDisconnect(conn: ConnectionConfig) {
@@ -239,8 +241,8 @@ async function handleDisconnect(conn: ConnectionConfig) {
     const newExpanded = new Set(expandedConnections.value)
     newExpanded.delete(conn.id)
     expandedConnections.value = newExpanded
-    message.success(`已断开连接 ${conn.name}`)
-  } catch (error: any) { message.error(`断开连接失败: ${error}`) }
+    message.success(`${t('common.close')}: ${conn.name}`)
+  } catch (error: any) { message.error(`${error}`) }
 }
 
 function handleContextMenu(event: MouseEvent, conn: ConnectionConfig) {
@@ -256,10 +258,10 @@ async function handleMenuClick({ key }: any) {
   else if (key === 'edit') emit('edit-connection', selectedConnection.value)
   else if (key === 'delete') {
     Modal.confirm({
-      title: '确认删除', content: `确定要删除连接 "${selectedConnection.value.name}" 吗？`,
+      title: t('common.delete'), content: `${t('connection.delete_confirm')} "${selectedConnection.value.name}"?`,
       async onOk() {
-        try { await connectionStore.deleteConnection(selectedConnection.value!.id); message.success('连接已删除') }
-        catch (error: any) { message.error(`删除失败: ${error}`) }
+        try { await connectionStore.deleteConnection(selectedConnection.value!.id); message.success(t('common.save')) }
+        catch (error: any) { message.error(`${error}`) }
       }
     })
   }

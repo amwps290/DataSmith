@@ -1,7 +1,7 @@
 <template>
   <a-modal
     v-model:open="dialogVisible"
-    :title="props.editingConnection ? '编辑连接' : '新建连接'"
+    :title="props.editingConnection ? $t('connection.edit') : $t('connection.new')"
     :width="600"
     @ok="handleSubmit"
     @cancel="handleCancel"
@@ -13,12 +13,12 @@
       :label-col="{ span: 6 }"
       :wrapper-col="{ span: 18 }"
     >
-      <a-form-item label="连接名称" name="name">
-        <a-input v-model:value="formData.name" placeholder="请输入连接名称" />
+      <a-form-item :label="$t('connection.form.name')" name="name">
+        <a-input v-model:value="formData.name" :placeholder="$t('connection.form.placeholders.name')" />
       </a-form-item>
 
-      <a-form-item label="数据库类型" name="db_type">
-        <a-select v-model:value="formData.db_type" placeholder="请选择数据库类型">
+      <a-form-item :label="$t('connection.form.type')" name="db_type">
+        <a-select v-model:value="formData.db_type" :placeholder="$t('connection.form.placeholders.type')">
           <a-select-option value="mysql">MySQL</a-select-option>
           <a-select-option value="postgresql">PostgreSQL</a-select-option>
           <a-select-option value="sqlite">SQLite</a-select-option>
@@ -29,11 +29,11 @@
 
       <!-- 非 SQLite 的常规参数 -->
       <template v-if="formData.db_type !== 'sqlite'">
-        <a-form-item label="主机" name="host">
-          <a-input v-model:value="formData.host" placeholder="localhost" />
+        <a-form-item :label="$t('connection.form.host')" name="host">
+          <a-input v-model:value="formData.host" :placeholder="$t('connection.form.placeholders.host')" />
         </a-form-item>
 
-        <a-form-item label="端口" name="port">
+        <a-form-item :label="$t('connection.form.port')" name="port">
           <a-input-number
             v-model:value="formData.port"
             :min="1"
@@ -42,52 +42,52 @@
           />
         </a-form-item>
 
-        <a-form-item label="用户名" name="username">
+        <a-form-item :label="$t('connection.form.user')" name="username">
           <a-input 
             v-model:value="formData.username" 
-            :placeholder="formData.db_type === 'redis' || formData.db_type === 'mongodb' ? '可选' : 'root'" 
+            :placeholder="formData.db_type === 'redis' || formData.db_type === 'mongodb' ? $t('connection.form.placeholders.user_optional') : $t('connection.form.placeholders.user')" 
           />
         </a-form-item>
 
-        <a-form-item label="密码" name="password">
+        <a-form-item :label="$t('connection.form.password')" name="password">
           <a-input-password 
             v-model:value="formData.password" 
-            :placeholder="formData.db_type === 'redis' ? '可选，留空表示无密码' : '请输入密码'" 
+            :placeholder="formData.db_type === 'redis' ? $t('connection.form.placeholders.password_optional') : $t('connection.form.placeholders.password')" 
           />
         </a-form-item>
       </template>
 
       <!-- SQLite 路径参数 -->
-      <a-form-item v-if="formData.db_type === 'sqlite'" label="数据库文件" name="host">
+      <a-form-item v-if="formData.db_type === 'sqlite'" :label="$t('connection.form.sqlite_file')" name="host">
         <a-input-group compact>
           <a-input
             v-model:value="formData.host"
-            placeholder="路径，例如：/path/to/mydb.db 或 :memory:"
+            :placeholder="$t('connection.form.placeholders.sqlite_file')"
             style="width: calc(100% - 160px)"
           />
-          <a-button @click="handleSelectFile">选择</a-button>
-          <a-button @click="handleCreateFile" type="dashed">新建</a-button>
+          <a-button @click="handleSelectFile">{{ $t('connection.select_file') }}</a-button>
+          <a-button @click="handleCreateFile" type="dashed">{{ $t('connection.create_file') }}</a-button>
         </a-input-group>
       </a-form-item>
 
-      <a-form-item label="数据库" name="database" v-if="formData.db_type !== 'sqlite'">
+      <a-form-item :label="$t('connection.form.database')" name="database" v-if="formData.db_type !== 'sqlite'">
         <a-input
           v-if="formData.db_type === 'redis'"
           v-model:value="formData.database"
-          placeholder="数据库编号 (0-15)，默认为 0"
+          :placeholder="$t('connection.form.placeholders.database_redis')"
         />
         <a-input
           v-else
           v-model:value="formData.database"
-          placeholder="可选，留空连接到服务器"
+          :placeholder="$t('connection.form.placeholders.database')"
         />
       </a-form-item>
 
-      <a-form-item label="SSL 连接" name="ssl" v-if="formData.db_type !== 'sqlite' && formData.db_type !== 'redis'">
+      <a-form-item :label="$t('connection.form.ssl')" name="ssl" v-if="formData.db_type !== 'sqlite' && formData.db_type !== 'redis'">
         <a-switch v-model:checked="formData.ssl" />
       </a-form-item>
 
-      <a-form-item label="连接超时(秒)" name="connection_timeout">
+      <a-form-item :label="$t('connection.form.timeout')" name="connection_timeout">
         <a-input-number
           v-model:value="formData.connection_timeout"
           :min="1"
@@ -99,10 +99,10 @@
 
     <template #footer>
       <a-space>
-        <a-button @click="handleCancel">取消</a-button>
-        <a-button v-if="formData.db_type !== 'sqlite'" :loading="testing" @click="handleTest">测试连接</a-button>
+        <a-button @click="handleCancel">{{ $t('common.cancel') }}</a-button>
+        <a-button v-if="formData.db_type !== 'sqlite'" :loading="testing" @click="handleTest">{{ $t('connection.test') }}</a-button>
         <a-button type="primary" :loading="submitting" @click="handleSubmit">
-          {{ props.editingConnection ? '更新' : '保存' }}
+          {{ props.editingConnection ? $t('common.update') : $t('common.save') }}
         </a-button>
       </a-space>
     </template>
@@ -111,12 +111,14 @@
 
 <script setup lang="ts">
 import { reactive, watch, ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { message, Modal } from 'ant-design-vue'
 import { useConnectionStore } from '@/stores/connection'
 import type { ConnectionConfig, DatabaseType } from '@/types/database'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
 
+const { t } = useI18n()
 const props = defineProps<{
   visible: boolean
   editingConnection?: any
@@ -162,17 +164,17 @@ const formData = reactive<{
 // 表单验证规则
 const rules = computed(() => {
   const baseRules: any = {
-    name: [{ required: true, message: '请输入连接名称' }],
-    db_type: [{ required: true, message: '请选择数据库类型' }],
-    host: [{ required: true, message: formData.db_type === 'sqlite' ? '请输入数据库文件路径' : '请输入主机地址' }],
+    name: [{ required: true, message: t('connection.form.placeholders.name') }],
+    db_type: [{ required: true, message: t('connection.form.placeholders.type') }],
+    host: [{ required: true, message: formData.db_type === 'sqlite' ? t('connection.form.placeholders.sqlite_file') : t('connection.form.host') }],
   }
   
   if (formData.db_type !== 'sqlite') {
-    baseRules.port = [{ required: true, message: '请输入端口号' }]
+    baseRules.port = [{ required: true, message: t('connection.form.port') }]
   }
   
   if (formData.db_type !== 'redis' && formData.db_type !== 'mongodb' && formData.db_type !== 'sqlite') {
-    baseRules.username = [{ required: true, message: '请输入用户名' }]
+    baseRules.username = [{ required: true, message: t('connection.form.user') }]
   }
   
   return baseRules
@@ -231,9 +233,9 @@ async function handleTest() {
     await formRef.value.validate()
     testing.value = true
     const result = await connectionStore.testConnection({ ...formData, id: '' } as ConnectionConfig)
-    message.success(`连接测试成功！响应时间: ${result.ping_time_ms}ms`)
+    message.success(t('connection.test_success_ping', { ms: result.ping_time_ms }))
   } catch (error: any) {
-    Modal.error({ title: '连接测试失败', content: error?.message || '无法连接到数据库', width: 500 })
+    Modal.error({ title: t('connection.test_fail'), content: error?.message || t('connection.fail'), width: 500 })
   } finally {
     testing.value = false
   }
@@ -260,13 +262,13 @@ async function handleSubmit() {
       await connectionStore.updateConnection(config, formData.password)
     }
     
-    message.success(isNew ? '连接创建成功' : '连接更新成功')
+    message.success(isNew ? t('connection.save_success') : t('connection.update_success'))
     dialogVisible.value = false
     resetForm()
   } catch (error: any) {
     // 处理 Ant Design Vue 表单验证失败的情况
     if (error?.errorFields) return;
-    message.error(error?.message || '操作失败')
+    message.error(error?.message || t('common.fail'))
   } finally {
     submitting.value = false
   }
@@ -288,7 +290,7 @@ async function handleSelectFile() {
     })
     if (selected) formData.host = selected as string
   } catch (error: any) {
-    message.error(`选择文件失败: ${error.message || error}`)
+    message.error(`${t('common.fail')}: ${error.message || error}`)
   }
 }
 
@@ -304,10 +306,10 @@ async function handleCreateFile() {
       // 自动设置连接名称
       const fileName = path.split(/[\\/]/).pop()?.split('.')[0] || 'New SQLite'
       if (!formData.name) formData.name = fileName
-      message.success("数据库文件已创建")
+      message.success(t('connection.sqlite_created'))
     }
   } catch (error: any) {
-    message.error(`创建文件失败: ${error.message || error}`)
+    message.error(`${t('common.fail')}: ${error.message || error}`)
   }
 }
 

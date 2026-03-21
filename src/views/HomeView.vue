@@ -10,27 +10,23 @@
         <div class="header-menu">
           <a-menu mode="horizontal" :selected-keys="[]" class="top-menu">
             <a-sub-menu key="file">
-              <template #title>文件</template>
+              <template #title>{{ $t('common.file') }}</template>
               <a-menu-item key="new-connection" @click="showConnectionDialog = true">
-                <PlusOutlined />
-                新建连接
+                <PlusOutlined /> {{ $t('connection.new') }}
               </a-menu-item>
               <a-menu-divider />
-              <a-menu-item key="settings" @click="showSettings = true">
-                <SettingOutlined />
-                设置
+              <a-menu-item key="settings" @click="openSettings">
+                <SettingOutlined /> {{ $t('common.settings') }}
               </a-menu-item>
             </a-sub-menu>
             <a-sub-menu key="view">
-              <template #title>视图</template>
+              <template #title>{{ $t('common.view') }}</template>
               <a-menu-item key="toggle-sidebar" @click="appStore.toggleSidebar()">
-                <MenuOutlined />
-                {{ appStore.sidebarCollapsed ? '显示' : '隐藏' }}侧边栏
+                <MenuOutlined /> {{ appStore.sidebarCollapsed ? $t('common.show_sidebar') : $t('common.hide_sidebar') }}
               </a-menu-item>
               <a-menu-divider />
               <a-menu-item key="theme" @click="appStore.toggleTheme()">
-                <BulbOutlined />
-                {{ appStore.theme === 'light' ? '暗色' : '明亮' }}主题
+                <BulbOutlined /> {{ appStore.theme === 'light' ? $t('common.dark_theme') : $t('common.light_theme') }}
               </a-menu-item>
             </a-sub-menu>
           </a-menu>
@@ -40,7 +36,7 @@
             <a-button type="text" @click="showGlobalSearch = true">
               <template #icon><SearchOutlined /></template>
             </a-button>
-            <a-button type="primary" @click="showConnectionDialog = true">连接</a-button>
+            <a-button type="primary" @click="showConnectionDialog = true">{{ $t('common.run') }}</a-button>
           </a-space>
         </div>
       </div>
@@ -68,81 +64,44 @@
         <div v-if="activeTabType === 'query'" class="global-sql-toolbar">
           <div class="toolbar-left">
             <a-space :size="8">
-              <!-- 执行组 -->
               <a-button-group>
-                <a-tooltip title="执行选中或全文 (F5)">
-                  <a-button 
-                    type="text" 
-                    size="small" 
-                    @click="callActiveEditor('executeQuery')" 
-                    :loading="activeEditorExecuting"
-                    class="btn-run"
-                  >
+                <a-tooltip :title="`${$t('common.run')} (F5)`">
+                  <a-button type="text" size="small" @click="callActiveEditor('executeQuery')" :loading="activeEditorExecuting" class="btn-run">
                     <template #icon><PlayCircleFilled /></template>
                   </a-button>
                 </a-tooltip>
-                <a-tooltip title="解释执行计划">
-                  <a-button 
-                    type="text" 
-                    size="small" 
-                    @click="callActiveEditor('explainQuery')" 
-                    :disabled="activeEditorExecuting"
-                    class="btn-explain"
-                  >
+                <a-tooltip :title="$t('common.explain')">
+                  <a-button type="text" size="small" @click="callActiveEditor('explainQuery')" :disabled="activeEditorExecuting" class="btn-explain">
                     <template #icon><SearchOutlined /></template>
                   </a-button>
                 </a-tooltip>
-                <a-tooltip title="停止执行">
-                  <a-button 
-                    type="text" 
-                    size="small" 
-                    @click="callActiveEditor('stopExecution')" 
-                    :disabled="!activeEditorExecuting"
-                    class="btn-stop"
-                  >
+                <a-tooltip :title="$t('common.stop')">
+                  <a-button type="text" size="small" @click="callActiveEditor('stopExecution')" :disabled="!activeEditorExecuting" class="btn-stop">
                     <template #icon><StopOutlined /></template>
                   </a-button>
                 </a-tooltip>
               </a-button-group>
-
               <a-divider type="vertical" />
-
-              <!-- 事务组 (预留) -->
               <a-button-group>
-                <a-tooltip title="提交事务 (预留)">
-                  <a-button type="text" size="small" disabled><template #icon><CheckOutlined /></template></a-button>
-                </a-tooltip>
-                <a-tooltip title="回滚事务 (预留)">
-                  <a-button type="text" size="small" disabled><template #icon><RollbackOutlined /></template></a-button>
-                </a-tooltip>
-              </a-button-group>
-
-              <a-divider type="vertical" />
-
-              <!-- 文件与格式化组 -->
-              <a-button-group>
-                <a-tooltip title="保存 (Ctrl+S)">
+                <a-tooltip :title="`${$t('common.save')} (Ctrl+S)`">
                   <a-button type="text" size="small" @click="callActiveEditor('handleSave')"><template #icon><SaveOutlined /></template></a-button>
                 </a-tooltip>
-                <a-tooltip title="格式化 SQL">
+                <a-tooltip :title="$t('common.format')">
                   <a-button type="text" size="small" @click="callActiveEditor('formatSql')"><template #icon><FormatPainterOutlined /></template></a-button>
                 </a-tooltip>
-                <a-tooltip title="清空内容">
+                <a-tooltip :title="$t('common.clear')">
                   <a-button type="text" size="small" @click="callActiveEditor('clearEditor')"><template #icon><ClearOutlined /></template></a-button>
                 </a-tooltip>
               </a-button-group>
-
               <a-divider type="vertical" />
-
-              <!-- 辅助工具组 -->
               <a-button-group>
-                <a-tooltip title="查询历史">
+                <a-tooltip :title="$t('common.history')">
                   <a-button type="text" size="small" @click="callActiveEditor('openHistory')"><template #icon><HistoryOutlined /></template></a-button>
                 </a-tooltip>
-                <a-tooltip title="代码片段">
+                <a-tooltip :title="$t('common.snippets')">
                   <a-button type="text" size="small" @click="callActiveEditor('openSnippets')"><template #icon><CodeOutlined /></template></a-button>
                 </a-tooltip>
-                <a-tooltip title="刷新元数据">
+                <a-tooltip :title="$t('common.refresh')">
                   <a-button type="text" size="small" @click="callActiveEditor('refreshAutocomplete')"><template #icon><SyncOutlined /></template></a-button>
                 </a-tooltip>
               </a-button-group>
@@ -150,9 +109,9 @@
           </div>
           <div class="toolbar-right">
             <a-space>
-              <span class="db-label">Database:</span>
-              <a-select v-model:value="activeTabDatabase" placeholder="切换库" size="small" style="width: 160px" @change="handleToolbarDbChange">
-                <a-select-option value="">默认</a-select-option>
+              <span class="db-label">{{ $t('common.database') }}:</span>
+              <a-select v-model:value="activeTabDatabase" :placeholder="$t('common.database')" size="small" style="width: 160px" @change="handleToolbarDbChange">
+                <a-select-option value="">{{ appStore.language === 'zh-CN' ? '默认' : 'Default' }}</a-select-option>
                 <a-select-option v-for="db in availableDatabases" :key="db.name" :value="db.name">{{ db.name }}</a-select-option>
               </a-select>
             </a-space>
@@ -181,47 +140,44 @@
         </a-tabs>
 
         <div v-if="dataTabs.length === 0" class="empty-workspace">
-          <a-empty description="从左侧选择表开始探索">
-            <template #extra><a-button type="primary" @click="handleNewQuery({})">新建查询 (Ctrl+N)</a-button></template>
+          <a-empty :description="$t('common.loading')">
+            <template #extra><a-button type="primary" @click="handleNewQuery({})">{{ $t('tree.new_query') }}</a-button></template>
           </a-empty>
         </div>
       </div>
     </a-layout-content>
 
-    <a-dropdown :open="contextMenuVisible" :trigger="['contextmenu']">
-      <div v-if="contextMenuVisible" class="context-menu-overlay" @click="contextMenuVisible = false" :style="{ left: contextMenuPosition.x + 'px', top: contextMenuPosition.y + 'px' }"></div>
-      <template #overlay>
-        <a-menu @click="handleContextMenuClick" class="context-menu">
-          <a-menu-item key="close"><CloseOutlined />关闭当前标签</a-menu-item>
-          <a-menu-item key="closeOthers" :disabled="dataTabs.length <= 1"><CloseCircleOutlined />关闭其他标签</a-menu-item>
-          <a-menu-item key="closeAll" :disabled="dataTabs.length === 0"><CloseSquareOutlined />关闭所有标签</a-menu-item>
-          <a-menu-divider />
-          <a-menu-item key="closeLeft" :disabled="!hasTabsOnLeft"><VerticalRightOutlined />关闭左侧标签</a-menu-item>
-          <a-menu-item key="closeRight" :disabled="!hasTabsOnRight"><VerticalLeftOutlined />关闭右侧标签</a-menu-item>
-        </a-menu>
-      </template>
-    </a-dropdown>
-
-    <ConnectionDialog v-model:visible="showConnectionDialog" :editing-connection="editingConnection" @close="editingConnection = null" />
-    <a-modal v-model:open="showSettings" title="设置" @ok="handleSaveSettings">
+    <!-- 设置弹窗 -->
+    <a-modal v-model:open="showSettings" :title="$t('common.settings')" @ok="handleSaveSettings">
       <a-form :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
-        <a-form-item label="主题">
-          <a-radio-group v-model:value="settingsForm.theme"><a-radio value="light">明亮</a-radio><a-radio value="dark">暗色</a-radio></a-radio-group>
+        <a-form-item :label="$t('common.theme')">
+          <a-radio-group v-model:value="settingsForm.theme">
+            <a-radio value="light">{{ appStore.language === 'zh-CN' ? '明亮' : 'Light' }}</a-radio>
+            <a-radio value="dark">{{ appStore.language === 'zh-CN' ? '暗色' : 'Dark' }}</a-radio>
+          </a-radio-group>
+        </a-form-item>
+        <a-form-item :label="$t('common.language')">
+          <a-radio-group v-model:value="settingsForm.language">
+            <a-radio value="zh-CN">中文</a-radio>
+            <a-radio value="en-US">English</a-radio>
+          </a-radio-group>
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <ConnectionDialog v-model:visible="showConnectionDialog" :editing-connection="editingConnection" @close="editingConnection = null" />
     <GlobalSearch v-model:visible="showGlobalSearch" :connection-id="connectionStore.activeConnectionId" @view-data="handleTableSelected" />
   </a-layout>
 </template>
 
 <script setup lang="ts">
 import { reactive, ref, computed, nextTick, onMounted, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { 
   DatabaseOutlined, BulbOutlined, PlusOutlined, SettingOutlined, 
   MenuOutlined, FileTextOutlined, SearchOutlined, 
-  CloseOutlined, CloseCircleOutlined, CloseSquareOutlined, 
-  VerticalRightOutlined, VerticalLeftOutlined, TableOutlined, EditOutlined,
-  PlayCircleFilled, StopOutlined, SaveOutlined, CheckOutlined, RollbackOutlined,
+  TableOutlined, EditOutlined,
+  PlayCircleFilled, StopOutlined, SaveOutlined,
   FormatPainterOutlined, ClearOutlined, HistoryOutlined, CodeOutlined, SyncOutlined
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
@@ -237,6 +193,7 @@ import GlobalSearch from '@/components/search/GlobalSearch.vue'
 import { invoke } from '@tauri-apps/api/core'
 import { message } from 'ant-design-vue'
 
+const { t } = useI18n()
 const appStore = useAppStore()
 const connectionStore = useConnectionStore()
 const workspaceStore = useWorkspaceStore()
@@ -249,6 +206,21 @@ const sqlEditorRefs = reactive<Record<string, any>>({})
 const redisEditorRef = ref<any>(null)
 const availableDatabases = ref<any[]>([])
 const sidebarWidth = ref(280)
+
+const settingsForm = reactive({ theme: appStore.theme, language: appStore.language })
+
+function openSettings() {
+  settingsForm.theme = appStore.theme
+  settingsForm.language = appStore.language
+  showSettings.value = true
+}
+
+function handleSaveSettings() {
+  appStore.setTheme(settingsForm.theme as any)
+  appStore.setLanguage(settingsForm.language as any)
+  showSettings.value = false
+  message.success(t('common.save'))
+}
 
 const isSqlSupported = computed(() => {
   const activeConnection = connectionStore.getActiveConnection()
@@ -265,27 +237,20 @@ const dataTabs = ref<DataTab[]>([])
 watch([dataTabs, mainTabKey], () => { workspaceStore.saveSession(dataTabs.value as any, mainTabKey.value) }, { deep: true })
 
 async function restoreSession() {
-  console.log('[Restore] 开始恢复会话...')
   workspaceStore.isRestoring = true
   try {
     const session = await workspaceStore.loadSession()
     if (session && session.open_tabs.length > 0) {
       dataTabs.value = session.open_tabs.map(t => ({ ...t, type: (t as any).tab_type || t.type })) as any
       mainTabKey.value = session.active_tab_key
-      console.log(`[Restore] 加载了 ${dataTabs.value.length} 个标签页`)
-      
       if (connectionStore.connections.length === 0) await connectionStore.fetchConnections()
-      
       const connectionIds = [...new Set(dataTabs.value.map(t => t.connectionId).filter(Boolean))] as string[]
       for (const id of connectionIds) {
         const conn = connectionStore.connections.find(c => c.id === id)
-        if (conn) {
-          console.log(`[Restore] 自动重连数据库: ${conn.name}`)
-          connectionStore.connectToDatabase(conn.id).catch(e => console.warn(`自动重连失败 (${conn.name}):`, e))
-        }
+        if (conn) connectionStore.connectToDatabase(conn.id).catch(() => {})
       }
     } else if (isSqlSupported.value) { handleNewQuery({}) }
-  } catch (e) { console.error('恢复失败:', e); if (isSqlSupported.value) handleNewQuery({}) } finally { workspaceStore.isRestoring = false }
+  } catch (e) { if (isSqlSupported.value) handleNewQuery({}) } finally { workspaceStore.isRestoring = false }
 }
 
 const activeTabType = computed(() => dataTabs.value.find(t => t.key === mainTabKey.value)?.type)
@@ -307,27 +272,18 @@ function handleOpenSavedScript(data: any) { handleNewQuery(data) }
 function handleViewStructure(data: any) {
   const key = `structure-${data.connectionId}-${data.database}-${data.table}`
   if (dataTabs.value.some(t => t.key === key)) { mainTabKey.value = key; return; }
-  dataTabs.value.push({ key, title: `结构: ${data.table}`, type: 'design', ...data, readOnly: true })
+  dataTabs.value.push({ key, title: `${t('common.file')}: ${data.table}`, type: 'design', ...data, readOnly: true })
   mainTabKey.value = key
 }
 function handleDesignTable(data: any) {
   const key = `design-${data.connectionId}-${data.database}-${data.table}`
   if (dataTabs.value.some(t => t.key === key)) { mainTabKey.value = key; return; }
-  dataTabs.value.push({ key, title: `设计: ${data.table}`, type: 'design', ...data, readOnly: false })
+  dataTabs.value.push({ key, title: `${t('tree.design_table')}: ${data.table}`, type: 'design', ...data, readOnly: false })
   mainTabKey.value = key
 }
 
 const contextMenuVisible = ref(false), contextMenuPosition = reactive({ x: 0, y: 0 }), currentContextTab = reactive({ key: '', closable: false })
-const hasTabsOnLeft = computed(() => dataTabs.value.findIndex(t => t.key === currentContextTab.key) > 0)
-const hasTabsOnRight = computed(() => { const i = dataTabs.value.findIndex(t => t.key === currentContextTab.key); return i >= 0 && i < dataTabs.value.length - 1 })
 function handleTabContextMenu(e: MouseEvent, key: string, closable: boolean) { e.preventDefault(); currentContextTab.key = key; currentContextTab.closable = closable; contextMenuPosition.x = e.clientX; contextMenuPosition.y = e.clientY; contextMenuVisible.value = true; }
-function handleContextMenuClick({ key }: any) {
-  contextMenuVisible.value = false; const idx = dataTabs.value.findIndex(t => t.key === currentContextTab.key)
-  if (key === 'close') closeTab(currentContextTab.key)
-  else if (key === 'closeOthers') dataTabs.value = dataTabs.value.filter((t, i) => i === idx || t.closable === false)
-  else if (key === 'closeAll') dataTabs.value = dataTabs.value.filter(t => t.closable === false)
-  if (!dataTabs.value.some(t => t.key === mainTabKey.value) && dataTabs.value.length > 0) mainTabKey.value = dataTabs.value[0].key
-}
 function closeTab(key: string) { const i = dataTabs.value.findIndex(t => t.key === key); if (i >= 0) { dataTabs.value.splice(i, 1); if (mainTabKey.value === key && dataTabs.value.length > 0) mainTabKey.value = dataTabs.value[Math.min(i, dataTabs.value.length - 1)].key } }
 function handleTableSelected(d: any) {
   const id = d.connectionId || connectionStore.activeConnectionId, key = `table-${id}-${d.database}-${d.table}`
@@ -350,51 +306,23 @@ async function handleNewQuery(d: any) {
   if (!isSqlSupported.value) return
   const connId = d.connectionId || connectionStore.activeConnectionId
   let dbName = d.database
-  
-  // 对于 SQLite，如果没有指定数据库名，默认为 'main'，以确保物理脚本存储路径正确
   if (connId && !dbName) {
     const conn = connectionStore.connections.find(c => c.id === connId)
-    if (conn?.db_type === 'sqlite') {
-      dbName = 'main'
-    }
+    if (conn?.db_type === 'sqlite') dbName = 'main'
   }
-  
-  // 核心逻辑：如果绑定了库，强制先在后端创建物理文件
-  let filePath = d.filePath
-  let title = d.title
-  let initialContent = d.content || '-- 在此输入 SQL 查询\n'
-
+  let filePath = d.filePath, title = d.title, initialContent = d.content || t('editor.placeholder')
   if (connId && dbName && !filePath) {
     try {
-      const script = await invoke<any>('create_db_script', {
-        connectionId: connId,
-        database: dbName,
-        content: initialContent
-      })
-      filePath = script.path
-      title = script.name
-    } catch (e) {
-      console.error('物理脚本创建失败:', e)
-      message.error('无法在磁盘上创建脚本文件')
-      return
-    }
+      const script = await invoke<any>('create_db_script', { connectionId: connId, database: dbName, content: initialContent })
+      filePath = script.path; title = script.name
+    } catch (e) { message.error(t('common.fail')); return }
   }
-
   const key = `query-${Date.now()}`
-  dataTabs.value.push({ 
-    key, 
-    title: title || `script-${new Date().getTime()}.sql`, 
-    type: 'query', 
-    connectionId: connId || undefined, 
-    database: dbName, 
-    content: initialContent, 
-    filePath 
-  })
+  dataTabs.value.push({ key, title: title || `script-${new Date().getTime()}.sql`, type: 'query', connectionId: connId || undefined, database: dbName, content: initialContent, filePath })
   mainTabKey.value = key
 }
 
 function onTabEdit(key: any, action: string) { if (action === 'add') handleNewQuery({}); else closeTab(String(key)); }
-const settingsForm = reactive({ theme: appStore.theme }); function handleSaveSettings() { appStore.setTheme(settingsForm.theme); showSettings.value = false; }
 function startResize(e: MouseEvent) {
   const sx = e.clientX, sw = sidebarWidth.value; const dr = (ev: MouseEvent) => { const nw = sw + (ev.clientX - sx); if (nw >= 200 && nw <= 600) sidebarWidth.value = nw }; const sr = () => { document.removeEventListener('mousemove', dr); document.removeEventListener('mouseup', sr) }
   document.addEventListener('mousemove', dr); document.addEventListener('mouseup', sr)
