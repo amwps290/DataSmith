@@ -43,6 +43,27 @@ pub async fn execute_query(
     Ok(result)
 }
 
+/// 获取 SQL 执行计划
+#[tauri::command]
+#[instrument(skip(state, sql))]
+pub async fn explain_query(
+    connection_id: String,
+    sql: String,
+    database: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<QueryResult, String> {
+    let manager = &state.connection_manager;
+    
+    info!(sql = %sql.replace('\n', " ").trim(), "收到解释请求");
+    
+    let result = manager
+        .explain_query(&connection_id, &sql, database.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+        
+    Ok(result)
+}
+
 /// 分页执行 SQL 查询
 #[tauri::command]
 #[instrument(skip(state, sql))]

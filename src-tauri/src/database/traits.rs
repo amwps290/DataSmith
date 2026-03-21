@@ -192,6 +192,11 @@ pub trait DatabaseOperations: Send + Sync {
         Ok(())
     }
     
+    /// 获取执行计划
+    async fn explain_query(&self, _sql: &str, _database: Option<&str>) -> DbResult<QueryResult> {
+        Err(DbError::Other("该数据库类型不支持执行计划分析".into()))
+    }
+    
     fn as_any(&self) -> &dyn std::any::Any;
 
     async fn get_schemas(&self, _database: Option<&str>) -> DbResult<Vec<SchemaInfo>> {

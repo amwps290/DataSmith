@@ -67,39 +67,91 @@
       <div class="main-workspace">
         <div v-if="activeTabType === 'query'" class="global-sql-toolbar">
           <div class="toolbar-left">
-            <a-space :size="2">
-              <a-tooltip title="执行 (F5)">
-                <a-button type="text" size="small" :icon="h(CaretRightOutlined)" @click="callActiveEditor('executeQuery')" :loading="activeEditorExecuting" class="execute-btn" />
-              </a-tooltip>
-              <a-tooltip title="停止">
-                <a-button type="text" size="small" :icon="h(StopOutlined)" @click="callActiveEditor('stopExecution')" :disabled="!activeEditorExecuting" />
-              </a-tooltip>
+            <a-space :size="8">
+              <!-- 执行组 -->
+              <a-button-group>
+                <a-tooltip title="执行选中或全文 (F5)">
+                  <a-button 
+                    type="text" 
+                    size="small" 
+                    @click="callActiveEditor('executeQuery')" 
+                    :loading="activeEditorExecuting"
+                    class="btn-run"
+                  >
+                    <template #icon><PlayCircleFilled /></template>
+                  </a-button>
+                </a-tooltip>
+                <a-tooltip title="解释执行计划">
+                  <a-button 
+                    type="text" 
+                    size="small" 
+                    @click="callActiveEditor('explainQuery')" 
+                    :disabled="activeEditorExecuting"
+                    class="btn-explain"
+                  >
+                    <template #icon><SearchOutlined /></template>
+                  </a-button>
+                </a-tooltip>
+                <a-tooltip title="停止执行">
+                  <a-button 
+                    type="text" 
+                    size="small" 
+                    @click="callActiveEditor('stopExecution')" 
+                    :disabled="!activeEditorExecuting"
+                    class="btn-stop"
+                  >
+                    <template #icon><StopOutlined /></template>
+                  </a-button>
+                </a-tooltip>
+              </a-button-group>
+
               <a-divider type="vertical" />
-              <a-tooltip title="保存 (Ctrl+S)">
-                <a-button type="text" size="small" :icon="h(SaveOutlined)" @click="callActiveEditor('handleSave')" />
-              </a-tooltip>
+
+              <!-- 事务组 (预留) -->
+              <a-button-group>
+                <a-tooltip title="提交事务 (预留)">
+                  <a-button type="text" size="small" disabled><template #icon><CheckOutlined /></template></a-button>
+                </a-tooltip>
+                <a-tooltip title="回滚事务 (预留)">
+                  <a-button type="text" size="small" disabled><template #icon><RollbackOutlined /></template></a-button>
+                </a-tooltip>
+              </a-button-group>
+
               <a-divider type="vertical" />
-              <a-tooltip title="格式化 SQL">
-                <a-button type="text" size="small" :icon="h(FormatPainterOutlined)" @click="callActiveEditor('formatSql')" />
-              </a-tooltip>
-              <a-tooltip title="清空编辑器">
-                <a-button type="text" size="small" :icon="h(ClearOutlined)" @click="callActiveEditor('clearEditor')" />
-              </a-tooltip>
-              <a-tooltip title="历史记录">
-                <a-button type="text" size="small" :icon="h(HistoryOutlined)" @click="callActiveEditor('openHistory')" />
-              </a-tooltip>
-              <a-tooltip title="代码片段">
-                <a-button type="text" size="small" :icon="h(CodeOutlined)" @click="callActiveEditor('openSnippets')" />
-              </a-tooltip>
-              <a-tooltip title="刷新补全数据">
-                <a-button type="text" size="small" :icon="h(ReloadOutlined)" @click="callActiveEditor('refreshAutocomplete')" />
-              </a-tooltip>
+
+              <!-- 文件与格式化组 -->
+              <a-button-group>
+                <a-tooltip title="保存 (Ctrl+S)">
+                  <a-button type="text" size="small" @click="callActiveEditor('handleSave')"><template #icon><SaveOutlined /></template></a-button>
+                </a-tooltip>
+                <a-tooltip title="格式化 SQL">
+                  <a-button type="text" size="small" @click="callActiveEditor('formatSql')"><template #icon><FormatPainterOutlined /></template></a-button>
+                </a-tooltip>
+                <a-tooltip title="清空内容">
+                  <a-button type="text" size="small" @click="callActiveEditor('clearEditor')"><template #icon><ClearOutlined /></template></a-button>
+                </a-tooltip>
+              </a-button-group>
+
+              <a-divider type="vertical" />
+
+              <!-- 辅助工具组 -->
+              <a-button-group>
+                <a-tooltip title="查询历史">
+                  <a-button type="text" size="small" @click="callActiveEditor('openHistory')"><template #icon><HistoryOutlined /></template></a-button>
+                </a-tooltip>
+                <a-tooltip title="代码片段">
+                  <a-button type="text" size="small" @click="callActiveEditor('openSnippets')"><template #icon><CodeOutlined /></template></a-button>
+                </a-tooltip>
+                <a-tooltip title="刷新元数据">
+                  <a-button type="text" size="small" @click="callActiveEditor('refreshAutocomplete')"><template #icon><SyncOutlined /></template></a-button>
+                </a-tooltip>
+              </a-button-group>
             </a-space>
           </div>
           <div class="toolbar-right">
             <a-space>
-              <span class="db-label">DB:</span>
-              <a-select v-model:value="activeTabDatabase" placeholder="选择数据库" size="small" style="width: 140px" @change="handleToolbarDbChange">
+              <span class="db-label">Database:</span>
+              <a-select v-model:value="activeTabDatabase" placeholder="切换库" size="small" style="width: 160px" @change="handleToolbarDbChange">
                 <a-select-option value="">默认</a-select-option>
                 <a-select-option v-for="db in availableDatabases" :key="db.name" :value="db.name">{{ db.name }}</a-select-option>
               </a-select>
@@ -163,14 +215,14 @@
 </template>
 
 <script setup lang="ts">
-import { h, reactive, ref, computed, nextTick, onMounted, watch } from 'vue'
+import { reactive, ref, computed, nextTick, onMounted, watch } from 'vue'
 import { 
   DatabaseOutlined, BulbOutlined, PlusOutlined, SettingOutlined, 
   MenuOutlined, FileTextOutlined, SearchOutlined, 
   CloseOutlined, CloseCircleOutlined, CloseSquareOutlined, 
   VerticalRightOutlined, VerticalLeftOutlined, TableOutlined, EditOutlined,
-  CaretRightOutlined, StopOutlined, SaveOutlined,
-  FormatPainterOutlined, ClearOutlined, HistoryOutlined, CodeOutlined, ReloadOutlined
+  PlayCircleFilled, StopOutlined, SaveOutlined, CheckOutlined, RollbackOutlined,
+  FormatPainterOutlined, ClearOutlined, HistoryOutlined, CodeOutlined, SyncOutlined
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useConnectionStore } from '@/stores/connection'
@@ -360,10 +412,13 @@ function handleEditConnection(c: any) { editingConnection.value = c; showConnect
 .dark-mode .main-workspace { background: #1f1f1f; }
 .global-sql-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 0 12px; height: 40px; background: #f5f5f5; border-bottom: 1px solid #d9d9d9; flex-shrink: 0; }
 .dark-mode .global-sql-toolbar { background: #1a1a1a; border-bottom-color: #303030; }
-.toolbar-left :deep(.ant-btn-text) { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 4px; color: #595959; font-size: 16px; }
+.toolbar-left :deep(.ant-btn-text) { width: auto; min-width: 32px; padding: 0 8px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 4px; color: #595959; font-size: 14px; }
 .dark-mode .toolbar-left :deep(.ant-btn-text) { color: #aaa; }
 .toolbar-left :deep(.ant-btn-text:hover) { background: rgba(0,0,0,0.06); color: #1890ff; }
-.execute-btn { color: #52c41a !important; }
+.btn-run { color: #52c41a !important; font-weight: bold; }
+.btn-run:hover { background: #f6ffed !important; }
+.btn-stop { color: #ff4d4f !important; }
+.btn-stop:hover { background: #fff1f0 !important; }
 .db-label { font-size: 12px; color: #8c8c8c; margin-right: 8px; }
 .workspace-tabs { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .workspace-tabs :deep(.ant-tabs-nav) { margin-bottom: 0; padding: 0 4px; background: #f0f0f0; flex-shrink: 0; }

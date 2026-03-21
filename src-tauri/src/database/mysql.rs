@@ -195,5 +195,10 @@ impl DatabaseOperations for MySqlDatabase {
         Ok(map.into_values().collect())
     }
 
+    async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<QueryResult> {
+        let explain_sql = format!("EXPLAIN {}", sql);
+        self.execute_query(&explain_sql, database).await
+    }
+
     fn as_any(&self) -> &dyn std::any::Any { self }
 }

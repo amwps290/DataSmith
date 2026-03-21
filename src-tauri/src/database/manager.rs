@@ -204,6 +204,11 @@ impl ConnectionManager {
         let db = self.get_db_ref(composite_id).await?;
         db.get_extensions(database).await
     }
+
+    pub async fn explain_query(&self, composite_id: &str, sql: &str, database: Option<&str>) -> DbResult<QueryResult> {
+        let db = self.get_db_ref(composite_id).await?;
+        db.explain_query(sql, database).await
+    }
 }
 
 impl Default for ConnectionManager {

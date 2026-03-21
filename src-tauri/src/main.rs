@@ -42,6 +42,7 @@ fn main() {
             commands::connection::disconnect_database,
             commands::connection::create_sqlite_database,
             commands::query::execute_query,
+            commands::query::explain_query,
             commands::query::beautify_sql,
             commands::query::execute_query_paged,
             commands::query::execute_query_batch,

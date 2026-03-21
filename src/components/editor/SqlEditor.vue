@@ -223,6 +223,48 @@ async function executeQuery() {
 }
 
 /**
+ * 获取执行计划
+ */
+async function explainQuery() {
+  const connId = sessionConnectionId.value
+  if (!connId) return
+  
+  const { sql } = getTargetSql()
+  if (!sql) return message.warning('请输入 SQL')
+
+  executing.value = true
+  addMessage('info', '正在获取执行计划...')
+  resultTabKey.value = 'messages' // 切换到消息页签查看计划
+
+  try {
+    const result = await invoke<QueryResult>('explain_query', {
+      connectionId: connId,
+      sql,
+      database: selectedDatabase.value || null,
+    })
+    
+    // 处理 PostgreSQL 的 JSON 格式计划
+    let planText = ''
+    if (result.rows.length > 0) {
+      const firstRow = result.rows[0]
+      const planValue = Object.values(firstRow)[0]
+      if (typeof planValue === 'string') {
+        planText = planValue
+      } else {
+        planText = JSON.stringify(planValue, null, 2)
+      }
+    }
+
+    addMessage('success', `执行计划获取成功:\n${planText}`)
+  } catch (e: any) {
+    message.error(`解释失败: ${e}`)
+    addMessage('error', `解释失败: ${String(e)}`)
+  } finally {
+    executing.value = false
+  }
+}
+
+/**
  * 获取待执行的 SQL
  * 逻辑：优先获取选中的文本，如果没有选中则获取全文
  */
@@ -397,7 +439,7 @@ onActivated(() => { nextTick(() => { setTimeout(() => { if (editor) editor.layou
 onUnmounted(() => { const model = editor?.getModel(); if (model) autocompleteManager.unbindModel(model); editor?.dispose(); window.removeEventListener('resize', calculateResultHeight) })
 watch(() => appStore.theme, (newTheme) => { if (editor) monaco.editor.setTheme(newTheme === 'dark' ? 'vs-dark' : 'vs') }, { immediate: true })
 watch(() => props.connectionId || connectionStore.activeConnectionId, () => { updateAutocompleteContext(); loadAvailableDatabases(); })
-defineExpose({ setSelectedDatabase, executing, executeQuery, handleDatabaseChange, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
+defineExpose({ setSelectedDatabase, executing, executeQuery, explainQuery, handleDatabaseChange, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
 </script>
 
 <style scoped>

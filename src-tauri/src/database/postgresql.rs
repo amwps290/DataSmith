@@ -254,5 +254,10 @@ impl DatabaseOperations for PostgreSqlDatabase {
         Ok(rows.into_iter().map(|r| ExtensionInfo { name: r.get(0), version: r.get(1), schema: Some(r.get(2)), comment: r.try_get(3).ok() }).collect())
     }
 
+    async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<QueryResult> {
+        let explain_sql = format!("EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON) {}", sql);
+        self.execute_query(&explain_sql, database).await
+    }
+
     fn as_any(&self) -> &dyn std::any::Any { self }
 }
