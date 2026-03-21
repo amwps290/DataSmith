@@ -129,19 +129,19 @@ impl ConnectionManager {
         Ok(())
     }
 
+    /// 内部辅助：确保驱动当前连接到正确的数据库
+    async fn ensure_db_context(&self, db: Arc<dyn DatabaseOperations>, database: Option<&str>) -> DbResult<()> {
+        if let Some(db_name) = database {
+            db.switch_database(db_name).await?;
+        }
+        Ok(())
+    }
+
     // --- 代理方法：转发给具体驱动 ---
 
     pub async fn execute_query(&self, composite_id: &str, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         let db = self.get_db_ref(composite_id).await?;
-        
-        if let Some(db_name) = database {
-            let mut conns = self.connections.write().await;
-            let real_id = if composite_id.contains(':') { composite_id.to_string() } else { format!("{}:metadata", composite_id) };
-            if let Some(db_instance) = conns.get_mut(&real_id) {
-                db_instance.switch_database(db_name).await?;
-            }
-        }
-
+        self.ensure_db_context(db.clone(), database).await?;
         db.execute_query(sql, database).await
     }
 
@@ -152,30 +152,25 @@ impl ConnectionManager {
 
     pub async fn get_tables(&self, composite_id: &str, database: Option<&str>) -> DbResult<Vec<TableInfo>> {
         let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
         db.get_tables(database).await
     }
 
     pub async fn get_views(&self, composite_id: &str, database: Option<&str>) -> DbResult<Vec<TableInfo>> {
         let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
         db.get_views(database).await
     }
 
     pub async fn get_table_structure(&self, composite_id: &str, table: &str, schema: Option<&str>, database: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
         let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
         db.get_table_structure(table, schema, database).await
     }
 
     pub async fn update_data(&self, composite_id: &str, table: &str, schema: Option<&str>, database: Option<&str>, column: &str, value: Option<String>, where_clause: &str) -> DbResult<()> {
         let db = self.get_db_ref(composite_id).await?;
-        
-        if let Some(db_name) = database {
-            let mut conns = self.connections.write().await;
-            let real_id = if composite_id.contains(':') { composite_id.to_string() } else { format!("{}:metadata", composite_id) };
-            if let Some(db_instance) = conns.get_mut(&real_id) {
-                db_instance.switch_database(db_name).await?;
-            }
-        }
-
+        self.ensure_db_context(db.clone(), database).await?;
         db.update_data(table, schema, column, value, where_clause).await
     }
 
@@ -192,31 +187,37 @@ impl ConnectionManager {
 
     pub async fn get_schemas(&self, composite_id: &str, database: Option<&str>) -> DbResult<Vec<SchemaInfo>> {
         let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
         db.get_schemas(database).await
     }
 
     pub async fn get_functions(&self, composite_id: &str, database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
         let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
         db.get_functions(database, schema).await
     }
 
     pub async fn get_indexes(&self, composite_id: &str, table: &str, schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
         let db = self.get_db_ref(composite_id).await?;
+        // 索引通常是基于当前 schema/table，目前维持原样
         db.get_indexes(table, schema).await
     }
 
     pub async fn get_aggregate_functions(&self, composite_id: &str, database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
         let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
         db.get_aggregate_functions(database, schema).await
     }
 
     pub async fn get_extensions(&self, composite_id: &str, database: Option<&str>) -> DbResult<Vec<ExtensionInfo>> {
         let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
         db.get_extensions(database).await
     }
 
     pub async fn explain_query(&self, composite_id: &str, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
         db.explain_query(sql, database).await
     }
 }

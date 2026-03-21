@@ -24,14 +24,15 @@ pub async fn get_schemas(connection_id: String, database: Option<String>, state:
 }
 
 #[tauri::command]
-pub async fn get_schema_tables(connection_id: String, database: String, _schema: String, state: State<'_, AppState>) -> Result<Vec<TableInfo>, String> {
-    // 简化：目前 manager 主要是获取全库表，后续可按 schema 过滤
-    state.connection_manager.get_tables(&connection_id, Some(&database)).await.map_err(|e| e.to_string())
+pub async fn get_schema_tables(connection_id: String, database: String, schema: String, state: State<'_, AppState>) -> Result<Vec<TableInfo>, String> {
+    let tables = state.connection_manager.get_tables(&connection_id, Some(&database)).await.map_err(|e| e.to_string())?;
+    Ok(tables.into_iter().filter(|t| t.schema.as_deref() == Some(&schema)).collect())
 }
 
 #[tauri::command]
-pub async fn get_schema_views(connection_id: String, database: String, _schema: String, state: State<'_, AppState>) -> Result<Vec<TableInfo>, String> {
-    state.connection_manager.get_views(&connection_id, Some(&database)).await.map_err(|e| e.to_string())
+pub async fn get_schema_views(connection_id: String, database: String, schema: String, state: State<'_, AppState>) -> Result<Vec<TableInfo>, String> {
+    let views = state.connection_manager.get_views(&connection_id, Some(&database)).await.map_err(|e| e.to_string())?;
+    Ok(views.into_iter().filter(|v| v.schema.as_deref() == Some(&schema)).collect())
 }
 
 #[tauri::command]
