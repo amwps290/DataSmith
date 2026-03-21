@@ -1,16 +1,19 @@
 <template>
   <a-layout class="main-layout" :class="{ 'dark-mode': appStore.theme === 'dark' }">
-    <!-- 顶部标题栏 (原生 header 确保拖拽可靠性) -->
-    <header class="header" @mousedown="handleHeaderMouseDown">
+    <!-- 顶部标题栏 -->
+    <header class="header">
+      <!-- 专门的拖拽背景层 -->
+      <div class="header-drag-handle" data-tauri-drag-region></div>
+      
       <div class="header-content">
-        <!-- Logo -->
-        <div class="logo">
-          <DatabaseOutlined style="font-size: 18px; margin-right: 6px" />
-          <span class="title">DataSmith</span>
+        <!-- Logo 区域 (支持拖拽) -->
+        <div class="logo" data-tauri-drag-region>
+          <DatabaseOutlined style="font-size: 18px; margin-right: 6px" data-tauri-drag-region />
+          <span class="title" data-tauri-drag-region>DataSmith</span>
         </div>
         
-        <!-- 菜单区域 (阻止冒泡，避免触发拖拽) -->
-        <div class="header-menu" @mousedown.stop>
+        <!-- 菜单区域 (宽度自适应，不阻挡两侧拖拽) -->
+        <div class="header-menu">
           <a-menu mode="horizontal" :selected-keys="[]" class="top-menu">
             <a-sub-menu key="file">
               <template #title>{{ $t('common.file') }}</template>
@@ -35,8 +38,11 @@
           </a-menu>
         </div>
 
-        <!-- 动作区与窗口控制 (阻止冒泡) -->
-        <div class="header-actions" @mousedown.stop>
+        <!-- 核心：中间大面积可拖拽空白区 -->
+        <div class="header-drag-spacer" data-tauri-drag-region></div>
+
+        <!-- 动作区与窗口控制 -->
+        <div class="header-actions">
           <a-space :size="0">
             <a-button type="text" size="small" @click="showGlobalSearch = true" class="search-btn">
               <template #icon><SearchOutlined /></template>
@@ -163,6 +169,24 @@
       </div>
     </a-layout-content>
 
+    <!-- 设置弹窗 -->
+    <a-modal v-model:open="showSettings" :title="$t('common.settings')" @ok="handleSaveSettings">
+      <a-form :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
+        <a-form-item :label="$t('common.theme')">
+          <a-radio-group v-model:value="settingsForm.theme">
+            <a-radio value="light">{{ appStore.language === 'zh-CN' ? '明亮' : 'Light' }}</a-radio>
+            <a-radio value="dark">{{ appStore.language === 'zh-CN' ? '暗色' : 'Dark' }}</a-radio>
+          </a-radio-group>
+        </a-form-item>
+        <a-form-item :label="$t('common.language')">
+          <a-radio-group v-model:value="settingsForm.language">
+            <a-radio value="zh-CN">中文</a-radio>
+            <a-radio value="en-US">English</a-radio>
+          </a-radio-group>
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
     <ConnectionDialog v-model:visible="showConnectionDialog" :editing-connection="editingConnection" @close="editingConnection = null" />
     <GlobalSearch v-model:visible="showGlobalSearch" :connection-id="connectionStore.activeConnectionId" @view-data="handleTableSelected" />
   </a-layout>
@@ -212,25 +236,19 @@ const isMaximized = ref(false)
 
 const settingsForm = reactive({ theme: appStore.theme, language: appStore.language })
 
-// 编程式拖拽逻辑：解决 Linux 下属性无效的问题
-async function handleHeaderMouseDown(e: MouseEvent) {
-  // 仅左键点击且当前不是点击在按钮/菜单上时触发拖拽
-  if (e.button === 0) {
-    try {
-      await appWindow.startDragging()
-    } catch (err) {
-      console.error('拖拽失败:', err)
-    }
-  }
+// 窗口控制逻辑
+async function minimizeWindow() { 
+  try { await appWindow.minimize() } catch (e) { console.error(e) }
 }
-
-// 窗口控制
-async function minimizeWindow() { await appWindow.minimize() }
 async function toggleMaximize() { 
-  await appWindow.toggleMaximize()
-  isMaximized.value = await appWindow.isMaximized()
+  try { 
+    await appWindow.toggleMaximize()
+    isMaximized.value = await appWindow.isMaximized() 
+  } catch (e) { console.error(e) }
 }
-async function closeWindow() { await appWindow.close() }
+async function closeWindow() { 
+  try { await appWindow.close() } catch (e) { console.error(e) }
+}
 
 function openSettings() {
   settingsForm.theme = appStore.theme
@@ -290,7 +308,9 @@ onMounted(async () => {
   restoreSession()
   try {
     isMaximized.value = await appWindow.isMaximized()
-    appWindow.onResized(async () => { isMaximized.value = await appWindow.isMaximized() })
+    appWindow.onResized(async () => {
+      isMaximized.value = await appWindow.isMaximized()
+    })
   } catch (e) { console.error(e) }
 })
 
@@ -371,17 +391,24 @@ function handleEditConnection(c: any) { editingConnection.value = c; showConnect
   z-index: 100; 
   padding: 0;
   overflow: hidden;
+  position: relative;
 }
 .dark-mode .header { background: #1f1f1f; border-bottom-color: #303030; }
 
-.header-content { display: flex; justify-content: space-between; align-items: center; height: 100%; width: 100%; }
+/* 核心：底部透明拖拽层 */
+.header-drag-handle { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 1; }
 
-.logo { display: flex; align-items: center; font-size: 16px; font-weight: bold; color: #1890ff; padding: 0 16px; height: 100%; }
-.header-menu { flex: 1; height: 100%; display: flex; align-items: center; }
-.top-menu { border-bottom: none; background: transparent; height: 100%; line-height: 40px; width: 100%; }
+.header-content { display: flex; justify-content: space-between; align-items: center; height: 100%; width: 100%; position: relative; z-index: 2; pointer-events: none; }
+
+.logo { display: flex; align-items: center; font-size: 16px; font-weight: bold; color: #1890ff; padding: 0 16px; height: 100%; pointer-events: auto; }
+.header-menu { height: 100%; display: flex; align-items: center; pointer-events: auto; }
+.top-menu { border-bottom: none; background: transparent; height: 100%; line-height: 40px; }
 .top-menu :deep(.ant-menu-submenu-title) { height: 40px !important; line-height: 40px !important; padding: 0 12px; }
 
-.header-actions { display: flex; align-items: center; height: 100%; padding-right: 0; }
+/* 核心：菜单与右侧按钮之间的拖拽占位符 */
+.header-drag-spacer { flex: 1; height: 100%; pointer-events: auto; }
+
+.header-actions { display: flex; align-items: center; height: 100%; pointer-events: auto; padding-right: 0; }
 .search-btn { margin-right: 8px; }
 
 .window-controls { display: flex; height: 100%; }
@@ -395,7 +422,7 @@ function handleEditConnection(c: any) { editingConnection.value = c; showConnect
 .sidebar-wrapper { background: #fafafa; border-right: 1px solid #e8e8e8; height: 100%; overflow: hidden; flex-shrink: 0; }
 .dark-mode .sidebar-wrapper { background: #141414; border-right-color: #303030; }
 .sidebar-inner { height: 100%; overflow: auto; padding: 0 8px; }
-.sidebar-resizer { width: 4px; cursor: col-resize; background: transparent; transition: background 0.2s; z-index: 10; }
+.sidebar-resizer { width: 4px; cursor: col-resize; background: transparent; transition: background-color 0.2s; z-index: 10; }
 .sidebar-resizer:hover { background: #1890ff; }
 .main-workspace { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #fff; min-width: 0; }
 .dark-mode .main-workspace { background: #1f1f1f; }
