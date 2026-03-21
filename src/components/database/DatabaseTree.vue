@@ -119,9 +119,15 @@ async function loadDatabases() {
   loading.value = true
   try {
     if (props.dbType === 'sqlite') {
+      // 统一 SQLite 结构，增加一个 database 层级的节点
       treeData.value = [
-        { key: 'tables', title: '表', type: 'tables', isLeaf: false, metadata: { database: 'main' } },
-        { key: 'views', title: '视图', type: 'views', isLeaf: false, metadata: { database: 'main' } }
+        { 
+          key: 'db-main', 
+          title: 'main', 
+          type: 'database', 
+          isLeaf: false, 
+          metadata: { name: 'main', database: 'main' } 
+        }
       ]
     } else {
       const dbs = await invoke<DatabaseInfo[]>('get_databases', { connectionId: props.connectionId })

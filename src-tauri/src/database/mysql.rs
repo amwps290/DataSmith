@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::time::Instant;
-use mysql_async::{prelude::*, Pool, Opts, Row, Value};
+use mysql_async::{prelude::*, Pool, Opts, Row, Value, OptsBuilder};
 use tokio::sync::Mutex;
-use tracing::{info, instrument, debug};
+use tracing::{info, instrument, debug, error};
 
 use super::traits::*;
 
@@ -26,12 +26,16 @@ impl MySqlDatabase {
     }
 
     fn create_opts(config: &ConnectionConfig) -> Opts {
-        let db_name = config.database.as_deref().unwrap_or("");
-        let url = format!(
-            "mysql://{}:{}@{}:{}/{}?prefer_socket=false&multi_statements=true",
-            config.username, config.password, config.host, config.port, db_name
-        );
-        Opts::from_url(&url).unwrap_or_default()
+        let mut builder = OptsBuilder::default()
+            .ip_or_hostname(config.host.clone())
+            .tcp_port(config.port)
+            .user(Some(config.username.clone()))
+            .pass(Some(config.password.clone()))
+            .db_name(config.database.as_deref())
+            .prefer_socket(false)
+            .tcp_keepalive(Some(60000u32));
+        
+        builder.into()
     }
 }
 
@@ -40,15 +44,26 @@ impl DatabaseOperations for MySqlDatabase {
     async fn test_connection(&self, config: &ConnectionConfig) -> DbResult<bool> {
         let opts = Self::create_opts(config);
         let pool = Pool::new(opts);
-        let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
-        conn.query_drop("SELECT 1").await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
-        pool.disconnect().await.ok();
-        Ok(true)
+        match pool.get_conn().await {
+            Ok(mut conn) => {
+                conn.query_drop("SELECT 1").await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+                pool.disconnect().await.ok();
+                Ok(true)
+            },
+            Err(e) => {
+                error!("MySQL 连接测试失败: {}", e);
+                Err(DbError::ConnectionFailed(e.to_string()))
+            }
+        }
     }
 
     async fn connect(&self, config: ConnectionConfig) -> DbResult<()> {
         let opts = Self::create_opts(&config);
         let pool = Pool::new(opts);
+        
+        // 尝试获取一个连接以验证配置是否真的可用
+        pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(format!("无法建立初始连接: {}", e)))?;
+        
         let mut state = self.state.lock().await;
         state.pool = Some(pool);
         state.config = Some(config);
@@ -72,7 +87,7 @@ impl DatabaseOperations for MySqlDatabase {
             return Ok(());
         }
         
-        info!(new_db = %database, "MySQL 正在物理重连以切换数据库...");
+        info!(new_db = %database, "MySQL 正在重连以切换数据库...");
         config.database = Some(database.to_string());
         
         let opts = Self::create_opts(&config);
@@ -87,15 +102,14 @@ impl DatabaseOperations for MySqlDatabase {
 
     #[instrument(skip(self, sql))]
     async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<Vec<QueryResult>> {
-        let start = Instant::now();
+        let _start_total = Instant::now();
         let state = self.state.lock().await;
         let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
         let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
 
         debug!(sql = %sql.replace('\n', " "), "执行 MySQL 查询");
 
-        // 彻底解决多结果集 API 复杂性：手动拆分语句顺序执行
-        // 虽然驱动支持 multi_statements，但顺序执行更易于获取每个语句的元数据
+        // 手动拆分 SQL 语句
         let sqls: Vec<&str> = sql.split(';').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
         let mut results = Vec::new();
 
@@ -137,12 +151,7 @@ impl DatabaseOperations for MySqlDatabase {
         }
 
         if results.is_empty() {
-            results.push(QueryResult {
-                columns: vec![],
-                rows: vec![],
-                affected_rows: 0,
-                execution_time_ms: start.elapsed().as_millis(),
-            });
+            results.push(QueryResult { columns: vec![], rows: vec![], affected_rows: 0, execution_time_ms: 0 });
         }
 
         Ok(results)

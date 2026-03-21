@@ -349,7 +349,15 @@ async function handleDatabaseSelected(d: any) {
 async function handleNewQuery(d: any) {
   if (!isSqlSupported.value) return
   const connId = d.connectionId || connectionStore.activeConnectionId
-  const dbName = d.database
+  let dbName = d.database
+  
+  // 对于 SQLite，如果没有指定数据库名，默认为 'main'，以确保物理脚本存储路径正确
+  if (connId && !dbName) {
+    const conn = connectionStore.connections.find(c => c.id === connId)
+    if (conn?.db_type === 'sqlite') {
+      dbName = 'main'
+    }
+  }
   
   // 核心逻辑：如果绑定了库，强制先在后端创建物理文件
   let filePath = d.filePath
