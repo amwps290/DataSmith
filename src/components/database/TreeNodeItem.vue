@@ -117,12 +117,25 @@ function getIconConfig(node: TreeNode) {
     'schema-functions': { icon: 'ph:function-duotone', color: '#eb2f96' },
     functions: { icon: 'ph:function-duotone', color: '#eb2f96' },
     function: { icon: 'ph:function-duotone', color: '#eb2f96' },
-    'schema-indexes': { icon: 'ph:list-numbers-duotone', color: '#722ed1' },
-    index: { icon: 'ph:list-numbers-duotone', color: '#722ed1' },
+    'schema-aggregates': { icon: 'ph:function-duotone', color: '#722ed1' },
+    aggregates: { icon: 'ph:function-duotone', color: '#722ed1' },
+    'schema-indexes': { icon: 'ph:list-numbers-duotone', color: '#fa8c16' },
+    index: { icon: 'ph:list-numbers-duotone', color: '#fa8c16' },
     'database-extensions': { icon: 'ph:puzzle-piece-duotone', color: '#1890ff' },
     extension: { icon: 'ph:puzzle-piece-duotone', color: '#1890ff' },
-    'empty': { icon: 'ph:info-duotone', color: '#bfbfbf' }
+    'empty': { icon: 'ph:info-duotone', color: '#bfbfbf' },
+    'leaf': { icon: 'ph:file-text-duotone', color: '#8c8c8c' }
   }
+
+  // 针对 leaf 类型的特殊处理（索引、函数、聚合函数、扩展）
+  if (type === 'leaf') {
+    const key = node.key.toLowerCase()
+    if (key.includes('-indexes') || key.includes('-index')) return { icon: 'ph:list-numbers-duotone', color: '#fa8c16' }
+    if (key.includes('-aggregates')) return { icon: 'ph:function-duotone', color: '#722ed1' }
+    if (key.includes('-functions') || key.includes('-function')) return { icon: 'ph:function-duotone', color: '#eb2f96' }
+    if (key.includes('-extensions') || key.includes('-extension')) return { icon: 'ph:puzzle-piece-duotone', color: '#1890ff' }
+  }
+
   return configMap[type] || { icon: 'ph:file-text-duotone', color: '#8c8c8c' }
 }
 </script>

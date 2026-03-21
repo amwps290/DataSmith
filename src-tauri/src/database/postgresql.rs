@@ -34,6 +34,8 @@ impl PostgreSqlDatabase {
             config.host, config.port, config.username, config.password, db_name
         );
         
+        debug!(conn = %conn_str.replace(&config.password, "******"), "正在建立 PostgreSQL 物理连接...");
+
         if config.ssl {
             let connector = TlsConnector::builder().danger_accept_invalid_certs(true).build().map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
             let connector = MakeTlsConnector::new(connector);
@@ -106,11 +108,9 @@ impl DatabaseOperations for PostgreSqlDatabase {
         for msg in messages {
             match msg {
                 tokio_postgres::SimpleQueryMessage::RowDescription(columns) => {
-                    // 获取真实的列名
                     current_columns = columns.iter().map(|c| c.name().to_string()).collect();
                 },
                 tokio_postgres::SimpleQueryMessage::Row(row) => {
-                    // 如果由于某种原因没有获取到 RowDescription，则使用占位符
                     if current_columns.is_empty() {
                         for i in 0..row.len() {
                             current_columns.push(format!("column_{}", i + 1));
@@ -126,14 +126,12 @@ impl DatabaseOperations for PostgreSqlDatabase {
                     current_rows.push(row_map);
                 },
                 tokio_postgres::SimpleQueryMessage::CommandComplete(count) => {
-                    // 语句执行完成，打包当前结果集
                     results.push(QueryResult {
                         columns: current_columns.clone(),
                         rows: current_rows.clone(),
                         affected_rows: count,
                         execution_time_ms: start.elapsed().as_millis(),
                     });
-                    // 重置临时容器，准备下一个结果集
                     current_columns.clear();
                     current_rows.clear();
                 },
@@ -141,7 +139,6 @@ impl DatabaseOperations for PostgreSqlDatabase {
             }
         }
 
-        // 处理没有显式 CommandComplete 的剩余数据（防御性编程）
         if !current_rows.is_empty() || !current_columns.is_empty() {
             results.push(QueryResult {
                 columns: current_columns,
@@ -151,7 +148,6 @@ impl DatabaseOperations for PostgreSqlDatabase {
             });
         }
 
-        // 如果一条结果都没有（比如执行了空语句），返回一个空的成功结果
         if results.is_empty() {
             results.push(QueryResult {
                 columns: vec![],
@@ -272,6 +268,7 @@ impl DatabaseOperations for PostgreSqlDatabase {
             let entry = map.entry(name.clone()).or_insert(IndexInfo { name, columns: vec![], is_unique: r.get(2), is_primary: r.get(3), index_type: "BTREE".into() });
             entry.columns.push(col);
         }
+        debug!(count = map.len(), sc = %schema_name, "已获取 PostgreSQL 索引");
         Ok(map.into_values().collect())
     }
 
@@ -282,7 +279,6 @@ impl DatabaseOperations for PostgreSqlDatabase {
         let state = self.state.lock().await;
         let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
         
-        // 1. 检查是否为视图
         let view_sql = "SELECT pg_get_viewdef(c.oid, true) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'v'";
         let view_rows = client.query(view_sql, &[&schema_name, &table]).await.unwrap_or_default();
         
@@ -291,7 +287,6 @@ impl DatabaseOperations for PostgreSqlDatabase {
             return Ok(format!("CREATE OR REPLACE VIEW \"{}\".\"{}\" AS\n{}", schema_name, table, definition));
         }
 
-        // 2. 否则按表处理，重构 CREATE TABLE 语句
         let mut ddl = format!("CREATE TABLE \"{}\".\"{}\" (\n", schema_name, table);
         let mut col_defs = Vec::new();
         let mut pks = Vec::new();
@@ -311,6 +306,40 @@ impl DatabaseOperations for PostgreSqlDatabase {
         ddl.push_str("\n);");
 
         Ok(ddl)
+    }
+
+    async fn get_functions(&self, _database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
+        let state = self.state.lock().await;
+        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let schema_name = schema.unwrap_or("public");
+        let sql = "SELECT p.proname, n.nspname, pg_catalog.pg_get_function_result(p.oid), pg_catalog.pg_get_function_arguments(p.oid), l.lanname, obj_description(p.oid, 'pg_proc') FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang WHERE n.nspname = $1 AND p.prokind != 'a' ORDER BY p.proname";
+        
+        debug!(sc = %schema_name, "正在查询 PostgreSQL 函数...");
+        let rows = client.query(sql, &[&schema_name]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        debug!(count = rows.len(), "已获取函数列表");
+        
+        Ok(rows.into_iter().map(|r| FunctionInfo { name: r.get(0), schema: Some(r.get(1)), return_type: Some(r.get(2)), arguments: Some(r.get(3)), language: Some(r.get(4)), function_type: "function".into(), comment: r.try_get(5).ok() }).collect())
+    }
+
+    async fn get_aggregate_functions(&self, _database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
+        let state = self.state.lock().await;
+        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let schema_name = schema.unwrap_or("public");
+        let sql = "SELECT p.proname, n.nspname, pg_catalog.pg_get_function_result(p.oid), pg_catalog.pg_get_function_arguments(p.oid), obj_description(p.oid, 'pg_proc') FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = $1 AND p.prokind = 'a' ORDER BY p.proname";
+        let rows = client.query(sql, &[&schema_name]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        Ok(rows.into_iter().map(|r| FunctionInfo { name: r.get(0), schema: Some(r.get(1)), return_type: Some(r.get(2)), arguments: Some(r.get(3)), language: None, function_type: "aggregate".into(), comment: r.try_get(4).ok() }).collect())
+    }
+
+    async fn get_extensions(&self, _database: Option<&str>) -> DbResult<Vec<ExtensionInfo>> {
+        let state = self.state.lock().await;
+        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let sql = "SELECT extname, extversion, n.nspname, obj_description(e.oid, 'pg_extension') FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace ORDER BY extname";
+        
+        debug!("正在查询 PostgreSQL 扩展...");
+        let rows = client.query(sql, &[]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        debug!(count = rows.len(), "已获取扩展列表");
+        
+        Ok(rows.into_iter().map(|r| ExtensionInfo { name: r.get(0), version: r.get(1), schema: Some(r.get(2)), comment: r.try_get(3).ok() }).collect())
     }
 
     async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {

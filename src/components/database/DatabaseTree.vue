@@ -180,7 +180,8 @@ async function onLoadData(treeNode: TreeNode) {
       { key: `${treeNode.key}-tables`, title: t('tree.tables'), type: 'schema-tables', isLeaf: false, metadata: { database: db, schema } },
       { key: `${treeNode.key}-views`, title: t('tree.views'), type: 'schema-views', isLeaf: false, metadata: { database: db, schema } },
       { key: `${treeNode.key}-indexes`, title: t('tree.indexes'), type: 'schema-indexes', isLeaf: false, metadata: { database: db, schema } },
-      { key: `${treeNode.key}-functions`, title: t('tree.functions'), type: 'schema-functions', isLeaf: false, metadata: { database: db, schema } }
+      { key: `${treeNode.key}-functions`, title: t('tree.functions'), type: 'schema-functions', isLeaf: false, metadata: { database: db, schema } },
+      { key: `${treeNode.key}-aggregates`, title: t('tree.aggregates'), type: 'schema-aggregates', isLeaf: false, metadata: { database: db, schema } }
     ]
     updateNodeInTree(treeData.value, treeNode.key, (n) => n.children = children)
     treeData.value = [...treeData.value]
@@ -194,16 +195,42 @@ async function onLoadData(treeNode: TreeNode) {
       treeData.value = [...treeData.value]
     } catch (e: any) { message.error(e) }
   }
-  else if (['schema-indexes', 'schema-functions', 'database-extensions'].includes(treeNode.type)) {
+  else if (['schema-indexes', 'schema-functions', 'schema-aggregates', 'database-extensions'].includes(treeNode.type)) {
     const isExtension = treeNode.type === 'database-extensions'
-    const method = treeNode.type === 'schema-indexes' ? 'get_schema_indexes' : (treeNode.type === 'schema-functions' ? 'get_schema_functions' : 'get_database_extensions')
+    const isFunction = treeNode.type === 'schema-functions'
+    const isAggregate = treeNode.type === 'schema-aggregates'
+    const isIndex = treeNode.type === 'schema-indexes'
+    
+    let method = 'get_database_extensions'
+    if (isIndex) method = 'get_schema_indexes'
+    else if (isFunction) method = 'get_schema_functions'
+    else if (isAggregate) method = 'get_schema_aggregate_functions'
+    
     try {
-      // 扩展信息 (database-extensions) 不接受 schema 参数，需对齐后端指令
       const params: any = { connectionId: connId, database: treeNode.metadata.database }
       if (!isExtension) params.schema = treeNode.metadata.schema
       
       const res = await invoke<any[]>(method, params)
-      const children = res.map(item => ({ key: `${treeNode.key}-${item.name || item.index_name}`, title: item.name || item.index_name, type: 'leaf', isLeaf: true, metadata: { ...item, database: treeNode.metadata.database, schema: treeNode.metadata.schema } }))
+      const children = res.map(item => {
+        let title = item.name || item.index_name
+        
+        // 针对函数和聚合函数，拼接参数列表
+        if ((isFunction || isAggregate) && item.arguments) {
+          title = `${item.name}(${item.arguments})`
+        }
+        // 针对索引类型，拼接关联列名
+        else if (isIndex && item.columns && item.columns.length > 0) {
+          title = `${item.name} (${item.columns.join(', ')})`
+        }
+        
+        return { 
+          key: `${treeNode.key}-${item.name || item.index_name}`, 
+          title, 
+          type: 'leaf', 
+          isLeaf: true, 
+          metadata: { ...item, database: treeNode.metadata.database, schema: treeNode.metadata.schema } 
+        }
+      })
       updateNodeInTree(treeData.value, treeNode.key, (n) => n.children = children.length ? children : [{ key: `${treeNode.key}-empty`, title: t('tree.empty'), type: 'empty', isLeaf: true }])
       treeData.value = [...treeData.value]
     } catch (e: any) { message.error(e) }

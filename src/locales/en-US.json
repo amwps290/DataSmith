@@ -78,6 +78,7 @@
     "views": "Views",
     "schemas": "Schemas",
     "functions": "Functions",
+    "aggregates": "Aggregate Functions",
     "indexes": "Indexes",
     "extensions": "Extensions",
     "no_data": "(No data)",

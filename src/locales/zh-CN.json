@@ -78,6 +78,7 @@
     "views": "视图",
     "schemas": "Schemas",
     "functions": "函数",
+    "aggregates": "聚合函数",
     "indexes": "索引",
     "extensions": "扩展",
     "no_data": "(无数据)",

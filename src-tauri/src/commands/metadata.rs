@@ -37,7 +37,11 @@ pub async fn get_schema_views(connection_id: String, database: String, schema: S
 
 #[tauri::command]
 pub async fn get_schema_functions(connection_id: String, database: String, schema: String, state: State<'_, AppState>) -> Result<Vec<FunctionInfo>, String> {
-    state.connection_manager.get_functions(&connection_id, Some(&database), Some(&schema)).await.map_err(|e| e.to_string())
+    tracing::info!(conn = %connection_id, db = %database, sc = %schema, "正在获取 Schema 函数...");
+    state.connection_manager.get_functions(&connection_id, Some(&database), Some(&schema)).await.map_err(|e| {
+        tracing::error!(err = %e, "获取 Schema 函数失败");
+        e.to_string()
+    })
 }
 
 #[tauri::command]
@@ -47,7 +51,11 @@ pub async fn get_schema_aggregate_functions(connection_id: String, database: Str
 
 #[tauri::command]
 pub async fn get_database_extensions(connection_id: String, database: String, state: State<'_, AppState>) -> Result<Vec<ExtensionInfo>, String> {
-    state.connection_manager.get_extensions(&connection_id, Some(&database)).await.map_err(|e| e.to_string())
+    tracing::info!(conn = %connection_id, db = %database, "正在获取数据库扩展...");
+    state.connection_manager.get_extensions(&connection_id, Some(&database)).await.map_err(|e| {
+        tracing::error!(err = %e, "获取数据库扩展失败");
+        e.to_string()
+    })
 }
 
 #[tauri::command]
