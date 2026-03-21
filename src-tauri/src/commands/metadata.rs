@@ -24,13 +24,13 @@ pub async fn get_schemas(connection_id: String, database: Option<String>, state:
 }
 
 #[tauri::command]
-pub async fn get_schema_tables(connection_id: String, database: String, schema: String, state: State<'_, AppState>) -> Result<Vec<TableInfo>, String> {
+pub async fn get_schema_tables(connection_id: String, database: String, _schema: String, state: State<'_, AppState>) -> Result<Vec<TableInfo>, String> {
     // 简化：目前 manager 主要是获取全库表，后续可按 schema 过滤
     state.connection_manager.get_tables(&connection_id, Some(&database)).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn get_schema_views(connection_id: String, database: String, schema: String, state: State<'_, AppState>) -> Result<Vec<TableInfo>, String> {
+pub async fn get_schema_views(connection_id: String, database: String, _schema: String, state: State<'_, AppState>) -> Result<Vec<TableInfo>, String> {
     state.connection_manager.get_views(&connection_id, Some(&database)).await.map_err(|e| e.to_string())
 }
 

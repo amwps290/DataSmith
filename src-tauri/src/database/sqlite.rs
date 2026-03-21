@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 use rusqlite::{Connection, params};
 use tokio::sync::Mutex;
-use tracing::{info, instrument};
+use tracing::{debug, instrument};
 use std::fs::File;
 use std::path::Path;
 
@@ -131,6 +131,22 @@ impl DatabaseOperations for SqliteDatabase {
             })
         }).map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(rows.map(|r| r.unwrap()).collect())
+    }
+
+    async fn update_data(&self, table: &str, _schema: Option<&str>, column: &str, value: Option<String>, where_clause: &str) -> DbResult<()> {
+        let state = self.state.lock().await;
+        let conn = state.conn.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+
+        let val_str = match value {
+            Some(v) => format!("'{}'", v.replace("'", "''")),
+            None => "NULL".to_string(),
+        };
+
+        let sql = format!("UPDATE \"{}\" SET \"{}\" = {} WHERE {}", table, column, val_str, where_clause);
+        debug!(sql = %sql, "执行 SQLite 更新");
+        
+        conn.execute(&sql, []).map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        Ok(())
     }
 
     async fn get_indexes(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {

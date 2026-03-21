@@ -127,6 +127,11 @@
     "delete_success": "Delete successful",
     "export_success": "Export completed: {path}",
     "delete_confirm_n": "Are you sure you want to delete {n} selected rows?",
-    "new_row_not_implemented": "Add row feature not yet implemented"
+    "new_row_not_implemented": "Add row feature not yet implemented",
+    "save_changes": "Save Changes ({n})",
+    "discard_changes": "Discard Changes",
+    "discard_confirm": "Are you sure you want to discard all unsaved changes?",
+    "update_fail": "Update failed",
+    "cell_modified": "Modified"
   }
 }

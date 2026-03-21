@@ -226,6 +226,23 @@ impl DatabaseOperations for PostgreSqlDatabase {
         }).collect())
     }
 
+    async fn update_data(&self, table: &str, schema: Option<&str>, column: &str, value: Option<String>, where_clause: &str) -> DbResult<()> {
+        let state = self.state.lock().await;
+        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        
+        let schema_name = schema.unwrap_or("public");
+        let val_str = match value {
+            Some(v) => format!("'{}'", v.replace("'", "''")),
+            None => "NULL".to_string(),
+        };
+
+        let sql = format!("UPDATE \"{}\".\"{}\" SET \"{}\" = {} WHERE {}", schema_name, table, column, val_str, where_clause);
+        debug!(sql = %sql, "执行 PostgreSQL 更新");
+        
+        client.batch_execute(&sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
+
     async fn get_indexes(&self, table: &str, schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
         let state = self.state.lock().await;
         let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;

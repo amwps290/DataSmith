@@ -180,6 +180,11 @@ pub trait DatabaseOperations: Send + Sync {
     /// 获取表结构
     async fn get_table_structure(&self, table: &str, schema: Option<&str>, database: Option<&str>) -> DbResult<Vec<ColumnInfo>>;
 
+    /// 更新数据
+    async fn update_data(&self, _table: &str, _schema: Option<&str>, _column: &str, _value: Option<String>, _where_clause: &str) -> DbResult<()> {
+        Err(DbError::Other("该数据库类型不支持此更新操作".into()))
+    }
+
     /// 获取索引信息
     async fn get_indexes(&self, table: &str, schema: Option<&str>) -> DbResult<Vec<IndexInfo>>;
     

@@ -3,7 +3,6 @@ use crate::utils::sql_formatter::SqlFormatter;
 use crate::AppState;
 use tauri::State;
 use tracing::{info, instrument};
-use std::collections::HashMap;
 
 /// 格式化 SQL
 #[tauri::command]
@@ -101,15 +100,20 @@ pub async fn execute_query_batch(
 
 #[tauri::command]
 pub async fn update_table_data(
-    _connection_id: String,
-    _database: String,
-    _table: String,
-    _primary_key: String,
-    _pk_value: serde_json::Value,
-    _data: HashMap<String, serde_json::Value>,
-    _state: State<'_, AppState>,
+    connection_id: String,
+    database: String,
+    table: String,
+    schema: Option<String>,
+    column: String,
+    value: Option<String>,
+    where_clause: String,
+    state: State<'_, AppState>,
 ) -> Result<(), String> {
-    Ok(())
+    let manager = &state.connection_manager;
+    manager
+        .update_data(&connection_id, &table, schema.as_deref(), Some(&database), &column, value, &where_clause)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -117,7 +121,7 @@ pub async fn insert_table_data(
     _connection_id: String,
     _database: String,
     _table: String,
-    _data: HashMap<String, serde_json::Value>,
+    _data: std::collections::HashMap<String, serde_json::Value>,
     _state: State<'_, AppState>,
 ) -> Result<(), String> {
     Ok(())
@@ -125,12 +129,18 @@ pub async fn insert_table_data(
 
 #[tauri::command]
 pub async fn delete_table_data(
-    _connection_id: String,
-    _database: String,
-    _table: String,
-    _primary_key: String,
-    _pk_value: serde_json::Value,
-    _state: State<'_, AppState>,
+    connection_id: String,
+    database: String,
+    table: String,
+    _schema: Option<String>,
+    where_clause: String,
+    state: State<'_, AppState>,
 ) -> Result<(), String> {
-    Ok(())
+    let manager = &state.connection_manager;
+    let sql = format!("DELETE FROM {} WHERE {}", table, where_clause); // 简化逻辑
+    manager
+        .execute_query(&connection_id, &sql, Some(&database))
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }

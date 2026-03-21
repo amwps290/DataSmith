@@ -127,6 +127,11 @@
     "delete_success": "删除成功",
     "export_success": "导出完成: {path}",
     "delete_confirm_n": "确定删除选中的 {n} 行数据吗？",
-    "new_row_not_implemented": "新增行功能待完善"
+    "new_row_not_implemented": "新增行功能待完善",
+    "save_changes": "保存修改 ({n})",
+    "discard_changes": "放弃修改",
+    "discard_confirm": "确定要放弃所有未保存的修改吗？",
+    "update_fail": "更新失败",
+    "cell_modified": "已修改"
   }
 }

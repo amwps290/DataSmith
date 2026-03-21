@@ -165,6 +165,20 @@ impl ConnectionManager {
         db.get_table_structure(table, schema, database).await
     }
 
+    pub async fn update_data(&self, composite_id: &str, table: &str, schema: Option<&str>, database: Option<&str>, column: &str, value: Option<String>, where_clause: &str) -> DbResult<()> {
+        let db = self.get_db_ref(composite_id).await?;
+        
+        if let Some(db_name) = database {
+            let mut conns = self.connections.write().await;
+            let real_id = if composite_id.contains(':') { composite_id.to_string() } else { format!("{}:metadata", composite_id) };
+            if let Some(db_instance) = conns.get_mut(&real_id) {
+                db_instance.switch_database(db_name).await?;
+            }
+        }
+
+        db.update_data(table, schema, column, value, where_clause).await
+    }
+
     pub async fn get_database_type(&self, composite_id: &str) -> DbResult<DatabaseType> {
         let real_id = if composite_id.contains(':') { composite_id.to_string() } else { format!("{}:metadata", composite_id) };
         let config_id = real_id.split(':').next().unwrap_or(composite_id);

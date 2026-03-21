@@ -218,6 +218,23 @@ impl DatabaseOperations for MySqlDatabase {
         }
     }
 
+    async fn update_data(&self, table: &str, _schema: Option<&str>, column: &str, value: Option<String>, where_clause: &str) -> DbResult<()> {
+        let state = self.state.lock().await;
+        let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+
+        let val_str = match value {
+            Some(v) => format!("'{}'", v.replace("'", "''")),
+            None => "NULL".to_string(),
+        };
+
+        let sql = format!("UPDATE `{}` SET `{}` = {} WHERE {}", table, column, val_str, where_clause);
+        debug!(sql = %sql, "执行 MySQL 更新");
+        
+        conn.query_drop(sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
+
     async fn get_indexes(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
         let results = self.execute_query(&format!("SHOW INDEX FROM {}", table), None).await?;
         let mut map: HashMap<String, IndexInfo> = HashMap::new();
