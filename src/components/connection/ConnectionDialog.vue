@@ -233,7 +233,9 @@ async function handleTest() {
     await formRef.value.validate()
     testing.value = true
     const result = await connectionStore.testConnection({ ...formData, id: '' } as ConnectionConfig)
-    message.success(t('connection.test_success_ping', { ms: result.ping_time_ms }))
+    if (result) {
+      message.success(t('connection.test_success_ping', { ms: result.ping_time_ms }))
+    }
   } catch (error: any) {
     Modal.error({ title: t('connection.test_fail'), content: error?.message || t('connection.fail'), width: 500 })
   } finally {

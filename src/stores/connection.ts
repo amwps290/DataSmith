@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ConnectionConfig, ConnectionStatus } from '@/types/database'
-import { invoke } from '@tauri-apps/api/core'
+import { connectionApi } from '@/api'
+import { withErrorHandler } from '@/utils/errorHandler'
 
 export const useConnectionStore = defineStore('connection', () => {
   // 状态
@@ -11,38 +12,37 @@ export const useConnectionStore = defineStore('connection', () => {
 
   // 获取所有连接
   async function fetchConnections() {
-    try {
-      connections.value = await invoke<ConnectionConfig[]>('get_connections')
-    } catch (error) {
-      console.error('获取连接列表失败:', error)
-      throw error
+    return withErrorHandler(async () => {
+      connections.value = await connectionApi.getConnections()
+    }, { messagePrefix: '获取连接列表失败' })
+  }
+
+  /**
+   * 将 ConnectionConfig 转换为存储格式
+   */
+  function toStoredConnection(config: ConnectionConfig, isNew: boolean = false): any {
+    return {
+      id: config.id,
+      name: config.name,
+      db_type: config.db_type,
+      host: config.host,
+      port: config.port,
+      username: config.username,
+      database: config.database,
+      ssl: config.ssl,
+      connection_timeout: config.connection_timeout,
+      pool_size: config.pool_size,
+      tags: config.tags || [],
+      created_at: isNew ? Date.now() : config.created_at,
+      updated_at: Date.now(),
     }
   }
 
   // 保存连接
   async function saveConnection(config: ConnectionConfig, password?: string) {
-    try {
-      // 创建不包含密码的存储对象
-      const storedConnection = {
-        id: config.id,
-        name: config.name,
-        db_type: config.db_type,
-        host: config.host,
-        port: config.port,
-        username: config.username,
-        database: config.database,
-        ssl: config.ssl,
-        connection_timeout: config.connection_timeout,
-        pool_size: config.pool_size,
-        tags: config.tags || [],
-        created_at: config.created_at || Date.now(),
-        updated_at: Date.now(),
-      }
-      
-      const saved = await invoke<any>('save_connection', { 
-        connection: storedConnection,
-        password: password || null
-      })
+    return withErrorHandler(async () => {
+      const storedConnection = toStoredConnection(config, true)
+      const saved = await connectionApi.saveConnection(storedConnection, password || null)
       
       const index = connections.value.findIndex(c => c.id === saved.id)
       if (index >= 0) {
@@ -51,106 +51,68 @@ export const useConnectionStore = defineStore('connection', () => {
         connections.value.push({ ...config, ...saved })
       }
       return saved
-    } catch (error) {
-      console.error('保存连接失败:', error)
-      throw error
-    }
+    }, { messagePrefix: '保存连接失败' })
   }
 
   // 更新连接
   async function updateConnection(config: ConnectionConfig, password?: string) {
-    try {
-      // 创建不包含密码的存储对象
-      const storedConnection = {
-        id: config.id,
-        name: config.name,
-        db_type: config.db_type,
-        host: config.host,
-        port: config.port,
-        username: config.username,
-        database: config.database,
-        ssl: config.ssl,
-        connection_timeout: config.connection_timeout,
-        pool_size: config.pool_size,
-        tags: config.tags || [],
-        created_at: config.created_at,
-        updated_at: Date.now(),
-      }
-      
-      const updated = await invoke<any>('update_connection', { 
-        connection: storedConnection,
-        password: password || null
-      })
+    return withErrorHandler(async () => {
+      const storedConnection = toStoredConnection(config, false)
+      const updated = await connectionApi.updateConnection(storedConnection, password || null)
       
       const index = connections.value.findIndex(c => c.id === config.id)
       if (index >= 0) {
         connections.value[index] = { ...config, ...updated }
       }
       return updated
-    } catch (error) {
-      console.error('更新连接失败:', error)
-      throw error
-    }
+    }, { messagePrefix: '更新连接失败' })
   }
 
   // 删除连接
   async function deleteConnection(id: string) {
-    try {
-      await invoke('delete_connection', { id })
+    return withErrorHandler(async () => {
+      await connectionApi.deleteConnection(id)
       connections.value = connections.value.filter(c => c.id !== id)
       if (activeConnectionId.value === id) {
         activeConnectionId.value = null
       }
       connectionStatuses.value.delete(id)
-    } catch (error) {
-      console.error('删除连接失败:', error)
-      throw error
-    }
+    }, { messagePrefix: '删除连接失败' })
   }
 
   // 测试连接
   async function testConnection(config: ConnectionConfig) {
-    try {
-      const result = await invoke<any>('test_connection', { config })
-      // 检查连接测试结果
+    return withErrorHandler(async () => {
+      const result = await connectionApi.testConnection(config)
       if (!result.success) {
         throw new Error(result.message || '连接失败')
       }
       return result
-    } catch (error) {
-      console.error('测试连接失败:', error)
-      throw error
-    }
+    }, { messagePrefix: '测试连接失败' })
   }
 
   // 连接到数据库
   async function connectToDatabase(id: string) {
-    try {
-      const conn = connections.value.find(c => c.id === id)
-      if (!conn) {
-        throw new Error('连接配置不存在')
-      }
-      // 调用后端创建连接
-      await invoke('create_connection', { connectionId: id, config: conn })
-      // 成功后更新状态
-      updateConnectionStatus(id, 'connected')
-    } catch (error) {
-      updateConnectionStatus(id, 'error')
-      console.error('连接数据库失败:', error)
-      throw error
+    const conn = connections.value.find(c => c.id === id)
+    if (!conn) {
+      throw new Error('连接配置不存在')
     }
+
+    return withErrorHandler(async () => {
+      await connectionApi.createConnection(id)
+      updateConnectionStatus(id, 'connected')
+    }, { 
+      messagePrefix: '连接数据库失败',
+      onError: () => updateConnectionStatus(id, 'error')
+    })
   }
 
   // 断开数据库连接
   async function disconnectFromDatabase(id: string) {
-    try {
-      // 调用后端断开连接
-      await invoke('disconnect_database', { connectionId: id })
+    return withErrorHandler(async () => {
+      await connectionApi.disconnectDatabase(id)
       updateConnectionStatus(id, 'disconnected')
-    } catch (error) {
-      console.error('断开连接失败:', error)
-      throw error
-    }
+    }, { messagePrefix: '断开连接失败' })
   }
 
   // 设置活动连接
@@ -191,4 +153,3 @@ export const useConnectionStore = defineStore('connection', () => {
     getActiveConnection,
   }
 })
-

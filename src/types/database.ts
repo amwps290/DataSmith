@@ -91,6 +91,38 @@ export interface IndexInfo {
 }
 
 /**
+ * Schema 信息
+ */
+export interface SchemaInfo {
+  name: string
+  owner?: string
+  comment?: string
+}
+
+/**
+ * 函数信息
+ */
+export interface FunctionInfo {
+  name: string
+  schema?: string
+  return_type?: string
+  arguments?: string
+  language?: string
+  function_type: string
+  comment?: string
+}
+
+/**
+ * 扩展信息
+ */
+export interface ExtensionInfo {
+  name: string
+  version: string
+  schema?: string
+  comment?: string
+}
+
+/**
  * 查询结果
  */
 export interface QueryResult {
