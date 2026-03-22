@@ -26,7 +26,7 @@ impl MySqlDatabase {
     }
 
     fn create_opts(config: &ConnectionConfig) -> Opts {
-        let mut builder = OptsBuilder::default()
+        let builder = OptsBuilder::default()
             .ip_or_hostname(config.host.clone())
             .tcp_port(config.port)
             .user(Some(config.username.clone()))
@@ -218,20 +218,68 @@ impl DatabaseOperations for MySqlDatabase {
         }
     }
 
-    async fn update_data(&self, table: &str, _schema: Option<&str>, column: &str, value: Option<String>, where_clause: &str) -> DbResult<()> {
+    async fn update_data(&self, table: &str, _schema: Option<&str>, column: &str, value: Option<String>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
         let state = self.state.lock().await;
         let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
         let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
 
-        let val_str = match value {
-            Some(v) => format!("'{}'", v.replace("'", "''")),
-            None => "NULL".to_string(),
-        };
-
-        let sql = format!("UPDATE `{}` SET `{}` = {} WHERE {}", table, column, val_str, where_clause);
-        debug!(sql = %sql, "执行 MySQL 更新");
+        let mut where_parts = Vec::new();
+        let mut p_vec = Vec::new();
         
-        conn.query_drop(sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        // MySQL 驱动的 Params 比较特别，我们可以用命名参数或者位置参数
+        // 这里为了简单，我们先手动构建带占位符的 SQL 和参数列表
+        p_vec.push(mysql_async::Value::from(value));
+
+        for (col, val) in where_conditions {
+            if val.is_null() {
+                where_parts.push(format!("`{}` IS NULL", col));
+            } else {
+                where_parts.push(format!("`{}` = ?", col));
+                p_vec.push(match val {
+                    serde_json::Value::String(s) => mysql_async::Value::from(s),
+                    serde_json::Value::Number(n) => {
+                        if let Some(i) = n.as_i64() { mysql_async::Value::from(i) }
+                        else { mysql_async::Value::from(n.as_f64().unwrap_or(0.0)) }
+                    },
+                    serde_json::Value::Bool(b) => mysql_async::Value::from(b),
+                    _ => mysql_async::Value::from(val.to_string()),
+                });
+            }
+        }
+        
+        let params = mysql_async::Params::Positional(p_vec);
+
+        let sql = format!("UPDATE `{}` SET `{}` = ? WHERE {}", table, column, where_parts.join(" AND "));
+        debug!(sql = %sql, "执行 MySQL 参数化更新");
+        
+        conn.exec_drop(sql, params).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn delete_data(&self, table: &str, _schema: Option<&str>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
+        let state = self.state.lock().await;
+        let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+
+        let mut where_parts = Vec::new();
+        let mut p_vec = Vec::new();
+
+        for (col, val) in where_conditions {
+            if val.is_null() {
+                where_parts.push(format!("`{}` IS NULL", col));
+            } else {
+                where_parts.push(format!("`{}` = ?", col));
+                p_vec.push(match val {
+                    serde_json::Value::String(s) => mysql_async::Value::from(s),
+                    _ => mysql_async::Value::from(val.to_string()),
+                });
+            }
+        }
+
+        let sql = format!("DELETE FROM `{}` WHERE {}", table, where_parts.join(" AND "));
+        debug!(sql = %sql, "执行 MySQL 参数化删除");
+        
+        conn.exec_drop(sql, mysql_async::Params::Positional(p_vec)).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(())
     }
 

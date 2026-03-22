@@ -30,6 +30,36 @@ pub enum DatabaseType {
     Elasticsearch,
 }
 
+impl std::str::FromStr for DatabaseType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "mysql" => Ok(DatabaseType::MySQL),
+            "postgresql" | "postgres" => Ok(DatabaseType::PostgreSQL),
+            "sqlite" => Ok(DatabaseType::SQLite),
+            "mongodb" | "mongo" => Ok(DatabaseType::MongoDB),
+            "redis" => Ok(DatabaseType::Redis),
+            "elasticsearch" | "es" => Ok(DatabaseType::Elasticsearch),
+            _ => Err(format!("不支持的数据库类型: {}", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for DatabaseType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            DatabaseType::MySQL => "mysql",
+            DatabaseType::PostgreSQL => "postgresql",
+            DatabaseType::SQLite => "sqlite",
+            DatabaseType::MongoDB => "mongodb",
+            DatabaseType::Redis => "redis",
+            DatabaseType::Elasticsearch => "elasticsearch",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 /// 查询结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryResult {
@@ -181,8 +211,13 @@ pub trait DatabaseOperations: Send + Sync {
     async fn get_table_structure(&self, table: &str, schema: Option<&str>, database: Option<&str>) -> DbResult<Vec<ColumnInfo>>;
 
     /// 更新数据
-    async fn update_data(&self, _table: &str, _schema: Option<&str>, _column: &str, _value: Option<String>, _where_clause: &str) -> DbResult<()> {
+    async fn update_data(&self, _table: &str, _schema: Option<&str>, _column: &str, _value: Option<String>, _where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
         Err(DbError::Other("该数据库类型不支持此更新操作".into()))
+    }
+
+    /// 删除数据
+    async fn delete_data(&self, _table: &str, _schema: Option<&str>, _where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
+        Err(DbError::Other("该数据库类型不支持此删除操作".into()))
     }
 
     /// 获取索引信息

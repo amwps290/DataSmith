@@ -222,20 +222,81 @@ impl DatabaseOperations for PostgreSqlDatabase {
         }).collect())
     }
 
-    async fn update_data(&self, table: &str, schema: Option<&str>, column: &str, value: Option<String>, where_clause: &str) -> DbResult<()> {
+    async fn update_data(&self, table: &str, schema: Option<&str>, column: &str, value: Option<String>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
         let state = self.state.lock().await;
         let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
         
         let schema_name = schema.unwrap_or("public");
-        let val_str = match value {
-            Some(v) => format!("'{}'", v.replace("'", "''")),
-            None => "NULL".to_string(),
-        };
-
-        let sql = format!("UPDATE \"{}\".\"{}\" SET \"{}\" = {} WHERE {}", schema_name, table, column, val_str, where_clause);
-        debug!(sql = %sql, "执行 PostgreSQL 更新");
         
-        client.batch_execute(&sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        // 构造 WHERE 子句和参数
+        let mut params: Vec<Option<String>> = Vec::new();
+        params.push(value); // $1 是新值
+        
+        let mut where_parts = Vec::new();
+        for (i, (col, val)) in where_conditions.iter().enumerate() {
+            let param_idx = i + 2; // 从 $2 开始
+            if val.is_null() {
+                where_parts.push(format!("\"{}\" IS NULL", col));
+            } else {
+                where_parts.push(format!("\"{}\" = ${}", col, param_idx));
+                params.push(Some(match val {
+                    serde_json::Value::String(s) => s.clone(),
+                    _ => val.to_string(),
+                }));
+            }
+        }
+
+        let sql = format!(
+            "UPDATE \"{}\".\"{}\" SET \"{}\" = $1 WHERE {}", 
+            schema_name, table, column, where_parts.join(" AND ")
+        );
+        
+        debug!(sql = %sql, "执行 PostgreSQL 参数化更新");
+        
+        // 将 Vec<Option<String>> 转换为 &[&(dyn ToSql + Sync)]
+        let mut query_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+        for p in &params {
+            query_params.push(p);
+        }
+
+        client.execute(&sql, &query_params).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn delete_data(&self, table: &str, schema: Option<&str>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
+        let state = self.state.lock().await;
+        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        
+        let schema_name = schema.unwrap_or("public");
+        
+        let mut params: Vec<Option<String>> = Vec::new();
+        let mut where_parts = Vec::new();
+        for (i, (col, val)) in where_conditions.iter().enumerate() {
+            let param_idx = i + 1;
+            if val.is_null() {
+                where_parts.push(format!("\"{}\" IS NULL", col));
+            } else {
+                where_parts.push(format!("\"{}\" = ${}", col, param_idx));
+                params.push(Some(match val {
+                    serde_json::Value::String(s) => s.clone(),
+                    _ => val.to_string(),
+                }));
+            }
+        }
+
+        let sql = format!(
+            "DELETE FROM \"{}\".\"{}\" WHERE {}", 
+            schema_name, table, where_parts.join(" AND ")
+        );
+        
+        debug!(sql = %sql, "执行 PostgreSQL 参数化删除");
+        
+        let mut query_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+        for p in &params {
+            query_params.push(p);
+        }
+
+        client.execute(&sql, &query_params).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(())
     }
 

@@ -1,4 +1,4 @@
-use crate::database::{QueryResult, ColumnInfo, IndexInfo, DatabaseInfo, TableInfo, SchemaInfo, FunctionInfo, ExtensionInfo};
+use crate::database::{ColumnInfo, IndexInfo, DatabaseInfo, TableInfo, SchemaInfo, FunctionInfo, ExtensionInfo};
 use crate::AppState;
 use tauri::State;
 use serde_json::Value;
@@ -73,21 +73,6 @@ pub async fn get_schema_indexes(connection_id: String, database: String, schema:
     state.connection_manager.get_schema_indexes(&connection_id, Some(&database), Some(&schema)).await.map_err(|e| e.to_string())
 }
 
-// 占位指令，后续完善
-#[tauri::command] pub async fn view_table_data(_c: String, _t: String, _d: Option<String>, _s: Option<String>) -> Result<Vec<QueryResult>, String> { Err("Not implemented".into()) }
-#[tauri::command] pub async fn truncate_table(_c: String, _t: String, _d: Option<String>, _s: Option<String>) -> Result<(), String> { Ok(()) }
-#[tauri::command] pub async fn drop_table(_c: String, _t: String, _d: Option<String>, _s: Option<String>) -> Result<(), String> { Ok(()) }
-#[tauri::command] pub async fn get_procedures(_c: String, _d: Option<String>, _s: Option<String>) -> Result<Vec<Value>, String> { Ok(vec![]) }
-#[tauri::command] pub async fn get_functions(_c: String, _d: Option<String>, _s: Option<String>) -> Result<Vec<FunctionInfo>, String> { Ok(vec![]) }
-#[tauri::command] pub async fn get_triggers(_c: String, _t: String, _d: Option<String>, _s: Option<String>) -> Result<Vec<Value>, String> { Ok(vec![]) }
-#[tauri::command] pub async fn get_events(_c: String, _d: Option<String>, _s: Option<String>) -> Result<Vec<Value>, String> { Ok(vec![]) }
-#[tauri::command] pub async fn drop_view(_c: String, _v: String, _d: Option<String>, _s: Option<String>) -> Result<(), String> { Ok(()) }
-#[tauri::command] pub async fn get_view_definition(_c: String, _v: String, _d: Option<String>, _s: Option<String>) -> Result<String, String> { Ok("".into()) }
-#[tauri::command] pub async fn drop_procedure(_c: String, _p: String, _d: Option<String>, _s: Option<String>) -> Result<(), String> { Ok(()) }
-#[tauri::command] pub async fn drop_function(_c: String, _f: String, _d: Option<String>, _s: Option<String>) -> Result<(), String> { Ok(()) }
-#[tauri::command] pub async fn drop_trigger(_c: String, _t: String, _d: Option<String>, _s: Option<String>) -> Result<(), String> { Ok(()) }
-#[tauri::command] pub async fn drop_event(_c: String, _e: String, _d: Option<String>, _s: Option<String>) -> Result<(), String> { Ok(()) }
-#[tauri::command] pub async fn get_table_foreign_keys(_c: String, _t: String, _s: Option<String>) -> Result<Vec<Value>, String> { Ok(vec![]) }
 #[tauri::command]
 pub async fn get_create_table_ddl(connection_id: String, table: String, database: Option<String>, schema: Option<String>, state: State<'_, AppState>) -> Result<String, String> {
     state.connection_manager.get_table_ddl(&connection_id, &table, schema.as_deref(), database.as_deref()).await.map_err(|e| e.to_string())

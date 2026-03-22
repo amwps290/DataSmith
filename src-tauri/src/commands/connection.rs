@@ -2,10 +2,16 @@ use crate::database::{ConnectionConfig, DatabaseType, sqlite::SqliteDatabase};
 use crate::models::{ConnectionTestResult, StoredConnection};
 use crate::utils::crypto;
 use crate::AppState;
+use crate::commands::query::ToCommandResult;
 use serde_json::{json, Value};
+use std::sync::Arc;
 use tauri::{AppHandle, State};
-use tauri_plugin_store::StoreExt;
+use tauri_plugin_store::{Store, StoreExt};
 use tracing::{info, instrument};
+
+fn get_connection_store(app: &AppHandle) -> Result<Arc<Store<tauri::Wry>>, String> {
+    app.store("connections.json").map_err(|e| format!("无法访问连接存储: {}", e))
+}
 
 /// 将 StoredConnection 转换为 ConnectionConfig
 fn stored_to_config(stored: &StoredConnection) -> Result<ConnectionConfig, String> {
@@ -14,20 +20,13 @@ fn stored_to_config(stored: &StoredConnection) -> Result<ConnectionConfig, Strin
     } else {
         String::new()
     };
-    Ok(stored_to_config_with_password(stored, &password))
+    stored_to_config_with_password(stored, &password)
 }
 
-fn stored_to_config_with_password(stored: &StoredConnection, password: &str) -> ConnectionConfig {
-    let db_type = match stored.db_type.as_str() {
-        "mysql" => DatabaseType::MySQL,
-        "postgresql" => DatabaseType::PostgreSQL,
-        "sqlite" => DatabaseType::SQLite,
-        "mongodb" => DatabaseType::MongoDB,
-        "redis" => DatabaseType::Redis,
-        _ => DatabaseType::MySQL,
-    };
+fn stored_to_config_with_password(stored: &StoredConnection, password: &str) -> Result<ConnectionConfig, String> {
+    let db_type = stored.db_type.parse::<DatabaseType>()?;
 
-    ConnectionConfig {
+    Ok(ConnectionConfig {
         id: stored.id.clone(),
         name: stored.name.clone(),
         db_type,
@@ -39,14 +38,14 @@ fn stored_to_config_with_password(stored: &StoredConnection, password: &str) -> 
         ssl: stored.ssl,
         connection_timeout: stored.connection_timeout,
         pool_size: stored.pool_size,
-    }
+    })
 }
 
 #[tauri::command]
 #[instrument]
 pub async fn create_sqlite_database(path: String) -> Result<String, String> {
     info!(path = %path, "收到创建 SQLite 数据库请求");
-    SqliteDatabase::create_database_file(&path).map_err(|e| e.to_string())?;
+    SqliteDatabase::create_database_file(&path).to_cmd_result()?;
     Ok("数据库创建成功".to_string())
 }
 
@@ -57,7 +56,7 @@ pub async fn test_connection(
     state: State<'_, AppState>,
 ) -> Result<ConnectionTestResult, String> {
     let start = std::time::Instant::now();
-    let conn_config: ConnectionConfig = serde_json::from_value(config).map_err(|e| e.to_string())?;
+    let conn_config: ConnectionConfig = serde_json::from_value(config).to_cmd_result()?;
     let manager = &state.connection_manager;
     let result = manager.test_connection(&conn_config).await;
 
@@ -83,12 +82,12 @@ pub async fn save_connection(
     mut connection: StoredConnection,
     password: Option<String>,
 ) -> Result<StoredConnection, String> {
-    let store = app.store("connections.json").map_err(|e| format!("Failed to get store: {}", e))?;
+    let store = get_connection_store(&app)?;
     if let Some(pwd) = password {
         if !pwd.is_empty() { connection.encrypted_password = Some(crypto::encrypt_password(&pwd)?); }
     }
     store.set(connection.id.clone(), json!(connection));
-    store.save().map_err(|e| e.to_string())?;
+    store.save().to_cmd_result()?;
     Ok(connection)
 }
 
@@ -98,7 +97,7 @@ pub async fn update_connection(
     mut connection: StoredConnection,
     password: Option<String>,
 ) -> Result<StoredConnection, String> {
-    let store = app.store("connections.json").map_err(|e| format!("Failed to get store: {}", e))?;
+    let store = get_connection_store(&app)?;
     if !store.has(connection.id.clone()) { return Err("连接配置不存在".to_string()); }
     if let Some(pwd) = password {
         if !pwd.is_empty() { connection.encrypted_password = Some(crypto::encrypt_password(&pwd)?); }
@@ -108,13 +107,13 @@ pub async fn update_connection(
         }
     }
     store.set(connection.id.clone(), json!(connection));
-    store.save().map_err(|e| e.to_string())?;
+    store.save().to_cmd_result()?;
     Ok(connection)
 }
 
 #[tauri::command]
 pub async fn get_connections(app: AppHandle) -> Result<Vec<StoredConnection>, String> {
-    let store = app.store("connections.json").map_err(|e| format!("Failed to get store: {}", e))?;
+    let store = get_connection_store(&app)?;
     let mut connections = Vec::new();
     for (_, value) in store.entries() {
         if let Ok(conn) = serde_json::from_value::<StoredConnection>(value.clone()) { connections.push(conn); }
@@ -124,9 +123,9 @@ pub async fn get_connections(app: AppHandle) -> Result<Vec<StoredConnection>, St
 
 #[tauri::command]
 pub async fn delete_connection(app: AppHandle, id: String) -> Result<bool, String> {
-    let store = app.store("connections.json").map_err(|e| format!("Failed to get store: {}", e))?;
+    let store = get_connection_store(&app)?;
     store.delete(id);
-    store.save().map_err(|e| e.to_string())?;
+    store.save().to_cmd_result()?;
     Ok(true)
 }
 
@@ -137,12 +136,12 @@ pub async fn create_connection(
     connection_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let store = app.store("connections.json").map_err(|e| format!("Failed to get store: {}", e))?;
+    let store = get_connection_store(&app)?;
     let stored_value = store.get(connection_id.clone()).ok_or("连接配置不存在")?;
     let stored_conn: StoredConnection = serde_json::from_value(stored_value).map_err(|e| format!("解析连接配置失败: {}", e))?;
     let config = stored_to_config(&stored_conn)?;
     let manager = &state.connection_manager;
-    manager.create_connection(config).await.map_err(|e| e.to_string())?;
+    manager.create_connection(config).await.to_cmd_result()?;
     Ok(())
 }
 
@@ -153,6 +152,6 @@ pub async fn disconnect_database(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let manager = &state.connection_manager;
-    manager.disconnect(&connection_id).await.map_err(|e| e.to_string())?;
+    manager.disconnect(&connection_id).await.to_cmd_result()?;
     Ok(())
 }

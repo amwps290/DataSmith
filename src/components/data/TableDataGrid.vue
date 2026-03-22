@@ -276,14 +276,17 @@ async function submitChanges() {
       const rowIndex = Number(rowIndexStr)
       const row = gridOptions.data?.find((r: any) => r.__rowIndex === rowIndex)
       if (!row) continue
-      const where = primaryKeys.value.map(pk => {
-        const v = row._originalData[pk]
-        return v === null ? `${quote(pk)} IS NULL` : `${quote(pk)} = '${String(v).replace(/'/g, "''")}'`
-      }).join(' AND ')
+
+      // 构建结构化的 WHERE 条件
+      const whereConditions: Record<string, any> = {}
+      primaryKeys.value.forEach(pk => {
+        whereConditions[pk] = row._originalData[pk]
+      })
+
       for (const [field, change] of Object.entries(fields)) {
         await invoke('update_table_data', {
           connectionId: props.connectionId, database: props.database, table: props.table,
-          schema: props.schema || null, column: field, value: change.new === null ? null : String(change.new), whereClause: where
+          schema: props.schema || null, column: field, value: change.new === null ? null : String(change.new), whereConditions
         })
         row._originalData[field] = change.new
       }
@@ -384,10 +387,15 @@ async function deleteSelected() {
       try {
         const records = gridRef.value?.getCheckboxRecords() || []
         for (const record of records) {
-          const where = primaryKeys.value.map(pk => {
-            const v = record._originalData[pk]; return v === null ? `${quote(pk)} IS NULL` : `${quote(pk)} = '${String(v).replace(/'/g, "''")}'`
-          }).join(' AND ')
-          await invoke('delete_table_data', { connectionId: props.connectionId, database: props.database, table: props.table, schema: props.schema || null, whereClause: where })
+          const whereConditions: Record<string, any> = {}
+          primaryKeys.value.forEach(pk => {
+            whereConditions[pk] = record._originalData[pk]
+          })
+          
+          await invoke('delete_table_data', { 
+            connectionId: props.connectionId, database: props.database, table: props.table, 
+            schema: props.schema || null, whereConditions 
+          })
         }
         message.success(t('data.delete_success')); refresh()
       } catch (e: any) { message.error(e) }

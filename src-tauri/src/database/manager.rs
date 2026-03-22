@@ -70,7 +70,7 @@ impl ConnectionManager {
             DbError::ConfigError(format!("配置 {} 不存在", config_id))
         })?;
 
-        let mut db = self.create_instance(&config.db_type)?;
+        let db = self.create_instance(&config.db_type)?;
         
         debug!(session = %composite_id, "正在发起驱动层连接...");
         db.connect(config.clone()).await?;
@@ -168,10 +168,16 @@ impl ConnectionManager {
         db.get_table_structure(table, schema, database).await
     }
 
-    pub async fn update_data(&self, composite_id: &str, table: &str, schema: Option<&str>, database: Option<&str>, column: &str, value: Option<String>, where_clause: &str) -> DbResult<()> {
+    pub async fn update_data(&self, composite_id: &str, table: &str, schema: Option<&str>, database: Option<&str>, column: &str, value: Option<String>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
         let db = self.get_db_ref(composite_id).await?;
         self.ensure_db_context(db.clone(), database).await?;
-        db.update_data(table, schema, column, value, where_clause).await
+        db.update_data(table, schema, column, value, where_conditions).await
+    }
+
+    pub async fn delete_data(&self, composite_id: &str, table: &str, schema: Option<&str>, database: Option<&str>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
+        let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
+        db.delete_data(table, schema, where_conditions).await
     }
 
     pub async fn get_database_type(&self, composite_id: &str) -> DbResult<DatabaseType> {
