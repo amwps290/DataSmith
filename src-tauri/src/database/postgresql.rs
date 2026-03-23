@@ -381,7 +381,7 @@ impl DatabaseOperations for PostgreSqlDatabase {
         let schema_name = schema.unwrap_or("public");
         
         let mut sql_parts = Vec::new();
-        for change in changes {
+        for change in &changes {
             match change {
                 TableChange::AddColumn(col) => {
                     let mut part = format!("ADD COLUMN \"{}\" {}", col.name, col.data_type);
@@ -390,7 +390,7 @@ impl DatabaseOperations for PostgreSqlDatabase {
                     sql_parts.push(part);
                 },
                 TableChange::ModifyColumn { old_name, new_column } => {
-                    if old_name != new_column.name {
+                    if old_name != &new_column.name {
                         sql_parts.push(format!("RENAME COLUMN \"{}\" TO \"{}\"", old_name, new_column.name));
                     }
                     sql_parts.push(format!("ALTER COLUMN \"{}\" TYPE {}", new_column.name, new_column.data_type));
@@ -403,14 +403,43 @@ impl DatabaseOperations for PostgreSqlDatabase {
                 TableChange::DropColumn(name) => {
                     sql_parts.push(format!("DROP COLUMN \"{}\"", name));
                 },
-                _ => {}
+                TableChange::AddIndex(idx) => {
+                    let cols = idx.columns.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+                    let unique = if idx.is_unique { "UNIQUE " } else { "" };
+                    sql_parts.push(format!("ADD {}INDEX \"{}\" ({})", unique, idx.name, cols));
+                },
+                TableChange::DropIndex(name) => {
+                    // PostgreSQL DROP INDEX 是独立命令，不能放在 ALTER TABLE 中
+                    debug!(name = %name, "准备删除 PostgreSQL 索引");
+                },
+                TableChange::AddForeignKey(fk) => {
+                    sql_parts.push(format!(
+                        "ADD CONSTRAINT \"{}\" FOREIGN KEY (\"{}\") REFERENCES \"{}\".\"{}\" (\"{}\") ON UPDATE {} ON DELETE {}",
+                        fk.name, fk.column_name, schema_name, fk.referenced_table_name, fk.referenced_column_name,
+                        fk.update_rule.as_deref().unwrap_or("NO ACTION"),
+                        fk.delete_rule.as_deref().unwrap_or("NO ACTION")
+                    ));
+                },
+                TableChange::DropForeignKey(name) => {
+                    sql_parts.push(format!("DROP CONSTRAINT \"{}\"", name));
+                },
             }
         }
 
+        // 处理 ALTER TABLE 内部变更
         if !sql_parts.is_empty() {
-            let sql = format!("ALTER TABLE \"{}\".\"{}\" {}", schema_name, table, sql_parts.join(", "));
-            debug!(sql = %sql, "执行 PostgreSQL ALTER TABLE");
-            client.batch_execute(&sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+            let alter_sql = format!("ALTER TABLE \"{}\".\"{}\" {}", schema_name, table, sql_parts.join(", "));
+            debug!(sql = %alter_sql, "执行 PostgreSQL ALTER TABLE");
+            client.batch_execute(&alter_sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        }
+
+        // 处理独立的 DROP INDEX 变更
+        for change in &changes {
+            if let TableChange::DropIndex(name) = change {
+                let drop_idx_sql = format!("DROP INDEX \"{}\".\"{}\"", schema_name, name);
+                debug!(sql = %drop_idx_sql, "执行 PostgreSQL DROP INDEX");
+                client.batch_execute(&drop_idx_sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+            }
         }
         
         Ok(())

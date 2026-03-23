@@ -175,7 +175,7 @@
               :pagination="false"
               size="small"
               bordered
-              row-key="index_name"
+              row-key="name"
             >
               <template #bodyCell="{ column, record }">
                 <template v-if="column.dataIndex === 'operation'">
@@ -222,7 +222,7 @@
               :pagination="false"
               size="small"
               bordered
-              row-key="constraint_name"
+              row-key="name"
             >
               <template #bodyCell="{ column, record }">
                 <template v-if="column.dataIndex === 'operation'">
@@ -370,6 +370,13 @@ const tableColumns = ref<any[]>([])
 const tableIndexes = ref<any[]>([])
 const tableForeignKeys = ref<any[]>([])
 
+// 待处理的删除队列
+const pendingDeletions = reactive({
+  columns: [] as string[],
+  indexes: [] as string[],
+  foreignKeys: [] as string[],
+})
+
 // 数据类型列表
 const dataTypes = [
   'INT', 'BIGINT', 'SMALLINT', 'TINYINT',
@@ -433,20 +440,13 @@ const newForeignKey = reactive({
 // 初始化 DDL 编辑器
 async function initDdlEditor() {
   if (ddlEditor) return
-  
   await nextTick()
   if (!ddlEditorContainer.value) return
-  
   ddlEditor = monaco.editor.create(ddlEditorContainer.value, {
     value: ddlSql.value || '-- Loading DDL...\n',
-    language: 'sql',
-    theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs',
-    readOnly: true,
-    automaticLayout: true,
-    minimap: { enabled: false },
-    scrollBeyondLastLine: false,
-    fontSize: 13,
-    lineNumbers: 'on',
+    language: 'sql', theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs',
+    readOnly: true, automaticLayout: true, minimap: { enabled: false },
+    scrollBeyondLastLine: false, fontSize: 13, lineNumbers: 'on',
   })
 }
 
@@ -471,17 +471,18 @@ async function loadStructure() {
       ...col,
       length: extractLength(col.data_type),
       data_type: extractBaseType(col.data_type),
-      _modified: false,
-      _isNew: false,
-      _originalName: col.name, // 记录原始名称
+      _modified: false, _isNew: false, _originalName: col.name,
     }))
     
-    tableIndexes.value = indexes
-    tableForeignKeys.value = foreignKeys
+    tableIndexes.value = indexes.map(idx => ({ ...idx, _isNew: false }))
+    tableForeignKeys.value = foreignKeys.map(fk => ({ ...fk, _isNew: false }))
     
-    if (activeTab.value === 'ddl') {
-      loadDDL()
-    }
+    // 重置删除队列
+    pendingDeletions.columns = []
+    pendingDeletions.indexes = []
+    pendingDeletions.foreignKeys = []
+    
+    if (activeTab.value === 'ddl') loadDDL()
   }, { 
     messagePrefix: t('designer.load_fail'),
     onError: () => { loading.value = false },
@@ -506,27 +507,23 @@ function extractBaseType(dataType: string): string {
 function addColumn() {
   tableColumns.value.push({
     name: `column_${tableColumns.value.length + 1}`,
-    data_type: 'VARCHAR',
-    length: 255,
-    nullable: true,
-    is_primary_key: false,
-    is_auto_increment: false,
-    default_value: null,
-    comment: '',
-    _modified: true,
-    _isNew: true,
+    data_type: 'VARCHAR', length: 255, nullable: true,
+    is_primary_key: false, is_auto_increment: false,
+    default_value: null, comment: '', _modified: true, _isNew: true,
   })
 }
 
 // 移除列
 function removeColumn(index: number) {
+  const col = tableColumns.value[index]
   Modal.confirm({
     title: t('common.delete'),
-    content: `${t('common.delete')} "${tableColumns.value[index].name}"?`,
-    okText: t('common.delete'),
-    okType: 'danger',
-    cancelText: t('common.cancel'),
+    content: `${t('common.delete')} "${col.name}"?`,
+    okText: t('common.delete'), okType: 'danger',
     onOk() {
+      if (!col._isNew) {
+        pendingDeletions.columns.push(col._originalName || col.name)
+      }
       tableColumns.value.splice(index, 1)
     },
   })
@@ -536,12 +533,9 @@ function removeColumn(index: number) {
 function moveColumn(index: number, direction: number) {
   const newIdx = index + direction
   if (newIdx < 0 || newIdx >= tableColumns.value.length) return
-  
   const temp = tableColumns.value[index]
   tableColumns.value[index] = tableColumns.value[newIdx]
   tableColumns.value[newIdx] = temp
-  
-  // 标记为已修改
   tableColumns.value[index]._modified = true
   tableColumns.value[newIdx]._modified = true
 }
@@ -549,9 +543,7 @@ function moveColumn(index: number, direction: number) {
 // 处理主键变更
 function handlePrimaryKeyChange(record: any) {
   record._modified = true
-  if (record.is_primary_key) {
-    record.nullable = false
-  }
+  if (record.is_primary_key) record.nullable = false
 }
 
 // 保存更改
@@ -563,46 +555,49 @@ async function saveChanges() {
       saving.value = true
       try {
         const changes: any[] = []
+        
+        // 1. 处理列变更 (Add/Modify)
         for (const col of tableColumns.value) {
-          if (!col._modified) continue
-          
-          // 构造标准列信息
+          if (!col._modified && !col._isNew) continue
           const columnInfo = {
-            name: col.name,
-            data_type: col.data_type,
-            nullable: col.nullable,
-            default_value: col.default_value || null,
-            is_primary_key: col.is_primary_key,
-            is_auto_increment: col.is_auto_increment,
-            comment: col.comment || null,
+            name: col.name, data_type: col.data_type, nullable: col.nullable,
+            default_value: col.default_value || null, is_primary_key: col.is_primary_key,
+            is_auto_increment: col.is_auto_increment, comment: col.comment || null,
             character_maximum_length: col.length ? Number(col.length) : null
           }
-
           if (col._isNew) {
             changes.push({ type: 'add_column', data: columnInfo })
           } else {
-            // 注意：这里需要传入旧名，以防发生了重命名
-            changes.push({ 
-              type: 'modify_column', 
-              data: { 
-                old_name: col._originalName || col.name, 
-                new_column: columnInfo 
-              } 
-            })
+            changes.push({ type: 'modify_column', data: { old_name: col._originalName || col.name, new_column: columnInfo } })
+          }
+        }
+        
+        // 2. 处理删除变更
+        pendingDeletions.columns.forEach(name => changes.push({ type: 'drop_column', data: name }))
+        pendingDeletions.indexes.forEach(name => changes.push({ type: 'drop_index', data: name }))
+        pendingDeletions.foreignKeys.forEach(name => changes.push({ type: 'drop_foreign_key', data: name }))
+        
+        // 3. 处理新增索引
+        for (const idx of tableIndexes.value) {
+          if (idx._isNew) {
+            changes.push({ type: 'add_index', data: { ...idx, _isNew: undefined } })
+          }
+        }
+        
+        // 4. 处理新增外键
+        for (const fk of tableForeignKeys.value) {
+          if (fk._isNew) {
+            changes.push({ type: 'add_foreign_key', data: { ...fk, _isNew: undefined } })
           }
         }
         
         if (changes.length === 0) {
-          message.info(t('common.no_data'))
-          return
+          message.info(t('common.no_data')); saving.value = false; return
         }
         
         await queryApi.alterTableStructure({
-          connectionId: props.connectionId,
-          database: props.database,
-          table: props.table,
-          schema: props.schema || null,
-          changes
+          connectionId: props.connectionId, database: props.database, table: props.table,
+          schema: props.schema || null, changes
         })
         
         message.success(t('designer.save_success'))
@@ -621,14 +616,11 @@ async function loadDDL() {
   loadingDDL.value = true
   try {
     const result = await metadataApi.getCreateTableDdl({
-      connectionId: props.connectionId,
-      database: props.database,
-      table: props.table,
-      schema: props.schema,
+      connectionId: props.connectionId, database: props.database,
+      table: props.table, schema: props.schema,
     })
     const formattedResult = result.replace(/\\n/g, '\n')
     ddlSql.value = formattedResult
-    
     if (!ddlEditor) await initDdlEditor()
     if (ddlEditor) {
       ddlEditor.setValue(formattedResult)
@@ -643,128 +635,58 @@ async function loadDDL() {
 }
 
 // 复制DDL
-function copyDDL() {
-  navigator.clipboard.writeText(ddlSql.value)
-  message.success(t('common.copy') + ' ' + t('common.ok'))
-}
+function copyDDL() { navigator.clipboard.writeText(ddlSql.value); message.success(t('common.copy') + ' ' + t('common.ok')) }
 
 // 添加索引
-function addIndex() {
-  newIndex.name = ''
-  newIndex.type = 'INDEX'
-  newIndex.columns = []
-  showAddIndexDialog.value = true
-}
+function addIndex() { newIndex.name = ''; newIndex.type = 'INDEX'; newIndex.columns = []; showAddIndexDialog.value = true }
 
 // 处理添加索引
 async function handleAddIndex() {
   if (!newIndex.name || newIndex.columns.length === 0) return
-  
-  try {
-    const columns = newIndex.columns.map(c => `\`${c}\``).join(', ')
-    const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` ADD ${newIndex.type} \`${newIndex.name}\` (${columns})`
-    await queryApi.executeQuery(props.connectionId, sql, props.database)
-    message.success(t('designer.save_success'))
-    showAddIndexDialog.value = false
-    await loadStructure()
-  } catch (error: any) {
-    message.error(error)
-  }
+  tableIndexes.value.push({
+    name: newIndex.name, columns: [...newIndex.columns],
+    is_unique: newIndex.type === 'UNIQUE', is_primary: false,
+    index_type: newIndex.type, _isNew: true
+  })
+  showAddIndexDialog.value = false
 }
 
 // 删除索引
 async function removeIndex(record: any) {
-  Modal.confirm({
-    title: t('common.delete'),
-    content: `${t('common.delete')} "${record.name}"?`,
-    async onOk() {
-      try {
-        const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` DROP INDEX \`${record.name}\``
-        await queryApi.executeQuery(props.connectionId, sql, props.database)
-        message.success(t('common.delete') + ' ' + t('common.ok'))
-        await loadStructure()
-      } catch (error: any) {
-        message.error(error)
-      }
-    },
-  })
+  if (!record._isNew) pendingDeletions.indexes.push(record.name)
+  tableIndexes.value = tableIndexes.value.filter(i => i.name !== record.name)
 }
 
 // 添加外键
 function addForeignKey() {
-  newForeignKey.name = ''
-  newForeignKey.column = ''
-  newForeignKey.refTable = ''
-  newForeignKey.refColumn = ''
-  newForeignKey.onDelete = 'CASCADE'
-  newForeignKey.onUpdate = 'CASCADE'
+  newForeignKey.name = ''; newForeignKey.column = ''; newForeignKey.refTable = '';
+  newForeignKey.refColumn = ''; newForeignKey.onDelete = 'CASCADE'; newForeignKey.onUpdate = 'CASCADE';
   showAddForeignKeyDialog.value = true
 }
 
 // 处理添加外键
 async function handleAddForeignKey() {
   if (!newForeignKey.name || !newForeignKey.column || !newForeignKey.refTable || !newForeignKey.refColumn) return
-  
-  try {
-    const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` 
-      ADD CONSTRAINT \`${newForeignKey.name}\` 
-      FOREIGN KEY (\`${newForeignKey.column}\`) 
-      REFERENCES \`${newForeignKey.refTable}\`(\`${newForeignKey.refColumn}\`)
-      ON DELETE ${newForeignKey.onDelete}
-      ON UPDATE ${newForeignKey.onUpdate}`
-    
-    await queryApi.executeQuery(props.connectionId, sql, props.database)
-    message.success(t('designer.save_success'))
-    showAddForeignKeyDialog.value = false
-    await loadStructure()
-  } catch (error: any) {
-    message.error(error)
-  }
+  tableForeignKeys.value.push({
+    name: newForeignKey.name, column_name: newForeignKey.column,
+    referenced_table_name: newForeignKey.refTable, referenced_column_name: newForeignKey.refColumn,
+    update_rule: newForeignKey.onUpdate, delete_rule: newForeignKey.onDelete, _isNew: true
+  })
+  showAddForeignKeyDialog.value = false
 }
 
 // 删除外键
 async function removeForeignKey(record: any) {
-  Modal.confirm({
-    title: t('common.delete'),
-    content: `${t('common.delete')} "${record.name}"?`,
-    async onOk() {
-      try {
-        const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` DROP FOREIGN KEY \`${record.name}\``
-        await queryApi.executeQuery(props.connectionId, sql, props.database)
-        message.success(t('common.delete') + ' ' + t('common.ok'))
-        await loadStructure()
-      } catch (error: any) {
-        message.error(error)
-      }
-    },
-  })
+  if (!record._isNew) pendingDeletions.foreignKeys.push(record.name)
+  tableForeignKeys.value = tableForeignKeys.value.filter(f => f.name !== record.name)
 }
 
 // 初始加载
-onMounted(() => {
-  loadStructure()
-})
-
-onUnmounted(() => {
-  if (ddlEditor) ddlEditor.dispose()
-})
-
-// 监听 Tab 切换
-watch(activeTab, (tab) => {
-  if (tab === 'ddl') {
-    loadDDL()
-  }
-})
-
-// 监听主题变化
-watch(() => appStore.theme, (newTheme) => {
-  if (ddlEditor) monaco.editor.setTheme(newTheme === 'dark' ? 'vs-dark' : 'vs')
-})
-
-// 监听表变化
-watch(() => props.table, () => {
-  loadStructure()
-})
+onMounted(() => { loadStructure() })
+onUnmounted(() => { if (ddlEditor) ddlEditor.dispose() })
+watch(activeTab, (tab) => { if (tab === 'ddl') loadDDL() })
+watch(() => appStore.theme, (newTheme) => { if (ddlEditor) monaco.editor.setTheme(newTheme === 'dark' ? 'vs-dark' : 'vs') })
+watch(() => props.table, () => { loadStructure() })
 </script>
 
 <style scoped>

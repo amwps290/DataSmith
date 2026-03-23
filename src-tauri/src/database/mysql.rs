@@ -354,7 +354,25 @@ impl DatabaseOperations for MySqlDatabase {
                 TableChange::DropColumn(name) => {
                     sql_parts.push(format!("DROP COLUMN `{}`", name));
                 },
-                _ => {}
+                TableChange::AddIndex(idx) => {
+                    let cols = idx.columns.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
+                    let unique = if idx.is_unique { "UNIQUE " } else { "" };
+                    sql_parts.push(format!("ADD {}INDEX `{}` ({})", unique, idx.name, cols));
+                },
+                TableChange::DropIndex(name) => {
+                    sql_parts.push(format!("DROP INDEX `{}`", name));
+                },
+                TableChange::AddForeignKey(fk) => {
+                    sql_parts.push(format!(
+                        "ADD CONSTRAINT `{}` FOREIGN KEY (`{}`) REFERENCES `{}`.`{}` (`{}`) ON UPDATE {} ON DELETE {}",
+                        fk.name, fk.column_name, db_name, fk.referenced_table_name, fk.referenced_column_name,
+                        fk.update_rule.as_deref().unwrap_or("NO ACTION"),
+                        fk.delete_rule.as_deref().unwrap_or("NO ACTION")
+                    ));
+                },
+                TableChange::DropForeignKey(name) => {
+                    sql_parts.push(format!("DROP FOREIGN KEY `{}`", name));
+                },
             }
         }
 
