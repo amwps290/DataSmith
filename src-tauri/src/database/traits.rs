@@ -143,6 +143,17 @@ pub struct ExtensionInfo {
     pub comment: Option<String>,
 }
 
+/// 数据库元数据 - 外键信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForeignKeyInfo {
+    pub name: String,
+    pub column_name: String,
+    pub referenced_table_name: String,
+    pub referenced_column_name: String,
+    pub update_rule: Option<String>,
+    pub delete_rule: Option<String>,
+}
+
 /// 数据库操作结果
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -262,6 +273,11 @@ pub trait DatabaseOperations: Send + Sync {
     }
 
     async fn get_extensions(&self, _database: Option<&str>) -> DbResult<Vec<ExtensionInfo>> {
+        Ok(Vec::new())
+    }
+
+    /// 获取外键信息
+    async fn get_foreign_keys(&self, _table: &str, _schema: Option<&str>) -> DbResult<Vec<ForeignKeyInfo>> {
         Ok(Vec::new())
     }
 }

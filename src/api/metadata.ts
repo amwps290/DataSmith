@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { 
-  DatabaseInfo, TableInfo, SchemaInfo, ColumnInfo, IndexInfo, FunctionInfo, ExtensionInfo 
+  DatabaseInfo, TableInfo, SchemaInfo, ColumnInfo, IndexInfo, ForeignKeyInfo, FunctionInfo, ExtensionInfo 
 } from '@/types/database'
 
 export const metadataApi = {
@@ -77,6 +77,28 @@ export const metadataApi = {
     schema?: string | null
   }): Promise<ColumnInfo[]> {
     return invoke<ColumnInfo[]>('get_table_structure', params)
+  },
+
+  /**
+   * 获取表索引
+   */
+  async getTableIndexes(params: {
+    connectionId: string,
+    table: string,
+    schema?: string | null
+  }): Promise<IndexInfo[]> {
+    return invoke<IndexInfo[]>('get_table_indexes', params)
+  },
+
+  /**
+   * 获取表外键
+   */
+  async getTableForeignKeys(params: {
+    connectionId: string,
+    table: string,
+    schema?: string | null
+  }): Promise<ForeignKeyInfo[]> {
+    return invoke<ForeignKeyInfo[]>('get_table_foreign_keys', params)
   },
 
   /**

@@ -4,14 +4,14 @@
       <a-space>
         <template v-if="!readOnly">
           <a-button :icon="h(SaveOutlined)" @click="saveChanges" type="primary" :loading="saving">
-            保存更改
+            {{ $t('common.save') }}
           </a-button>
           <a-button :icon="h(PlusOutlined)" @click="addColumn">
-            添加列
+            {{ $t('designer.add_column') }}
           </a-button>
         </template>
         <a-button :icon="h(ReloadOutlined)" @click="loadStructure" :loading="loading">
-          刷新
+          {{ $t('common.refresh') }}
         </a-button>
         <a-divider type="vertical" />
         <a-tag color="blue">{{ database }}{{ schema ? '.' + schema : '' }}.{{ table }}</a-tag>
@@ -21,7 +21,7 @@
     <div class="designer-content">
       <a-tabs v-model:activeKey="activeTab">
         <!-- 列定义 -->
-        <a-tab-pane key="columns" tab="列">
+        <a-tab-pane key="columns" :tab="$t('designer.columns')">
           <a-table
             :columns="columnEditorColumns"
             :data-source="tableColumns"
@@ -54,7 +54,7 @@
                   <a-input
                     v-model:value="record.name"
                     size="small"
-                    placeholder="列名"
+                    :placeholder="$t('designer.column_name')"
                     @change="record._modified = true"
                   />
                 </template>
@@ -123,7 +123,7 @@
                   <a-input
                     v-model:value="record.comment"
                     size="small"
-                    placeholder="列注释"
+                    :placeholder="$t('designer.comment')"
                     @change="record._modified = true"
                   />
                 </template>
@@ -160,11 +160,11 @@
         </a-tab-pane>
 
         <!-- 索引 -->
-        <a-tab-pane key="indexes" tab="索引">
+        <a-tab-pane key="indexes" :tab="$t('designer.indexes')">
           <div style="padding: 16px;">
             <a-space v-if="!readOnly" style="margin-bottom: 16px;">
               <a-button :icon="h(PlusOutlined)" @click="addIndex" type="primary">
-                添加索引
+                {{ $t('designer.add_index') }}
               </a-button>
             </a-space>
             
@@ -186,7 +186,7 @@
                     :icon="h(DeleteOutlined)"
                     @click="removeIndex(record)"
                   >
-                    删除
+                    {{ $t('common.delete') }}
                   </a-button>
                 </template>
               </template>
@@ -195,23 +195,23 @@
         </a-tab-pane>
 
         <!-- DDL -->
-        <a-tab-pane key="ddl" tab="DDL">
+        <a-tab-pane key="ddl" :tab="$t('designer.ddl')">
           <div class="ddl-container" ref="ddlEditorContainer">
             <a-spin :spinning="loadingDDL" />
           </div>
           <div class="ddl-actions">
             <a-button :icon="h(CopyOutlined)" @click="copyDDL" size="small">
-              复制 DDL
+              {{ $t('data.copy_content') }}
             </a-button>
           </div>
         </a-tab-pane>
 
         <!-- 外键 -->
-        <a-tab-pane key="foreign_keys" tab="外键" v-if="tableForeignKeys.length > 0 || !readOnly">
+        <a-tab-pane key="foreign_keys" :tab="$t('designer.foreign_keys')" v-if="tableForeignKeys.length > 0 || !readOnly">
           <div style="padding: 16px;">
             <a-space v-if="!readOnly" style="margin-bottom: 16px;">
               <a-button :icon="h(PlusOutlined)" @click="addForeignKey" type="primary">
-                添加外键
+                {{ $t('designer.add_fk') }}
               </a-button>
             </a-space>
             
@@ -233,45 +233,11 @@
                     :icon="h(DeleteOutlined)"
                     @click="removeForeignKey(record)"
                   >
-                    删除
+                    {{ $t('common.delete') }}
                   </a-button>
                 </template>
               </template>
             </a-table>
-          </div>
-        </a-tab-pane>
-
-        <!-- 表选项 -->
-        <a-tab-pane key="options" tab="表选项" v-if="!readOnly">
-          <div style="padding: 16px;">
-            <a-form :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
-              <a-form-item label="表名">
-                <a-input v-model:value="tableOptions.tableName" />
-              </a-form-item>
-              <a-form-item label="存储引擎">
-                <a-select v-model:value="tableOptions.engine">
-                  <a-select-option value="InnoDB">InnoDB</a-select-option>
-                  <a-select-option value="MyISAM">MyISAM</a-select-option>
-                  <a-select-option value="MEMORY">MEMORY</a-select-option>
-                </a-select>
-              </a-form-item>
-              <a-form-item label="字符集">
-                <a-select v-model:value="tableOptions.charset">
-                  <a-select-option value="utf8mb4">utf8mb4</a-select-option>
-                  <a-select-option value="utf8">utf8</a-select-option>
-                  <a-select-option value="latin1">latin1</a-select-option>
-                </a-select>
-              </a-form-item>
-              <a-form-item label="排序规则">
-                <a-select v-model:value="tableOptions.collation">
-                  <a-select-option value="utf8mb4_general_ci">utf8mb4_general_ci</a-select-option>
-                  <a-select-option value="utf8mb4_unicode_ci">utf8mb4_unicode_ci</a-select-option>
-                </a-select>
-              </a-form-item>
-              <a-form-item label="表注释">
-                <a-textarea v-model:value="tableOptions.comment" :rows="3" />
-              </a-form-item>
-            </a-form>
           </div>
         </a-tab-pane>
       </a-tabs>
@@ -280,25 +246,25 @@
     <!-- 添加索引对话框 -->
     <a-modal
       v-model:open="showAddIndexDialog"
-      title="添加索引"
+      :title="$t('designer.add_index')"
       @ok="handleAddIndex"
     >
       <a-form :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
-        <a-form-item label="索引名称">
+        <a-form-item :label="$t('designer.index_name')">
           <a-input v-model:value="newIndex.name" placeholder="idx_column_name" />
         </a-form-item>
-        <a-form-item label="索引类型">
+        <a-form-item :label="$t('designer.index_type')">
           <a-select v-model:value="newIndex.type">
-            <a-select-option value="INDEX">普通索引</a-select-option>
-            <a-select-option value="UNIQUE">唯一索引</a-select-option>
-            <a-select-option value="FULLTEXT">全文索引</a-select-option>
+            <a-select-option value="INDEX">NORMAL</a-select-option>
+            <a-select-option value="UNIQUE">UNIQUE</a-select-option>
+            <a-select-option value="FULLTEXT">FULLTEXT</a-select-option>
           </a-select>
         </a-form-item>
-        <a-form-item label="索引列">
+        <a-form-item :label="$t('designer.index_columns')">
           <a-select
             v-model:value="newIndex.columns"
             mode="multiple"
-            placeholder="选择列"
+            :placeholder="$t('common.search')"
           >
             <a-select-option
               v-for="col in tableColumns"
@@ -315,14 +281,14 @@
     <!-- 添加外键对话框 -->
     <a-modal
       v-model:open="showAddForeignKeyDialog"
-      title="添加外键"
+      :title="$t('designer.add_fk')"
       @ok="handleAddForeignKey"
     >
       <a-form :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
-        <a-form-item label="外键名称">
+        <a-form-item :label="$t('designer.fk_name')">
           <a-input v-model:value="newForeignKey.name" placeholder="fk_column_name" />
         </a-form-item>
-        <a-form-item label="列">
+        <a-form-item :label="$t('designer.fk_column')">
           <a-select v-model:value="newForeignKey.column">
             <a-select-option
               v-for="col in tableColumns"
@@ -333,13 +299,13 @@
             </a-select-option>
           </a-select>
         </a-form-item>
-        <a-form-item label="引用表">
+        <a-form-item :label="$t('designer.ref_table')">
           <a-input v-model:value="newForeignKey.refTable" placeholder="referenced_table" />
         </a-form-item>
-        <a-form-item label="引用列">
+        <a-form-item :label="$t('designer.ref_column')">
           <a-input v-model:value="newForeignKey.refColumn" placeholder="referenced_column" />
         </a-form-item>
-        <a-form-item label="删除时">
+        <a-form-item :label="$t('designer.on_delete')">
           <a-select v-model:value="newForeignKey.onDelete">
             <a-select-option value="CASCADE">CASCADE</a-select-option>
             <a-select-option value="SET NULL">SET NULL</a-select-option>
@@ -347,7 +313,7 @@
             <a-select-option value="NO ACTION">NO ACTION</a-select-option>
           </a-select>
         </a-form-item>
-        <a-form-item label="更新时">
+        <a-form-item :label="$t('designer.on_update')">
           <a-select v-model:value="newForeignKey.onUpdate">
             <a-select-option value="CASCADE">CASCADE</a-select-option>
             <a-select-option value="SET NULL">SET NULL</a-select-option>
@@ -361,7 +327,7 @@
 </template>
 
 <script setup lang="ts">
-import { h, reactive, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { h, reactive, ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import * as monaco from 'monaco-editor'
 import {
   SaveOutlined,
@@ -373,9 +339,12 @@ import {
   CopyOutlined,
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
-import { invoke } from '@tauri-apps/api/core'
+import { metadataApi, queryApi } from '@/api'
 import { useAppStore } from '@/stores/app'
+import { useI18n } from 'vue-i18n'
+import { withErrorHandler } from '@/utils/errorHandler'
 
+const { t } = useI18n()
 const props = defineProps<{
   connectionId: string
   database: string
@@ -400,13 +369,6 @@ let ddlEditor: monaco.editor.IStandaloneCodeEditor | null = null
 const tableColumns = ref<any[]>([])
 const tableIndexes = ref<any[]>([])
 const tableForeignKeys = ref<any[]>([])
-const tableOptions = reactive({
-  tableName: props.table,
-  engine: 'InnoDB',
-  charset: 'utf8mb4',
-  collation: 'utf8mb4_general_ci',
-  comment: '',
-})
 
 // 数据类型列表
 const dataTypes = [
@@ -420,36 +382,36 @@ const dataTypes = [
 ]
 
 // 列编辑器列定义
-const columnEditorColumns = [
-  { title: '列名', dataIndex: 'name', width: 150 },
-  { title: '数据类型', dataIndex: 'data_type', width: 120 },
-  { title: '长度', dataIndex: 'length', width: 80 },
-  { title: '可空', dataIndex: 'nullable', width: 60 },
-  { title: '主键', dataIndex: 'is_primary_key', width: 60 },
-  { title: '自增', dataIndex: 'is_auto_increment', width: 60 },
-  { title: '默认值', dataIndex: 'default_value', width: 120 },
-  { title: '注释', dataIndex: 'comment', width: 200 },
-  { title: '操作', dataIndex: 'operation', width: 120, fixed: 'right' as const },
-]
+const columnEditorColumns = computed(() => [
+  { title: t('designer.column_name'), dataIndex: 'name', width: 150 },
+  { title: t('designer.data_type'), dataIndex: 'data_type', width: 120 },
+  { title: t('designer.length'), dataIndex: 'length', width: 80 },
+  { title: t('designer.nullable'), dataIndex: 'nullable', width: 60 },
+  { title: t('designer.pk'), dataIndex: 'is_primary_key', width: 60 },
+  { title: t('designer.auto_increment'), dataIndex: 'is_auto_increment', width: 60 },
+  { title: t('designer.default_value'), dataIndex: 'default_value', width: 120 },
+  { title: t('designer.comment'), dataIndex: 'comment', width: 200 },
+  { title: t('common.view'), dataIndex: 'operation', width: 120, fixed: 'right' as const },
+])
 
 // 索引列定义
-const indexColumns = [
-  { title: '索引名', dataIndex: 'index_name', key: 'index_name' },
-  { title: '列名', dataIndex: 'column_name', key: 'column_name' },
-  { title: '索引类型', dataIndex: 'index_type', key: 'index_type' },
-  { title: '唯一', dataIndex: 'non_unique', key: 'non_unique',
-    customRender: ({ text }: any) => text === 0 ? '是' : '否' },
-  { title: '操作', dataIndex: 'operation', width: 100 },
-]
+const indexColumns = computed(() => [
+  { title: t('designer.index_name'), dataIndex: 'name', key: 'name' },
+  { title: t('designer.index_columns'), dataIndex: 'columns', key: 'columns', customRender: ({ text }: any) => Array.isArray(text) ? text.join(', ') : text },
+  { title: t('designer.index_type'), dataIndex: 'index_type', key: 'index_type' },
+  { title: t('designer.unique'), dataIndex: 'is_unique', key: 'is_unique',
+    customRender: ({ text }: any) => text ? t('common.ok') : '-' },
+  { title: t('common.delete'), dataIndex: 'operation', width: 100 },
+])
 
 // 外键列定义
-const foreignKeyColumns = [
-  { title: '外键名', dataIndex: 'constraint_name', key: 'constraint_name' },
-  { title: '列名', dataIndex: 'column_name', key: 'column_name' },
-  { title: '引用表', dataIndex: 'referenced_table_name', key: 'referenced_table_name' },
-  { title: '引用列', dataIndex: 'referenced_column_name', key: 'referenced_column_name' },
-  { title: '操作', dataIndex: 'operation', width: 100 },
-]
+const foreignKeyColumns = computed(() => [
+  { title: t('designer.fk_name'), dataIndex: 'name', key: 'name' },
+  { title: t('designer.fk_column'), dataIndex: 'column_name', key: 'column_name' },
+  { title: t('designer.ref_table'), dataIndex: 'referenced_table_name', key: 'referenced_table_name' },
+  { title: t('designer.ref_column'), dataIndex: 'referenced_column_name', key: 'referenced_column_name' },
+  { title: t('common.delete'), dataIndex: 'operation', width: 100 },
+])
 
 // 新索引
 const newIndex = reactive({
@@ -476,7 +438,7 @@ async function initDdlEditor() {
   if (!ddlEditorContainer.value) return
   
   ddlEditor = monaco.editor.create(ddlEditorContainer.value, {
-    value: ddlSql.value || '-- 正在加载 DDL...\n',
+    value: ddlSql.value || '-- Loading DDL...\n',
     language: 'sql',
     theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs',
     readOnly: true,
@@ -490,30 +452,20 @@ async function initDdlEditor() {
 
 // 加载表结构
 async function loadStructure() {
-  loading.value = true
-  try {
-    const columnsPromise = invoke<any[]>('get_table_structure', {
+  return withErrorHandler(async () => {
+    loading.value = true
+    const params = {
       connectionId: props.connectionId,
       table: props.table,
-      schema: props.schema || props.database,
+      schema: props.schema || null,
       database: props.database,
-    })
-    
-    const indexesPromise = invoke<any[]>('get_table_indexes', {
-      connectionId: props.connectionId,
-      database: props.database,
-      table: props.table,
-      schema: props.schema,
-    })
+    }
 
-    const foreignKeysPromise = invoke<any[]>('get_table_foreign_keys', {
-      connectionId: props.connectionId,
-      database: props.database,
-      table: props.table,
-      schema: props.schema,
-    })
-
-    const [columns, indexes, foreignKeys] = await Promise.all([columnsPromise, indexesPromise, foreignKeysPromise])
+    const [columns, indexes, foreignKeys] = await Promise.all([
+      metadataApi.getTableStructure(params),
+      metadataApi.getTableIndexes(params),
+      metadataApi.getTableForeignKeys(params)
+    ])
     
     tableColumns.value = columns.map(col => ({
       ...col,
@@ -529,13 +481,13 @@ async function loadStructure() {
     if (activeTab.value === 'ddl') {
       loadDDL()
     }
-    
-    message.success('表结构加载成功')
-  } catch (error: any) {
-    message.error(`加载表结构失败: ${error}`)
-  } finally {
+  }, { 
+    messagePrefix: t('designer.load_fail'),
+    onError: () => { loading.value = false },
+    showMessage: true
+  }).finally(() => {
     loading.value = false
-  }
+  })
 }
 
 // 提取数据类型的长度
@@ -568,11 +520,11 @@ function addColumn() {
 // 移除列
 function removeColumn(index: number) {
   Modal.confirm({
-    title: '确认删除',
-    content: `确定要删除列 "${tableColumns.value[index].name}" 吗？`,
-    okText: '删除',
+    title: t('common.delete'),
+    content: `${t('common.delete')} "${tableColumns.value[index].name}"?`,
+    okText: t('common.delete'),
     okType: 'danger',
-    cancelText: '取消',
+    cancelText: t('common.cancel'),
     onOk() {
       tableColumns.value.splice(index, 1)
     },
@@ -581,22 +533,21 @@ function removeColumn(index: number) {
 
 // 移动列
 function moveColumn(index: number, direction: number) {
-  const newIndex = index + direction
-  if (newIndex < 0 || newIndex >= tableColumns.value.length) return
+  const newIdx = index + direction
+  if (newIdx < 0 || newIdx >= tableColumns.value.length) return
   
   const temp = tableColumns.value[index]
-  tableColumns.value[index] = tableColumns.value[newIndex]
-  tableColumns.value[newIndex] = temp
+  tableColumns.value[index] = tableColumns.value[newIdx]
+  tableColumns.value[newIdx] = temp
   
   // 标记为已修改
   tableColumns.value[index]._modified = true
-  tableColumns.value[newIndex]._modified = true
+  tableColumns.value[newIdx]._modified = true
 }
 
 // 处理主键变更
 function handlePrimaryKeyChange(record: any) {
   record._modified = true
-  // 如果设置为主键，自动设置为非空
   if (record.is_primary_key) {
     record.nullable = false
   }
@@ -604,41 +555,40 @@ function handlePrimaryKeyChange(record: any) {
 
 // 保存更改
 async function saveChanges() {
-  saving.value = true
-  try {
-    const alterStatements: string[] = []
-    
-    for (const col of tableColumns.value) {
-      if (!col._modified) continue
-      
-      const columnDef = buildColumnDefinition(col)
-      
-      if (col._isNew) {
-        alterStatements.push(`ADD COLUMN ${columnDef}`)
-      } else {
-        alterStatements.push(`MODIFY COLUMN ${columnDef}`)
+  Modal.confirm({
+    title: t('common.save'),
+    content: t('designer.confirm_save'),
+    async onOk() {
+      saving.value = true
+      try {
+        const alterStatements: string[] = []
+        for (const col of tableColumns.value) {
+          if (!col._modified) continue
+          const columnDef = buildColumnDefinition(col)
+          if (col._isNew) {
+            alterStatements.push(`ADD COLUMN ${columnDef}`)
+          } else {
+            alterStatements.push(`MODIFY COLUMN ${columnDef}`)
+          }
+        }
+        
+        if (alterStatements.length === 0) {
+          message.info(t('common.no_data'))
+          return
+        }
+        
+        const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` ${alterStatements.join(', ')}`
+        await queryApi.executeQuery(props.connectionId, sql, props.database)
+        
+        message.success(t('designer.save_success'))
+        await loadStructure()
+      } catch (error: any) {
+        message.error(`${t('common.fail')}: ${error}`)
+      } finally {
+        saving.value = false
       }
     }
-    
-    if (alterStatements.length === 0) {
-      message.info('没有需要保存的更改')
-      return
-    }
-    
-    const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` ${alterStatements.join(', ')}`
-    
-    await invoke('execute_query', {
-      connectionId: props.connectionId,
-      sql,
-    })
-    
-    message.success('表结构已保存')
-    await loadStructure()
-  } catch (error: any) {
-    message.error(`保存失败: ${error}`)
-  } finally {
-    saving.value = false
-  }
+  })
 }
 
 // 构建列定义
@@ -664,27 +614,23 @@ function buildColumnDefinition(col: any): string {
 async function loadDDL() {
   loadingDDL.value = true
   try {
-    const result = await invoke<string>('get_create_table_ddl', {
+    const result = await metadataApi.getCreateTableDdl({
       connectionId: props.connectionId,
       database: props.database,
       table: props.table,
       schema: props.schema,
     })
-    // 处理可能出现的字面量 \n
     const formattedResult = result.replace(/\\n/g, '\n')
     ddlSql.value = formattedResult
     
-    if (!ddlEditor) {
-      await initDdlEditor()
-    }
-    
+    if (!ddlEditor) await initDdlEditor()
     if (ddlEditor) {
       ddlEditor.setValue(formattedResult)
       nextTick(() => ddlEditor?.layout())
     }
   } catch (error: any) {
-    message.error(`获取DDL失败: ${error}`)
-    if (ddlEditor) ddlEditor.setValue(`-- 获取 DDL 失败: ${error}`)
+    message.error(`${t('designer.ddl')} ${t('common.fail')}: ${error}`)
+    if (ddlEditor) ddlEditor.setValue(`-- Error: ${error}`)
   } finally {
     loadingDDL.value = false
   }
@@ -693,7 +639,7 @@ async function loadDDL() {
 // 复制DDL
 function copyDDL() {
   navigator.clipboard.writeText(ddlSql.value)
-  message.success('DDL已复制到剪贴板')
+  message.success(t('common.copy') + ' ' + t('common.ok'))
 }
 
 // 添加索引
@@ -706,47 +652,33 @@ function addIndex() {
 
 // 处理添加索引
 async function handleAddIndex() {
-  if (!newIndex.name || newIndex.columns.length === 0) {
-    message.error('请填写索引名称和选择列')
-    return
-  }
+  if (!newIndex.name || newIndex.columns.length === 0) return
   
   try {
     const columns = newIndex.columns.map(c => `\`${c}\``).join(', ')
     const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` ADD ${newIndex.type} \`${newIndex.name}\` (${columns})`
-    
-    await invoke('execute_query', {
-      connectionId: props.connectionId,
-      sql,
-    })
-    
-    message.success('索引已添加')
+    await queryApi.executeQuery(props.connectionId, sql, props.database)
+    message.success(t('designer.save_success'))
     showAddIndexDialog.value = false
     await loadStructure()
   } catch (error: any) {
-    message.error(`添加索引失败: ${error}`)
+    message.error(error)
   }
 }
 
 // 删除索引
 async function removeIndex(record: any) {
   Modal.confirm({
-    title: '确认删除',
-    content: `确定要删除索引 "${record.index_name}" 吗？`,
-    okText: '删除',
-    okType: 'danger',
-    cancelText: '取消',
+    title: t('common.delete'),
+    content: `${t('common.delete')} "${record.name}"?`,
     async onOk() {
       try {
-        const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` DROP INDEX \`${record.index_name}\``
-        await invoke('execute_query', {
-          connectionId: props.connectionId,
-          sql,
-        })
-        message.success('索引已删除')
+        const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` DROP INDEX \`${record.name}\``
+        await queryApi.executeQuery(props.connectionId, sql, props.database)
+        message.success(t('common.delete') + ' ' + t('common.ok'))
         await loadStructure()
       } catch (error: any) {
-        message.error(`删除索引失败: ${error}`)
+        message.error(error)
       }
     },
   })
@@ -765,10 +697,7 @@ function addForeignKey() {
 
 // 处理添加外键
 async function handleAddForeignKey() {
-  if (!newForeignKey.name || !newForeignKey.column || !newForeignKey.refTable || !newForeignKey.refColumn) {
-    message.error('请填写所有必填字段')
-    return
-  }
+  if (!newForeignKey.name || !newForeignKey.column || !newForeignKey.refTable || !newForeignKey.refColumn) return
   
   try {
     const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` 
@@ -778,38 +707,28 @@ async function handleAddForeignKey() {
       ON DELETE ${newForeignKey.onDelete}
       ON UPDATE ${newForeignKey.onUpdate}`
     
-    await invoke('execute_query', {
-      connectionId: props.connectionId,
-      sql,
-    })
-    
-    message.success('外键已添加')
+    await queryApi.executeQuery(props.connectionId, sql, props.database)
+    message.success(t('designer.save_success'))
     showAddForeignKeyDialog.value = false
     await loadStructure()
   } catch (error: any) {
-    message.error(`添加外键失败: ${error}`)
+    message.error(error)
   }
 }
 
 // 删除外键
 async function removeForeignKey(record: any) {
   Modal.confirm({
-    title: '确认删除',
-    content: `确定要删除外键 "${record.constraint_name}" 吗？`,
-    okText: '删除',
-    okType: 'danger',
-    cancelText: '取消',
+    title: t('common.delete'),
+    content: `${t('common.delete')} "${record.name}"?`,
     async onOk() {
       try {
-        const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` DROP FOREIGN KEY \`${record.constraint_name}\``
-        await invoke('execute_query', {
-          connectionId: props.connectionId,
-          sql,
-        })
-        message.success('外键已删除')
+        const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` DROP FOREIGN KEY \`${record.name}\``
+        await queryApi.executeQuery(props.connectionId, sql, props.database)
+        message.success(t('common.delete') + ' ' + t('common.ok'))
         await loadStructure()
       } catch (error: any) {
-        message.error(`删除外键失败: ${error}`)
+        message.error(error)
       }
     },
   })
@@ -846,7 +765,6 @@ watch(() => props.table, () => {
 .table-designer { height: 100%; display: flex; flex-direction: column; }
 .designer-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #e8e8e8; background: #fafafa; }
 .dark-mode .designer-toolbar { background: #1f1f1f; border-bottom-color: #303030; }
-.toolbar-info { display: flex; gap: 12px; align-items: center; user-select: none; }
 .designer-content { flex: 1; overflow: hidden; }
 .designer-content :deep(.ant-tabs) { height: 100%; }
 .designer-content :deep(.ant-tabs-content) { height: 100%; }

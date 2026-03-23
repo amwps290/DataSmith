@@ -333,6 +333,48 @@ impl DatabaseOperations for PostgreSqlDatabase {
         Ok(map.into_values().collect())
     }
 
+    async fn get_foreign_keys(&self, table: &str, schema: Option<&str>) -> DbResult<Vec<ForeignKeyInfo>> {
+        let state = self.state.lock().await;
+        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let schema_name = schema.unwrap_or("public");
+        
+        let sql = "
+            SELECT
+                conname AS constraint_name,
+                a.attname AS column_name,
+                rt.relname AS referenced_table_name,
+                ra.attname AS referenced_column_name,
+                confupdtype AS update_rule,
+                confdeltype AS delete_rule
+            FROM pg_constraint c
+            JOIN pg_namespace n ON n.oid = c.connamespace
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
+            JOIN pg_class rt ON rt.oid = c.confrelid
+            JOIN pg_attribute ra ON ra.attrelid = rt.oid AND ra.attnum = ANY(c.confkey)
+            WHERE c.contype = 'f' AND t.relname = $1 AND n.nspname = $2
+        ";
+        
+        let rows = client.query(sql, &[&table, &schema_name]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        
+        Ok(rows.into_iter().map(|r| {
+            let u_rule: i8 = r.get(4);
+            let d_rule: i8 = r.get(5);
+            ForeignKeyInfo {
+                name: r.get(0),
+                column_name: r.get(1),
+                referenced_table_name: r.get(2),
+                referenced_column_name: r.get(3),
+                update_rule: Some(match u_rule as u8 as char {
+                    'c' => "CASCADE", 'n' => "SET NULL", 'd' => "SET DEFAULT", 'r' => "RESTRICT", _ => "NO ACTION"
+                }.into()),
+                delete_rule: Some(match d_rule as u8 as char {
+                    'c' => "CASCADE", 'n' => "SET NULL", 'd' => "SET DEFAULT", 'r' => "RESTRICT", _ => "NO ACTION"
+                }.into()),
+            }
+        }).collect())
+    }
+
     async fn get_table_ddl(&self, table: &str, schema: Option<&str>) -> DbResult<String> {
         let schema_name = schema.unwrap_or("public");
         let columns = self.get_table_structure(table, Some(schema_name), None).await?;

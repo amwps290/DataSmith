@@ -226,8 +226,6 @@ impl DatabaseOperations for MySqlDatabase {
         let mut where_parts = Vec::new();
         let mut p_vec = Vec::new();
         
-        // MySQL 驱动的 Params 比较特别，我们可以用命名参数或者位置参数
-        // 这里为了简单，我们先手动构建带占位符的 SQL 和参数列表
         p_vec.push(mysql_async::Value::from(value));
 
         for (col, val) in where_conditions {
@@ -248,9 +246,7 @@ impl DatabaseOperations for MySqlDatabase {
         }
         
         let params = mysql_async::Params::Positional(p_vec);
-
         let sql = format!("UPDATE `{}` SET `{}` = ? WHERE {}", table, column, where_parts.join(" AND "));
-        debug!(sql = %sql, "执行 MySQL 参数化更新");
         
         conn.exec_drop(sql, params).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(())
@@ -277,8 +273,6 @@ impl DatabaseOperations for MySqlDatabase {
         }
 
         let sql = format!("DELETE FROM `{}` WHERE {}", table, where_parts.join(" AND "));
-        debug!(sql = %sql, "执行 MySQL 参数化删除");
-        
         conn.exec_drop(sql, mysql_async::Params::Positional(p_vec)).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(())
     }
@@ -306,12 +300,33 @@ impl DatabaseOperations for MySqlDatabase {
         Ok(map.into_values().collect())
     }
 
+    async fn get_foreign_keys(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<ForeignKeyInfo>> {
+        let sql = format!(
+            "SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_NAME = '{}' AND REFERENCED_TABLE_NAME IS NOT NULL",
+            table
+        );
+        let results = self.execute_query(&sql, None).await?;
+        let mut fks = Vec::new();
+        if let Some(res) = results.first() {
+            for r in &res.rows {
+                fks.push(ForeignKeyInfo {
+                    name: r.get("CONSTRAINT_NAME").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                    column_name: r.get("COLUMN_NAME").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                    referenced_table_name: r.get("REFERENCED_TABLE_NAME").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                    referenced_column_name: r.get("REFERENCED_COLUMN_NAME").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                    update_rule: Some("CASCADE".into()),
+                    delete_rule: Some("CASCADE".into()),
+                });
+            }
+        }
+        Ok(fks)
+    }
+
     async fn get_table_ddl(&self, table: &str, _schema: Option<&str>) -> DbResult<String> {
         let sql = format!("SHOW CREATE TABLE `{}`", table);
         let results = self.execute_query(&sql, None).await?;
         if let Some(res) = results.first() {
             if let Some(row) = res.rows.first() {
-                // MySQL 返回两列：Table 和 Create Table
                 return Ok(row.get("Create Table").or_else(|| row.values().nth(1)).and_then(|v| v.as_str()).unwrap_or("").to_string());
             }
         }

@@ -1,4 +1,4 @@
-use crate::database::{ColumnInfo, IndexInfo, DatabaseInfo, TableInfo, SchemaInfo, FunctionInfo, ExtensionInfo};
+use crate::database::{ColumnInfo, IndexInfo, ForeignKeyInfo, DatabaseInfo, TableInfo, SchemaInfo, FunctionInfo, ExtensionInfo};
 use crate::AppState;
 use tauri::State;
 use serde_json::Value;
@@ -66,6 +66,11 @@ pub async fn get_table_structure(connection_id: String, table: String, database:
 #[tauri::command]
 pub async fn get_table_indexes(connection_id: String, table: String, schema: Option<String>, state: State<'_, AppState>) -> Result<Vec<IndexInfo>, String> {
     state.connection_manager.get_indexes(&connection_id, &table, schema.as_deref()).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_table_foreign_keys(connection_id: String, table: String, schema: Option<String>, state: State<'_, AppState>) -> Result<Vec<ForeignKeyInfo>, String> {
+    state.connection_manager.get_foreign_keys(&connection_id, &table, schema.as_deref()).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]

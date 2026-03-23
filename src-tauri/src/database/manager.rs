@@ -208,6 +208,11 @@ impl ConnectionManager {
         db.get_indexes(table, schema).await
     }
 
+    pub async fn get_foreign_keys(&self, composite_id: &str, table: &str, schema: Option<&str>) -> DbResult<Vec<ForeignKeyInfo>> {
+        let db = self.get_db_ref(composite_id).await?;
+        db.get_foreign_keys(table, schema).await
+    }
+
     pub async fn get_schema_indexes(&self, composite_id: &str, database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
         let db = self.get_db_ref(composite_id).await?;
         self.ensure_db_context(db.clone(), database).await?;

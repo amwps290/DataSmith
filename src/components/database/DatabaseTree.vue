@@ -272,6 +272,21 @@ async function handleMenuClick({ key }: any) {
   else if (key === 'open-scripts') { showScriptsModal.value = true; loadingScripts.value = true; try { savedScripts.value = await invoke<any[]>('list_db_scripts', { connectionId: props.connectionId, database: selectedNode.value.metadata.name || selectedNode.value.metadata.database }) } finally { loadingScripts.value = false } }
   else if (key === 'refresh') handleRefreshNode(selectedNode.value)
   else if (key === 'copy-name') { navigator.clipboard.writeText(selectedNode.value.title); message.success(t('common.copy')) }
+  else if (key === 'view-data') {
+    emit('table-selected', { 
+      database: selectedNode.value.metadata.database, 
+      table: selectedNode.value.metadata.name || selectedNode.value.title, 
+      schema: selectedNode.value.metadata.schema, 
+      metadata: selectedNode.value.metadata 
+    })
+  }
+  else if (key === 'design-table') {
+    emit('design-table', { 
+      database: selectedNode.value.metadata.database, 
+      table: selectedNode.value.metadata.name || selectedNode.value.title, 
+      schema: selectedNode.value.metadata.schema 
+    })
+  }
   else if (key === 'view-ddl') {
     try {
       const ddl = await invoke<string>('get_create_table_ddl', { 

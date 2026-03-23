@@ -214,6 +214,25 @@ impl DatabaseOperations for SqliteDatabase {
         Ok(indexes)
     }
 
+    async fn get_foreign_keys(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<ForeignKeyInfo>> {
+        let sql = format!("PRAGMA foreign_key_list('{}')", table.replace("'", "''"));
+        let results = self.execute_query(&sql, None).await?;
+        let mut fks = Vec::new();
+        if let Some(res) = results.first() {
+            for r in &res.rows {
+                fks.push(ForeignKeyInfo {
+                    name: format!("fk_{}_{}", table, r.get("from").and_then(|v| v.as_str()).unwrap_or("")),
+                    column_name: r.get("from").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                    referenced_table_name: r.get("table").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                    referenced_column_name: r.get("to").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                    update_rule: r.get("on_update").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    delete_rule: r.get("on_delete").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                });
+            }
+        }
+        Ok(fks)
+    }
+
     async fn get_table_ddl(&self, table: &str, _schema: Option<&str>) -> DbResult<String> {
         let sql = format!("SELECT sql FROM sqlite_master WHERE name = '{}'", table.replace("'", "''"));
         let results = self.execute_query(&sql, None).await?;

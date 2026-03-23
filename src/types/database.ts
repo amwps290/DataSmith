@@ -91,6 +91,18 @@ export interface IndexInfo {
 }
 
 /**
+ * 外键信息
+ */
+export interface ForeignKeyInfo {
+  name: string
+  column_name: string
+  referenced_table_name: string
+  referenced_column_name: string
+  update_rule?: string
+  delete_rule?: string
+}
+
+/**
  * Schema 信息
  */
 export interface SchemaInfo {
@@ -158,4 +170,3 @@ export interface DatabaseTreeNode {
   isLeaf?: boolean
   metadata?: any
 }
-
