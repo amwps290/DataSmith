@@ -87,6 +87,22 @@ pub async fn execute_query_batch(
 }
 
 #[tauri::command]
+pub async fn alter_table_structure(
+    connection_id: String,
+    database: String,
+    table: String,
+    schema: Option<String>,
+    changes: Vec<crate::database::TableChange>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let manager = &state.connection_manager;
+    manager
+        .alter_table(&connection_id, &table, schema.as_deref(), Some(&database), changes)
+        .await
+        .to_cmd_result()
+}
+
+#[tauri::command]
 pub async fn update_table_data(
     connection_id: String,
     database: String,

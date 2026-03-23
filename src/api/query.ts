@@ -72,5 +72,18 @@ export const queryApi = {
     whereConditions: Record<string, any>
   }): Promise<void> {
     return invoke('delete_table_data', params)
+  },
+
+  /**
+   * 变更表结构
+   */
+  async alterTableStructure(params: {
+    connectionId: string,
+    database: string,
+    table: string,
+    schema?: string | null,
+    changes: Array<{ type: string, data: any }>
+  }): Promise<void> {
+    return invoke('alter_table_structure', params)
   }
 }

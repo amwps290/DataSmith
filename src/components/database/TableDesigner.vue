@@ -473,6 +473,7 @@ async function loadStructure() {
       data_type: extractBaseType(col.data_type),
       _modified: false,
       _isNew: false,
+      _originalName: col.name, // 记录原始名称
     }))
     
     tableIndexes.value = indexes
@@ -561,24 +562,48 @@ async function saveChanges() {
     async onOk() {
       saving.value = true
       try {
-        const alterStatements: string[] = []
+        const changes: any[] = []
         for (const col of tableColumns.value) {
           if (!col._modified) continue
-          const columnDef = buildColumnDefinition(col)
+          
+          // 构造标准列信息
+          const columnInfo = {
+            name: col.name,
+            data_type: col.data_type,
+            nullable: col.nullable,
+            default_value: col.default_value || null,
+            is_primary_key: col.is_primary_key,
+            is_auto_increment: col.is_auto_increment,
+            comment: col.comment || null,
+            character_maximum_length: col.length ? Number(col.length) : null
+          }
+
           if (col._isNew) {
-            alterStatements.push(`ADD COLUMN ${columnDef}`)
+            changes.push({ type: 'add_column', data: columnInfo })
           } else {
-            alterStatements.push(`MODIFY COLUMN ${columnDef}`)
+            // 注意：这里需要传入旧名，以防发生了重命名
+            changes.push({ 
+              type: 'modify_column', 
+              data: { 
+                old_name: col._originalName || col.name, 
+                new_column: columnInfo 
+              } 
+            })
           }
         }
         
-        if (alterStatements.length === 0) {
+        if (changes.length === 0) {
           message.info(t('common.no_data'))
           return
         }
         
-        const sql = `ALTER TABLE \`${props.database}\`.\`${props.table}\` ${alterStatements.join(', ')}`
-        await queryApi.executeQuery(props.connectionId, sql, props.database)
+        await queryApi.alterTableStructure({
+          connectionId: props.connectionId,
+          database: props.database,
+          table: props.table,
+          schema: props.schema || null,
+          changes
+        })
         
         message.success(t('designer.save_success'))
         await loadStructure()
@@ -589,25 +614,6 @@ async function saveChanges() {
       }
     }
   })
-}
-
-// 构建列定义
-function buildColumnDefinition(col: any): string {
-  let def = `\`${col.name}\``
-  if (col.length && ['VARCHAR', 'CHAR'].includes(col.data_type)) {
-    def += ` ${col.data_type}(${col.length})`
-  } else {
-    def += ` ${col.data_type}`
-  }
-  def += col.nullable ? ' NULL' : ' NOT NULL'
-  if (col.is_auto_increment) def += ' AUTO_INCREMENT'
-  if (col.default_value !== null && col.default_value !== undefined && col.default_value !== '') {
-    def += ` DEFAULT '${col.default_value}'`
-  }
-  if (col.comment) {
-    def += ` COMMENT '${col.comment.replace(/'/g, "''")}'`
-  }
-  return def
 }
 
 // 查看DDL

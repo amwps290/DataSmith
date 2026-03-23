@@ -322,6 +322,51 @@ impl DatabaseOperations for MySqlDatabase {
         Ok(fks)
     }
 
+    async fn alter_table(&self, table: &str, _schema: Option<&str>, database: Option<&str>, changes: Vec<TableChange>) -> DbResult<()> {
+        let state = self.state.lock().await;
+        let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+        let db_name = database.unwrap_or("");
+
+        let mut sql_parts = Vec::new();
+        for change in changes {
+            match change {
+                TableChange::AddColumn(col) => {
+                    let mut part = format!("ADD COLUMN `{}` {}", col.name, col.data_type);
+                    if let Some(l) = col.character_maximum_length { part.push_str(&format!("({})", l)); }
+                    if !col.nullable { part.push_str(" NOT NULL"); }
+                    if let Some(ref d) = col.default_value { part.push_str(&format!(" DEFAULT '{}'", d.replace("'", "''"))); }
+                    if let Some(ref c) = col.comment { part.push_str(&format!(" COMMENT '{}'", c.replace("'", "''"))); }
+                    sql_parts.push(part);
+                },
+                TableChange::ModifyColumn { old_name, new_column } => {
+                    let mut part = if old_name != new_column.name {
+                        format!("CHANGE COLUMN `{}` `{}` {}", old_name, new_column.name, new_column.data_type)
+                    } else {
+                        format!("MODIFY COLUMN `{}` {}", new_column.name, new_column.data_type)
+                    };
+                    if let Some(l) = new_column.character_maximum_length { part.push_str(&format!("({})", l)); }
+                    if !new_column.nullable { part.push_str(" NOT NULL"); }
+                    if let Some(ref d) = new_column.default_value { part.push_str(&format!(" DEFAULT '{}'", d.replace("'", "''"))); }
+                    if let Some(ref c) = new_column.comment { part.push_str(&format!(" COMMENT '{}'", c.replace("'", "''"))); }
+                    sql_parts.push(part);
+                },
+                TableChange::DropColumn(name) => {
+                    sql_parts.push(format!("DROP COLUMN `{}`", name));
+                },
+                _ => {}
+            }
+        }
+
+        if !sql_parts.is_empty() {
+            let sql = format!("ALTER TABLE `{}`.`{}` {}", db_name, table, sql_parts.join(", "));
+            debug!(sql = %sql, "执行 MySQL ALTER TABLE");
+            conn.query_drop(&sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        }
+        
+        Ok(())
+    }
+
     async fn get_table_ddl(&self, table: &str, _schema: Option<&str>) -> DbResult<String> {
         let sql = format!("SHOW CREATE TABLE `{}`", table);
         let results = self.execute_query(&sql, None).await?;

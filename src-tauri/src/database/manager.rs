@@ -237,6 +237,12 @@ impl ConnectionManager {
         db.get_extensions(database).await
     }
 
+    pub async fn alter_table(&self, composite_id: &str, table: &str, schema: Option<&str>, database: Option<&str>, changes: Vec<TableChange>) -> DbResult<()> {
+        let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
+        db.alter_table(table, schema, database, changes).await
+    }
+
     pub async fn explain_query(&self, composite_id: &str, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         let db = self.get_db_ref(composite_id).await?;
         self.ensure_db_context(db.clone(), database).await?;

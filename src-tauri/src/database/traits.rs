@@ -154,6 +154,26 @@ pub struct ForeignKeyInfo {
     pub delete_rule: Option<String>,
 }
 
+/// 表结构变更类型
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data")]
+pub enum TableChange {
+    #[serde(rename = "add_column")]
+    AddColumn(ColumnInfo),
+    #[serde(rename = "modify_column")]
+    ModifyColumn { old_name: String, new_column: ColumnInfo },
+    #[serde(rename = "drop_column")]
+    DropColumn(String),
+    #[serde(rename = "add_index")]
+    AddIndex(IndexInfo),
+    #[serde(rename = "drop_index")]
+    DropIndex(String),
+    #[serde(rename = "add_foreign_key")]
+    AddForeignKey(ForeignKeyInfo),
+    #[serde(rename = "drop_foreign_key")]
+    DropForeignKey(String),
+}
+
 /// 数据库操作结果
 pub type DbResult<T> = Result<T, DbError>;
 
@@ -279,5 +299,10 @@ pub trait DatabaseOperations: Send + Sync {
     /// 获取外键信息
     async fn get_foreign_keys(&self, _table: &str, _schema: Option<&str>) -> DbResult<Vec<ForeignKeyInfo>> {
         Ok(Vec::new())
+    }
+
+    /// 变更表结构
+    async fn alter_table(&self, _table: &str, _schema: Option<&str>, _database: Option<&str>, _changes: Vec<TableChange>) -> DbResult<()> {
+        Err(DbError::Other("该数据库类型不支持在线表结构变更".into()))
     }
 }

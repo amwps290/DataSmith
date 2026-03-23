@@ -375,6 +375,47 @@ impl DatabaseOperations for PostgreSqlDatabase {
         }).collect())
     }
 
+    async fn alter_table(&self, table: &str, schema: Option<&str>, _database: Option<&str>, changes: Vec<TableChange>) -> DbResult<()> {
+        let state = self.state.lock().await;
+        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let schema_name = schema.unwrap_or("public");
+        
+        let mut sql_parts = Vec::new();
+        for change in changes {
+            match change {
+                TableChange::AddColumn(col) => {
+                    let mut part = format!("ADD COLUMN \"{}\" {}", col.name, col.data_type);
+                    if !col.nullable { part.push_str(" NOT NULL"); }
+                    if let Some(ref d) = col.default_value { part.push_str(&format!(" DEFAULT {}", d)); }
+                    sql_parts.push(part);
+                },
+                TableChange::ModifyColumn { old_name, new_column } => {
+                    if old_name != new_column.name {
+                        sql_parts.push(format!("RENAME COLUMN \"{}\" TO \"{}\"", old_name, new_column.name));
+                    }
+                    sql_parts.push(format!("ALTER COLUMN \"{}\" TYPE {}", new_column.name, new_column.data_type));
+                    if new_column.nullable {
+                        sql_parts.push(format!("ALTER COLUMN \"{}\" DROP NOT NULL", new_column.name));
+                    } else {
+                        sql_parts.push(format!("ALTER COLUMN \"{}\" SET NOT NULL", new_column.name));
+                    }
+                },
+                TableChange::DropColumn(name) => {
+                    sql_parts.push(format!("DROP COLUMN \"{}\"", name));
+                },
+                _ => {}
+            }
+        }
+
+        if !sql_parts.is_empty() {
+            let sql = format!("ALTER TABLE \"{}\".\"{}\" {}", schema_name, table, sql_parts.join(", "));
+            debug!(sql = %sql, "执行 PostgreSQL ALTER TABLE");
+            client.batch_execute(&sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        }
+        
+        Ok(())
+    }
+
     async fn get_table_ddl(&self, table: &str, schema: Option<&str>) -> DbResult<String> {
         let schema_name = schema.unwrap_or("public");
         let columns = self.get_table_structure(table, Some(schema_name), None).await?;

@@ -233,6 +233,27 @@ impl DatabaseOperations for SqliteDatabase {
         Ok(fks)
     }
 
+    async fn alter_table(&self, table: &str, _schema: Option<&str>, _database: Option<&str>, changes: Vec<TableChange>) -> DbResult<()> {
+        let state = self.state.lock().await;
+        let conn = state.conn.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+
+        for change in changes {
+            match change {
+                TableChange::AddColumn(col) => {
+                    let mut sql = format!("ALTER TABLE \"{}\" ADD COLUMN \"{}\" {}", table, col.name, col.data_type);
+                    if !col.nullable { sql.push_str(" NOT NULL"); }
+                    if let Some(ref d) = col.default_value { sql.push_str(&format!(" DEFAULT {}", d)); }
+                    
+                    debug!(sql = %sql, "执行 SQLite ALTER TABLE ADD COLUMN");
+                    conn.execute(&sql, []).map_err(|e| DbError::QueryFailed(e.to_string()))?;
+                },
+                _ => return Err(DbError::Other("SQLite 暂仅支持添加列操作。修改/删除列需要重构表，暂未实现。".into())),
+            }
+        }
+        
+        Ok(())
+    }
+
     async fn get_table_ddl(&self, table: &str, _schema: Option<&str>) -> DbResult<String> {
         let sql = format!("SELECT sql FROM sqlite_master WHERE name = '{}'", table.replace("'", "''"));
         let results = self.execute_query(&sql, None).await?;

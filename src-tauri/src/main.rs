@@ -45,6 +45,7 @@ fn main() {
             commands::query::explain_query,
             commands::query::beautify_sql,
             commands::query::execute_query_batch,
+            commands::query::alter_table_structure,
             commands::query::update_table_data,
             commands::query::insert_table_data,
             commands::query::delete_table_data,
