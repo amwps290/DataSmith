@@ -1,43 +1,43 @@
 <template>
   <a-modal
     v-model:open="visible"
-    title="新建表"
+    :title="$t('dialog.create_table.title')"
     width="900px"
     @ok="handleCreate"
     @cancel="handleCancel"
     :confirm-loading="creating"
   >
     <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 20 }">
-      <a-form-item label="表名" required>
-        <a-input v-model:value="tableName" placeholder="请输入表名" />
+      <a-form-item :label="$t('dialog.create_table.table_name')" required>
+        <a-input v-model:value="tableName" :placeholder="$t('dialog.create_table.table_name_placeholder')" />
       </a-form-item>
-      
-      <a-form-item label="字符集">
-        <a-select v-model:value="charset" placeholder="选择字符集">
+
+      <a-form-item :label="$t('dialog.create_table.charset')">
+        <a-select v-model:value="charset" :placeholder="$t('dialog.create_table.charset_placeholder')">
           <a-select-option value="utf8mb4">utf8mb4</a-select-option>
           <a-select-option value="utf8">utf8</a-select-option>
           <a-select-option value="latin1">latin1</a-select-option>
         </a-select>
       </a-form-item>
-      
-      <a-form-item label="存储引擎">
-        <a-select v-model:value="engine" placeholder="选择存储引擎">
+
+      <a-form-item :label="$t('dialog.create_table.engine')">
+        <a-select v-model:value="engine" :placeholder="$t('dialog.create_table.engine_placeholder')">
           <a-select-option value="InnoDB">InnoDB</a-select-option>
           <a-select-option value="MyISAM">MyISAM</a-select-option>
         </a-select>
       </a-form-item>
-      
-      <a-form-item label="表注释">
-        <a-input v-model:value="comment" placeholder="请输入表注释" />
+
+      <a-form-item :label="$t('dialog.create_table.table_comment')">
+        <a-input v-model:value="comment" :placeholder="$t('dialog.create_table.table_comment_placeholder')" />
       </a-form-item>
-      
-      <a-divider>字段定义</a-divider>
-      
+
+      <a-divider>{{ $t('dialog.create_table.column_definition') }}</a-divider>
+
       <a-button type="dashed" block @click="addColumn" style="margin-bottom: 12px">
         <PlusOutlined />
-        添加字段
+        {{ $t('dialog.create_table.add_column') }}
       </a-button>
-      
+
       <a-table
         :columns="columnTableColumns"
         :data-source="columns"
@@ -47,7 +47,7 @@
       >
         <template #bodyCell="{ column, record, index }">
           <template v-if="column.key === 'name'">
-            <a-input v-model:value="record.name" placeholder="字段名" size="small" />
+            <a-input v-model:value="record.name" :placeholder="$t('dialog.create_table.column_name_placeholder')" size="small" />
           </template>
           <template v-else-if="column.key === 'type'">
             <a-select v-model:value="record.type" size="small" style="width: 100%">
@@ -62,7 +62,7 @@
             </a-select>
           </template>
           <template v-else-if="column.key === 'length'">
-            <a-input v-model:value="record.length" placeholder="长度" size="small" />
+            <a-input v-model:value="record.length" :placeholder="$t('dialog.create_table.column_length_placeholder')" size="small" />
           </template>
           <template v-else-if="column.key === 'nullable'">
             <a-checkbox v-model:checked="record.nullable" />
@@ -74,14 +74,14 @@
             <a-checkbox v-model:checked="record.autoIncrement" />
           </template>
           <template v-else-if="column.key === 'defaultValue'">
-            <a-input v-model:value="record.defaultValue" placeholder="默认值" size="small" />
+            <a-input v-model:value="record.defaultValue" :placeholder="$t('dialog.create_table.column_default_placeholder')" size="small" />
           </template>
           <template v-else-if="column.key === 'comment'">
-            <a-input v-model:value="record.comment" placeholder="注释" size="small" />
+            <a-input v-model:value="record.comment" :placeholder="$t('dialog.create_table.column_comment_placeholder')" size="small" />
           </template>
           <template v-else-if="column.key === 'action'">
             <a-button type="link" danger size="small" @click="removeColumn(index)">
-              删除
+              {{ $t('common.delete') }}
             </a-button>
           </template>
         </template>
@@ -91,10 +91,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { PlusOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
-import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
+import { queryApi } from '@/api'
+import { useDialogModel } from '@/composables/useDialogModel'
 
 interface Column {
   name: string
@@ -107,6 +109,8 @@ interface Column {
   comment: string
 }
 
+const { t } = useI18n()
+
 const props = defineProps<{
   modelValue: boolean
   connectionId: string
@@ -115,10 +119,7 @@ const props = defineProps<{
 
 const emit = defineEmits(['update:modelValue', 'created'])
 
-const visible = computed({
-  get: () => props.modelValue,
-  set: (val) => emit('update:modelValue', val),
-})
+const visible = useDialogModel(props, emit)
 
 const creating = ref(false)
 const tableName = ref('')
@@ -127,17 +128,17 @@ const engine = ref('InnoDB')
 const comment = ref('')
 const columns = ref<Column[]>([])
 
-const columnTableColumns = [
-  { title: '字段名', key: 'name', width: 120 },
-  { title: '类型', key: 'type', width: 100 },
-  { title: '长度', key: 'length', width: 80 },
-  { title: '允许空', key: 'nullable', width: 70 },
-  { title: '主键', key: 'primary', width: 60 },
-  { title: '自增', key: 'autoIncrement', width: 60 },
-  { title: '默认值', key: 'defaultValue', width: 100 },
-  { title: '注释', key: 'comment', width: 120 },
-  { title: '操作', key: 'action', width: 80 },
-]
+const columnTableColumns = computed(() => [
+  { title: t('dialog.create_table.column_name'), key: 'name', width: 120 },
+  { title: t('dialog.create_table.column_type'), key: 'type', width: 100 },
+  { title: t('dialog.create_table.column_length'), key: 'length', width: 80 },
+  { title: t('dialog.create_table.column_nullable'), key: 'nullable', width: 70 },
+  { title: t('dialog.create_table.column_primary'), key: 'primary', width: 60 },
+  { title: t('dialog.create_table.column_auto_increment'), key: 'autoIncrement', width: 60 },
+  { title: t('dialog.create_table.column_default'), key: 'defaultValue', width: 100 },
+  { title: t('dialog.create_table.column_comment'), key: 'comment', width: 120 },
+  { title: t('common.operation'), key: 'action', width: 80 },
+])
 
 function addColumn() {
   columns.value.push({
@@ -163,27 +164,27 @@ function generateCreateTableSql(): string {
 
   const columnDefs = columns.value.map(col => {
     let def = `\`${col.name}\` ${col.type}`
-    
+
     if (col.length && ['VARCHAR', 'CHAR', 'DECIMAL'].includes(col.type)) {
       def += `(${col.length})`
     }
-    
+
     if (!col.nullable) {
       def += ' NOT NULL'
     }
-    
+
     if (col.autoIncrement) {
       def += ' AUTO_INCREMENT'
     }
-    
+
     if (col.defaultValue) {
       def += ` DEFAULT '${col.defaultValue}'`
     }
-    
+
     if (col.comment) {
       def += ` COMMENT '${col.comment}'`
     }
-    
+
     return def
   })
 
@@ -193,9 +194,9 @@ function generateCreateTableSql(): string {
   }
 
   let sql = `CREATE TABLE \`${tableName.value}\` (\n  ${columnDefs.join(',\n  ')}\n)`
-  
+
   sql += ` ENGINE=${engine.value} DEFAULT CHARSET=${charset.value}`
-  
+
   if (comment.value) {
     sql += ` COMMENT='${comment.value}'`
   }
@@ -205,19 +206,19 @@ function generateCreateTableSql(): string {
 
 async function handleCreate() {
   if (!tableName.value.trim()) {
-    message.error('请输入表名')
+    message.error(t('dialog.create_table.table_name_required'))
     return
   }
 
   if (columns.value.length === 0) {
-    message.error('请至少添加一个字段')
+    message.error(t('dialog.create_table.column_required'))
     return
   }
 
   // 验证字段名
   for (const col of columns.value) {
     if (!col.name.trim()) {
-      message.error('请填写所有字段名')
+      message.error(t('dialog.create_table.column_name_required'))
       return
     }
   }
@@ -225,18 +226,14 @@ async function handleCreate() {
   creating.value = true
   try {
     const sql = generateCreateTableSql()
-    
-    await invoke('execute_query', {
-      connectionId: props.connectionId,
-      sql,
-      database: props.database,
-    })
 
-    message.success('表创建成功')
+    await queryApi.executeQuery(props.connectionId, sql, props.database)
+
+    message.success(t('dialog.create_table.success'))
     emit('created')
     handleCancel()
-  } catch (error: any) {
-    message.error(`创建表失败: ${error}`)
+  } catch (error: unknown) {
+    message.error(t('dialog.create_table.fail', { error: String(error) }))
   } finally {
     creating.value = false
   }
@@ -269,4 +266,3 @@ watch(visible, (newVal) => {
   font-size: 12px;
 }
 </style>
-

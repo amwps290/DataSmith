@@ -20,7 +20,7 @@
     </a-spin>
 
     <!-- 右键菜单 -->
-    <div v-if="contextMenuVisible" class="context-menu-overlay" @click="contextMenuVisible = false">
+    <div v-if="contextMenuVisible" class="context-menu-overlay" @click="hideContextMenu()">
       <div class="context-menu" :style="{ left: contextMenuX + 'px', top: contextMenuY + 'px' }" @click.stop>
         <a-menu @click="handleMenuClick" size="small">
           <template v-if="selectedNode?.type === 'database'">
@@ -71,18 +71,17 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import * as monaco from 'monaco-editor'
 import {
   TableOutlined, ReloadOutlined, CopyOutlined,
   FolderOpenOutlined, DeleteOutlined, EditOutlined,
   FileTextOutlined, CodeOutlined
 } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
-import { invoke } from '@tauri-apps/api/core'
-import type { DatabaseInfo } from '@/types/database'
+import { metadataApi, workspaceApi, utilsApi } from '@/api'
 import { useConnectionStore } from '@/stores/connection'
-import { useAppStore } from '@/stores/app'
 import TreeNodeItem from './TreeNodeItem.vue'
+import { useMonacoEditor } from '@/composables/useMonacoEditor'
+import { useContextMenu } from '@/composables/useContextMenu'
 
 interface TreeNode {
   key: string; title: string; type: string; children?: TreeNode[];
@@ -90,16 +89,19 @@ interface TreeNode {
 }
 
 const { t } = useI18n()
-const appStore = useAppStore()
 const props = defineProps<{ connectionId: string | null; dbType?: string; searchValue?: string; }>()
 const emit = defineEmits(['table-selected', 'database-selected', 'new-query', 'design-table', 'view-structure', 'open-scripts'])
 const connectionStore = useConnectionStore()
 
 const loading = ref(false), treeData = ref<TreeNode[]>([]), expandedKeys = ref<string[]>([]), selectedKeys = ref<string[]>([]), loadingNodes = ref<Set<string>>(new Set())
-const contextMenuVisible = ref(false), contextMenuX = ref(0), contextMenuY = ref(0), selectedNode = ref<TreeNode | null>(null)
+const { contextMenuVisible, contextMenuX, contextMenuY, showContextMenu, hideContextMenu } = useContextMenu()
+const selectedNode = ref<TreeNode | null>(null)
 
 const showDdlModal = ref(false), ddlEditorContainer = ref<HTMLElement>()
-let ddlEditor: monaco.editor.IStandaloneCodeEditor | null = null
+const { setValue: setDdlValue, createEditor: createDdlEditor, dispose: disposeDdlEditor } = useMonacoEditor(ddlEditorContainer, {
+  language: 'sql',
+  readOnly: true,
+})
 
 const filteredTreeData = computed(() => {
   if (!props.searchValue) return treeData.value
@@ -123,7 +125,7 @@ async function loadDatabases() {
     if (props.dbType === 'sqlite') {
       treeData.value = [{ key: 'db-main', title: 'main', type: 'database', isLeaf: false, metadata: { name: 'main', database: 'main' } }]
     } else {
-      const dbs = await invoke<DatabaseInfo[]>('get_databases', { connectionId: props.connectionId })
+      const dbs = await metadataApi.getDatabases(props.connectionId)
       treeData.value = dbs.map(db => ({ key: `db-${db.name}`, title: db.name, type: 'database', isLeaf: false, metadata: db }))
     }
   } catch (e: any) { message.error(e) } finally { loading.value = false }
@@ -168,7 +170,7 @@ async function onLoadData(treeNode: TreeNode) {
   }
   else if (treeNode.type === 'schemas') {
     try {
-      const res = await invoke<any[]>('get_schemas', { connectionId: connId, database: treeNode.metadata.database })
+      const res = await metadataApi.getSchemas(connId, treeNode.metadata.database)
       const children = res.map(s => ({ key: `${treeNode.key}-${s.name}`, title: s.name, type: 'schema', isLeaf: false, metadata: { database: treeNode.metadata.database, name: s.name } }))
       updateNodeInTree(treeData.value, treeNode.key, (n) => n.children = children)
       treeData.value = [...treeData.value]
@@ -187,33 +189,40 @@ async function onLoadData(treeNode: TreeNode) {
     treeData.value = [...treeData.value]
   }
   else if (['schema-tables', 'schema-views', 'tables', 'views'].includes(treeNode.type)) {
-    const isSchema = treeNode.type.startsWith('schema-'), method = treeNode.type.includes('views') ? 'get_views' : (isSchema ? 'get_schema_tables' : 'get_tables')
+    const isSchema = treeNode.type.startsWith('schema-'), isViews = treeNode.type.includes('views')
     try {
-      const res = await invoke<any[]>(method, { connectionId: connId, database: treeNode.metadata.database, schema: treeNode.metadata.schema || null })
-      const children = res.map(t => ({ key: `${treeNode.key}-${t.name}`, title: t.name, type: treeNode.type.includes('views') ? 'view' : 'table', isLeaf: false, metadata: { ...t, database: treeNode.metadata.database, schema: treeNode.metadata.schema } }))
+      let res: any[]
+      if (isViews) {
+        res = await metadataApi.getViews(connId, treeNode.metadata.database)
+      } else if (isSchema) {
+        res = await metadataApi.getSchemaTables(connId, treeNode.metadata.database, treeNode.metadata.schema)
+      } else {
+        res = await metadataApi.getTables(connId, treeNode.metadata.database)
+      }
+      const children = res.map(t => ({ key: `${treeNode.key}-${t.name}`, title: t.name, type: isViews ? 'view' : 'table', isLeaf: false, metadata: { ...t, database: treeNode.metadata.database, schema: treeNode.metadata.schema } }))
       updateNodeInTree(treeData.value, treeNode.key, (n) => n.children = children.length ? children : [{ key: `${treeNode.key}-empty`, title: t('tree.empty'), type: 'empty', isLeaf: true }])
       treeData.value = [...treeData.value]
     } catch (e: any) { message.error(e) }
   }
   else if (['schema-indexes', 'schema-functions', 'schema-aggregates', 'database-extensions'].includes(treeNode.type)) {
-    const isExtension = treeNode.type === 'database-extensions'
     const isFunction = treeNode.type === 'schema-functions'
     const isAggregate = treeNode.type === 'schema-aggregates'
     const isIndex = treeNode.type === 'schema-indexes'
-    
-    let method = 'get_database_extensions'
-    if (isIndex) method = 'get_schema_indexes'
-    else if (isFunction) method = 'get_schema_functions'
-    else if (isAggregate) method = 'get_schema_aggregate_functions'
-    
+
     try {
-      const params: any = { connectionId: connId, database: treeNode.metadata.database }
-      if (!isExtension) params.schema = treeNode.metadata.schema
-      
-      const res = await invoke<any[]>(method, params)
+      let res: any[]
+      if (isIndex) {
+        res = await metadataApi.getSchemaIndexes(connId, treeNode.metadata.database, treeNode.metadata.schema)
+      } else if (isFunction) {
+        res = await metadataApi.getSchemaFunctions(connId, treeNode.metadata.database, treeNode.metadata.schema)
+      } else if (isAggregate) {
+        res = await metadataApi.getSchemaAggregateFunctions(connId, treeNode.metadata.database, treeNode.metadata.schema)
+      } else {
+        res = await metadataApi.getDatabaseExtensions(connId, treeNode.metadata.database)
+      }
       const children = res.map(item => {
         let title = item.name || item.index_name
-        
+
         // 针对函数和聚合函数，拼接参数列表
         if ((isFunction || isAggregate) && item.arguments) {
           title = `${item.name}(${item.arguments})`
@@ -222,13 +231,13 @@ async function onLoadData(treeNode: TreeNode) {
         else if (isIndex && item.columns && item.columns.length > 0) {
           title = `${item.name} (${item.columns.join(', ')})`
         }
-        
-        return { 
-          key: `${treeNode.key}-${item.name || item.index_name}`, 
-          title, 
-          type: 'leaf', 
-          isLeaf: true, 
-          metadata: { ...item, database: treeNode.metadata.database, schema: treeNode.metadata.schema } 
+
+        return {
+          key: `${treeNode.key}-${item.name || item.index_name}`,
+          title,
+          type: 'leaf',
+          isLeaf: true,
+          metadata: { ...item, database: treeNode.metadata.database, schema: treeNode.metadata.schema }
         }
       })
       updateNodeInTree(treeData.value, treeNode.key, (n) => n.children = children.length ? children : [{ key: `${treeNode.key}-empty`, title: t('tree.empty'), type: 'empty', isLeaf: true }])
@@ -237,7 +246,7 @@ async function onLoadData(treeNode: TreeNode) {
   }
   else if (['table', 'view'].includes(treeNode.type)) {
     try {
-      const res = await invoke<any[]>('get_table_structure', { connectionId: connId, table: treeNode.metadata.name || treeNode.title, database: treeNode.metadata.database, schema: treeNode.metadata.schema })
+      const res = await metadataApi.getTableStructure({ connectionId: connId, table: treeNode.metadata.name || treeNode.title, database: treeNode.metadata.database, schema: treeNode.metadata.schema })
       const children = res.map(c => ({ key: `${treeNode.key}-col-${c.name}`, title: `${c.name}${c.data_type ? ' : ' + c.data_type : ''}${c.is_primary_key ? ' [PK]' : ''}`, type: 'column', isLeaf: true, metadata: { ...c, database: treeNode.metadata.database, table: treeNode.metadata.name, schema: treeNode.metadata.schema } }))
       updateNodeInTree(treeData.value, treeNode.key, (n) => n.children = children.length ? children : [{ key: `${treeNode.key}-empty`, title: t('tree.empty'), type: 'empty', isLeaf: true }])
       treeData.value = [...treeData.value]
@@ -262,14 +271,14 @@ async function handleDoubleClick(node: TreeNode) {
 }
 
 function onRightClick({ event, node }: any) {
-  event.preventDefault(); selectedNode.value = node; contextMenuX.value = event.clientX; contextMenuY.value = event.clientY; contextMenuVisible.value = true;
+  selectedNode.value = node; showContextMenu(event);
 }
 
-const showScriptsModal = ref(false), savedScripts = ref<any[]>([]), loadingScripts = ref(false)
+const showScriptsModal = ref(false), savedScripts = ref<import('@/types/database').ScriptInfo[]>([]), loadingScripts = ref(false)
 async function handleMenuClick({ key }: any) {
-  contextMenuVisible.value = false; if (!selectedNode.value) return
+  hideContextMenu(); if (!selectedNode.value) return
   if (key === 'new-query') emit('new-query', { database: selectedNode.value.metadata.name || selectedNode.value.metadata.database, connectionId: props.connectionId })
-  else if (key === 'open-scripts') { showScriptsModal.value = true; loadingScripts.value = true; try { savedScripts.value = await invoke<any[]>('list_db_scripts', { connectionId: props.connectionId, database: selectedNode.value.metadata.name || selectedNode.value.metadata.database }) } finally { loadingScripts.value = false } }
+  else if (key === 'open-scripts') { showScriptsModal.value = true; loadingScripts.value = true; try { savedScripts.value = await workspaceApi.listDbScripts(props.connectionId!, selectedNode.value.metadata.name || selectedNode.value.metadata.database) } finally { loadingScripts.value = false } }
   else if (key === 'refresh') handleRefreshNode(selectedNode.value)
   else if (key === 'copy-name') { navigator.clipboard.writeText(selectedNode.value.title); message.success(t('common.copy')) }
   else if (key === 'view-data') {
@@ -289,8 +298,8 @@ async function handleMenuClick({ key }: any) {
   }
   else if (key === 'view-ddl') {
     try {
-      const ddl = await invoke<string>('get_create_table_ddl', { 
-        connectionId: props.connectionId, 
+      const ddl = await metadataApi.getCreateTableDdl({
+        connectionId: props.connectionId!,
         table: selectedNode.value.metadata.name || selectedNode.value.title,
         database: selectedNode.value.metadata.database,
         schema: selectedNode.value.metadata.schema
@@ -298,21 +307,15 @@ async function handleMenuClick({ key }: any) {
       showDdlModal.value = true
       await nextTick()
       if (ddlEditorContainer.value) {
-        if (ddlEditor) ddlEditor.dispose()
-        ddlEditor = monaco.editor.create(ddlEditorContainer.value, {
-          value: ddl,
-          language: 'sql',
-          theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs',
-          readOnly: true,
-          automaticLayout: true,
-          minimap: { enabled: false }
-        })
+        disposeDdlEditor()
+        await createDdlEditor()
+        setDdlValue(ddl)
       }
     } catch (e: any) { message.error(e) }
   }
 }
 
-async function openSavedScript(s: any) { try { const content = await invoke<string>('read_file', { path: s.path }); emit('new-query', { database: selectedNode.value?.metadata.database || selectedNode.value?.title, connectionId: props.connectionId, content, filePath: s.path, title: s.name }); showScriptsModal.value = false } catch (e: any) { message.error(e) } }
+async function openSavedScript(s: any) { try { const content = await utilsApi.readFile(s.path); emit('new-query', { database: selectedNode.value?.metadata.database || selectedNode.value?.title, connectionId: props.connectionId, content, filePath: s.path, title: s.name }); showScriptsModal.value = false } catch (e: any) { message.error(e) } }
 
 watch(() => props.connectionId, (id) => { if (id) loadDatabases(); else treeData.value = []; }, { immediate: true })
 watch(() => connectionStore.getConnectionStatus(props.connectionId || ''), (s) => { if (s === 'connected' && treeData.value.length === 0 && !loading.value) loadDatabases(); })

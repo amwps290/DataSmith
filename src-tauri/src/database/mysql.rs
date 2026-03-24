@@ -6,6 +6,8 @@ use tokio::sync::Mutex;
 use tracing::{info, instrument, debug, error};
 
 use super::traits::*;
+use super::sql_helpers::{build_where_clause, ParamStyle};
+use crate::utils::sql_sanitize::{escape_mysql_id, escape_string_literal};
 
 /// MySQL 数据库驱动状态
 struct MySqlState {
@@ -103,8 +105,11 @@ impl DatabaseOperations for MySqlDatabase {
     #[instrument(skip(self, sql))]
     async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         let _start_total = Instant::now();
-        let state = self.state.lock().await;
-        let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        // 克隆 Pool 后立即释放锁（mysql_async::Pool 内部是 Arc，clone 廉价）
+        let pool = {
+            let state = self.state.lock().await;
+            state.pool.as_ref().ok_or(DbError::not_connected())?.clone()
+        };
         let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
 
         debug!(sql = %sql.replace('\n', " "), "执行 MySQL 查询");
@@ -151,7 +156,7 @@ impl DatabaseOperations for MySqlDatabase {
         }
 
         if results.is_empty() {
-            results.push(QueryResult { columns: vec![], rows: vec![], affected_rows: 0, execution_time_ms: 0 });
+            results.push(QueryResult::empty(0));
         }
 
         Ok(results)
@@ -171,7 +176,7 @@ impl DatabaseOperations for MySqlDatabase {
 
     async fn get_tables(&self, database: Option<&str>) -> DbResult<Vec<TableInfo>> {
         let sql = if let Some(db) = database {
-            format!("SELECT TABLE_NAME, TABLE_COMMENT, TABLE_ROWS, DATA_LENGTH FROM information_schema.TABLES WHERE TABLE_SCHEMA = '{}'", db)
+            format!("SELECT TABLE_NAME, TABLE_COMMENT, TABLE_ROWS, DATA_LENGTH FROM information_schema.TABLES WHERE TABLE_SCHEMA = {}", escape_string_literal(db))
         } else {
             "SHOW TABLES".to_string()
         };
@@ -194,7 +199,7 @@ impl DatabaseOperations for MySqlDatabase {
 
     async fn get_table_structure(&self, table: &str, _schema: Option<&str>, database: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
         let schema = database.unwrap_or("");
-        let sql = format!("SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, EXTRA, COLUMN_COMMENT FROM information_schema.COLUMNS WHERE TABLE_NAME = '{}' AND TABLE_SCHEMA = '{}' ORDER BY ORDINAL_POSITION", table, schema);
+        let sql = format!("SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, EXTRA, COLUMN_COMMENT FROM information_schema.COLUMNS WHERE TABLE_NAME = {} AND TABLE_SCHEMA = {} ORDER BY ORDINAL_POSITION", escape_string_literal(table), escape_string_literal(schema));
         
         let results = self.execute_query(&sql, None).await?;
         if let Some(res) = results.first() {
@@ -219,66 +224,48 @@ impl DatabaseOperations for MySqlDatabase {
     }
 
     async fn update_data(&self, table: &str, _schema: Option<&str>, column: &str, value: Option<String>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
-        let state = self.state.lock().await;
-        let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let pool = {
+            let state = self.state.lock().await;
+            state.pool.as_ref().ok_or(DbError::not_connected())?.clone()
+        };
         let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
 
-        let mut where_parts = Vec::new();
-        let mut p_vec = Vec::new();
-        
-        p_vec.push(mysql_async::Value::from(value));
+        let wc = build_where_clause(&where_conditions, escape_mysql_id, ParamStyle::QuestionMark);
 
-        for (col, val) in where_conditions {
-            if val.is_null() {
-                where_parts.push(format!("`{}` IS NULL", col));
-            } else {
-                where_parts.push(format!("`{}` = ?", col));
-                p_vec.push(match val {
-                    serde_json::Value::String(s) => mysql_async::Value::from(s),
-                    serde_json::Value::Number(n) => {
-                        if let Some(i) = n.as_i64() { mysql_async::Value::from(i) }
-                        else { mysql_async::Value::from(n.as_f64().unwrap_or(0.0)) }
-                    },
-                    serde_json::Value::Bool(b) => mysql_async::Value::from(b),
-                    _ => mysql_async::Value::from(val.to_string()),
-                });
-            }
+        let mut p_vec = Vec::new();
+        p_vec.push(mysql_async::Value::from(value));
+        for pv in &wc.param_values {
+            p_vec.push(mysql_async::Value::from(pv.clone()));
         }
-        
+
         let params = mysql_async::Params::Positional(p_vec);
-        let sql = format!("UPDATE `{}` SET `{}` = ? WHERE {}", table, column, where_parts.join(" AND "));
-        
+        let sql = format!("UPDATE {} SET {} = ? WHERE {}", escape_mysql_id(table), escape_mysql_id(column), wc.sql);
+
         conn.exec_drop(sql, params).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(())
     }
 
     async fn delete_data(&self, table: &str, _schema: Option<&str>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
-        let state = self.state.lock().await;
-        let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let pool = {
+            let state = self.state.lock().await;
+            state.pool.as_ref().ok_or(DbError::not_connected())?.clone()
+        };
         let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
 
-        let mut where_parts = Vec::new();
-        let mut p_vec = Vec::new();
+        let wc = build_where_clause(&where_conditions, escape_mysql_id, ParamStyle::QuestionMark);
 
-        for (col, val) in where_conditions {
-            if val.is_null() {
-                where_parts.push(format!("`{}` IS NULL", col));
-            } else {
-                where_parts.push(format!("`{}` = ?", col));
-                p_vec.push(match val {
-                    serde_json::Value::String(s) => mysql_async::Value::from(s),
-                    _ => mysql_async::Value::from(val.to_string()),
-                });
-            }
+        let mut p_vec = Vec::new();
+        for pv in &wc.param_values {
+            p_vec.push(mysql_async::Value::from(pv.clone()));
         }
 
-        let sql = format!("DELETE FROM `{}` WHERE {}", table, where_parts.join(" AND "));
+        let sql = format!("DELETE FROM {} WHERE {}", escape_mysql_id(table), wc.sql);
         conn.exec_drop(sql, mysql_async::Params::Positional(p_vec)).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(())
     }
 
     async fn get_indexes(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
-        let results = self.execute_query(&format!("SHOW INDEX FROM `{}`", table), None).await?;
+        let results = self.execute_query(&format!("SHOW INDEX FROM {}", escape_mysql_id(table)), None).await?;
         let mut map: HashMap<String, IndexInfo> = HashMap::new();
         
         if let Some(res) = results.first() {
@@ -302,8 +289,8 @@ impl DatabaseOperations for MySqlDatabase {
 
     async fn get_foreign_keys(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<ForeignKeyInfo>> {
         let sql = format!(
-            "SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_NAME = '{}' AND REFERENCED_TABLE_NAME IS NOT NULL",
-            table
+            "SELECT kcu.CONSTRAINT_NAME, kcu.COLUMN_NAME, kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME, rc.UPDATE_RULE, rc.DELETE_RULE FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc ON kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA WHERE kcu.TABLE_NAME = {} AND kcu.REFERENCED_TABLE_NAME IS NOT NULL",
+            escape_string_literal(table)
         );
         let results = self.execute_query(&sql, None).await?;
         let mut fks = Vec::new();
@@ -314,8 +301,8 @@ impl DatabaseOperations for MySqlDatabase {
                     column_name: r.get("COLUMN_NAME").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
                     referenced_table_name: r.get("REFERENCED_TABLE_NAME").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
                     referenced_column_name: r.get("REFERENCED_COLUMN_NAME").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                    update_rule: Some("CASCADE".into()),
-                    delete_rule: Some("CASCADE".into()),
+                    update_rule: r.get("UPDATE_RULE").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    delete_rule: r.get("DELETE_RULE").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 });
             }
         }
@@ -323,8 +310,10 @@ impl DatabaseOperations for MySqlDatabase {
     }
 
     async fn alter_table(&self, table: &str, _schema: Option<&str>, database: Option<&str>, changes: Vec<TableChange>) -> DbResult<()> {
-        let state = self.state.lock().await;
-        let pool = state.pool.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let pool = {
+            let state = self.state.lock().await;
+            state.pool.as_ref().ok_or(DbError::not_connected())?.clone()
+        };
         let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
         let db_name = database.unwrap_or("");
 
@@ -332,7 +321,7 @@ impl DatabaseOperations for MySqlDatabase {
         for change in changes {
             match change {
                 TableChange::AddColumn(col) => {
-                    let mut part = format!("ADD COLUMN `{}` {}", col.name, col.data_type);
+                    let mut part = format!("ADD COLUMN {} {}", escape_mysql_id(&col.name), col.data_type);
                     if let Some(l) = col.character_maximum_length { part.push_str(&format!("({})", l)); }
                     if !col.nullable { part.push_str(" NOT NULL"); }
                     if let Some(ref d) = col.default_value { part.push_str(&format!(" DEFAULT '{}'", d.replace("'", "''"))); }
@@ -341,9 +330,9 @@ impl DatabaseOperations for MySqlDatabase {
                 },
                 TableChange::ModifyColumn { old_name, new_column } => {
                     let mut part = if old_name != new_column.name {
-                        format!("CHANGE COLUMN `{}` `{}` {}", old_name, new_column.name, new_column.data_type)
+                        format!("CHANGE COLUMN {} {} {}", escape_mysql_id(&old_name), escape_mysql_id(&new_column.name), new_column.data_type)
                     } else {
-                        format!("MODIFY COLUMN `{}` {}", new_column.name, new_column.data_type)
+                        format!("MODIFY COLUMN {} {}", escape_mysql_id(&new_column.name), new_column.data_type)
                     };
                     if let Some(l) = new_column.character_maximum_length { part.push_str(&format!("({})", l)); }
                     if !new_column.nullable { part.push_str(" NOT NULL"); }
@@ -352,32 +341,32 @@ impl DatabaseOperations for MySqlDatabase {
                     sql_parts.push(part);
                 },
                 TableChange::DropColumn(name) => {
-                    sql_parts.push(format!("DROP COLUMN `{}`", name));
+                    sql_parts.push(format!("DROP COLUMN {}", escape_mysql_id(&name)));
                 },
                 TableChange::AddIndex(idx) => {
-                    let cols = idx.columns.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
+                    let cols = idx.columns.iter().map(|c| escape_mysql_id(c)).collect::<Vec<_>>().join(", ");
                     let unique = if idx.is_unique { "UNIQUE " } else { "" };
-                    sql_parts.push(format!("ADD {}INDEX `{}` ({})", unique, idx.name, cols));
+                    sql_parts.push(format!("ADD {}INDEX {} ({})", unique, escape_mysql_id(&idx.name), cols));
                 },
                 TableChange::DropIndex(name) => {
-                    sql_parts.push(format!("DROP INDEX `{}`", name));
+                    sql_parts.push(format!("DROP INDEX {}", escape_mysql_id(&name)));
                 },
                 TableChange::AddForeignKey(fk) => {
                     sql_parts.push(format!(
-                        "ADD CONSTRAINT `{}` FOREIGN KEY (`{}`) REFERENCES `{}`.`{}` (`{}`) ON UPDATE {} ON DELETE {}",
-                        fk.name, fk.column_name, db_name, fk.referenced_table_name, fk.referenced_column_name,
+                        "ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {}.{} ({}) ON UPDATE {} ON DELETE {}",
+                        escape_mysql_id(&fk.name), escape_mysql_id(&fk.column_name), escape_mysql_id(db_name), escape_mysql_id(&fk.referenced_table_name), escape_mysql_id(&fk.referenced_column_name),
                         fk.update_rule.as_deref().unwrap_or("NO ACTION"),
                         fk.delete_rule.as_deref().unwrap_or("NO ACTION")
                     ));
                 },
                 TableChange::DropForeignKey(name) => {
-                    sql_parts.push(format!("DROP FOREIGN KEY `{}`", name));
+                    sql_parts.push(format!("DROP FOREIGN KEY {}", escape_mysql_id(&name)));
                 },
             }
         }
 
         if !sql_parts.is_empty() {
-            let sql = format!("ALTER TABLE `{}`.`{}` {}", db_name, table, sql_parts.join(", "));
+            let sql = format!("ALTER TABLE {}.{} {}", escape_mysql_id(db_name), escape_mysql_id(table), sql_parts.join(", "));
             debug!(sql = %sql, "执行 MySQL ALTER TABLE");
             conn.query_drop(&sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         }
@@ -386,7 +375,7 @@ impl DatabaseOperations for MySqlDatabase {
     }
 
     async fn get_table_ddl(&self, table: &str, _schema: Option<&str>) -> DbResult<String> {
-        let sql = format!("SHOW CREATE TABLE `{}`", table);
+        let sql = format!("SHOW CREATE TABLE {}", escape_mysql_id(table));
         let results = self.execute_query(&sql, None).await?;
         if let Some(res) = results.first() {
             if let Some(row) = res.rows.first() {

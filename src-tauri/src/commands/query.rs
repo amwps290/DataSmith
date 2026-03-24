@@ -2,18 +2,9 @@ use std::collections::HashMap;
 use crate::database::QueryResult;
 use crate::utils::sql_formatter::SqlFormatter;
 use crate::AppState;
+use super::error::ToCommandResult;
 use tauri::State;
 use tracing::{info, instrument};
-
-pub trait ToCommandResult<T> {
-    fn to_cmd_result(self) -> Result<T, String>;
-}
-
-impl<T, E: std::fmt::Display> ToCommandResult<T> for Result<T, E> {
-    fn to_cmd_result(self) -> Result<T, String> {
-        self.map_err(|e| e.to_string())
-    }
-}
 
 /// 格式化 SQL
 #[tauri::command]

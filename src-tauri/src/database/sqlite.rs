@@ -8,6 +8,8 @@ use std::fs::File;
 use std::path::Path;
 
 use super::traits::*;
+use super::sql_helpers::{build_where_clause, ParamStyle};
+use crate::utils::sql_sanitize::{escape_sqlite_id, escape_string_literal};
 
 /// SQLite 数据库驱动状态
 struct SqliteState {
@@ -61,7 +63,7 @@ impl DatabaseOperations for SqliteDatabase {
     async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         let start = Instant::now();
         let state = self.state.lock().await;
-        let conn = state.conn.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let conn = state.conn.as_ref().ok_or(DbError::not_connected())?;
 
         // 简化的多语句支持逻辑：按分号初步分割 (复杂 SQL 可能需要解析器)
         let sqls: Vec<&str> = sql.split(';').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
@@ -100,7 +102,7 @@ impl DatabaseOperations for SqliteDatabase {
         }
 
         if results.is_empty() {
-            results.push(QueryResult { columns: vec![], rows: vec![], affected_rows: 0, execution_time_ms: 0 });
+            results.push(QueryResult::empty(0));
         }
 
         Ok(results)
@@ -112,7 +114,7 @@ impl DatabaseOperations for SqliteDatabase {
 
     async fn get_tables(&self, _database: Option<&str>) -> DbResult<Vec<TableInfo>> {
         let state = self.state.lock().await;
-        let conn = state.conn.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let conn = state.conn.as_ref().ok_or(DbError::not_connected())?;
         let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").map_err(|e| DbError::QueryFailed(e.to_string()))?;
         let rows = stmt.query_map([], |row| Ok(TableInfo { name: row.get(0)?, schema: None, table_type: "TABLE".into(), engine: None, rows: None, size_mb: None, comment: None })).map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(rows.map(|r| r.unwrap()).collect())
@@ -120,7 +122,7 @@ impl DatabaseOperations for SqliteDatabase {
 
     async fn get_table_structure(&self, table: &str, _schema: Option<&str>, _database: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
         let state = self.state.lock().await;
-        let conn = state.conn.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let conn = state.conn.as_ref().ok_or(DbError::not_connected())?;
         let mut stmt = conn.prepare(&format!("PRAGMA table_info('{}')", table.replace("'", "''"))).map_err(|e| DbError::QueryFailed(e.to_string()))?;
         let rows = stmt.query_map([], |row| {
             let pk: i64 = row.get(5)?;
@@ -135,33 +137,19 @@ impl DatabaseOperations for SqliteDatabase {
 
     async fn update_data(&self, table: &str, _schema: Option<&str>, column: &str, value: Option<String>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
         let state = self.state.lock().await;
-        let conn = state.conn.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let conn = state.conn.as_ref().ok_or(DbError::not_connected())?;
 
-        let mut where_parts = Vec::new();
+        let wc = build_where_clause(&where_conditions, escape_sqlite_id, ParamStyle::QuestionMark);
+
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        
         params.push(Box::new(value));
-
-        for (col, val) in where_conditions {
-            if val.is_null() {
-                where_parts.push(format!("\"{}\" IS NULL", col));
-            } else {
-                where_parts.push(format!("\"{}\" = ?", col));
-                match val {
-                    serde_json::Value::String(s) => params.push(Box::new(s)),
-                    serde_json::Value::Number(n) => {
-                        if let Some(i) = n.as_i64() { params.push(Box::new(i)) }
-                        else { params.push(Box::new(n.as_f64().unwrap_or(0.0))) }
-                    },
-                    serde_json::Value::Bool(b) => params.push(Box::new(b)),
-                    _ => params.push(Box::new(val.to_string())),
-                }
-            }
+        for pv in wc.param_values {
+            params.push(Box::new(pv));
         }
 
-        let sql = format!("UPDATE \"{}\" SET \"{}\" = ? WHERE {}", table, column, where_parts.join(" AND "));
+        let sql = format!("UPDATE {} SET {} = ? WHERE {}", escape_sqlite_id(table), escape_sqlite_id(column), wc.sql);
         debug!(sql = %sql, "执行 SQLite 参数化更新");
-        
+
         let p_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         conn.execute(&sql, p_refs.as_slice()).map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(())
@@ -169,26 +157,18 @@ impl DatabaseOperations for SqliteDatabase {
 
     async fn delete_data(&self, table: &str, _schema: Option<&str>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
         let state = self.state.lock().await;
-        let conn = state.conn.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let conn = state.conn.as_ref().ok_or(DbError::not_connected())?;
 
-        let mut where_parts = Vec::new();
+        let wc = build_where_clause(&where_conditions, escape_sqlite_id, ParamStyle::QuestionMark);
+
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-
-        for (col, val) in where_conditions {
-            if val.is_null() {
-                where_parts.push(format!("\"{}\" IS NULL", col));
-            } else {
-                where_parts.push(format!("\"{}\" = ?", col));
-                match val {
-                    serde_json::Value::String(s) => params.push(Box::new(s)),
-                    _ => params.push(Box::new(val.to_string())),
-                }
-            }
+        for pv in wc.param_values {
+            params.push(Box::new(pv));
         }
 
-        let sql = format!("DELETE FROM \"{}\" WHERE {}", table, where_parts.join(" AND "));
+        let sql = format!("DELETE FROM {} WHERE {}", escape_sqlite_id(table), wc.sql);
         debug!(sql = %sql, "执行 SQLite 参数化删除");
-        
+
         let p_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         conn.execute(&sql, p_refs.as_slice()).map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(())
@@ -235,14 +215,14 @@ impl DatabaseOperations for SqliteDatabase {
 
     async fn alter_table(&self, table: &str, _schema: Option<&str>, _database: Option<&str>, changes: Vec<TableChange>) -> DbResult<()> {
         let state = self.state.lock().await;
-        let conn = state.conn.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let conn = state.conn.as_ref().ok_or(DbError::not_connected())?;
 
         for change in changes {
             match change {
                 TableChange::AddColumn(col) => {
-                    let mut sql = format!("ALTER TABLE \"{}\" ADD COLUMN \"{}\" {}", table, col.name, col.data_type);
+                    let mut sql = format!("ALTER TABLE {} ADD COLUMN {} {}", escape_sqlite_id(table), escape_sqlite_id(&col.name), col.data_type);
                     if !col.nullable { sql.push_str(" NOT NULL"); }
-                    if let Some(ref d) = col.default_value { sql.push_str(&format!(" DEFAULT {}", d)); }
+                    if let Some(ref d) = col.default_value { sql.push_str(&format!(" DEFAULT {}", escape_string_literal(d))); }
                     
                     debug!(sql = %sql, "执行 SQLite ALTER TABLE ADD COLUMN");
                     conn.execute(&sql, []).map_err(|e| DbError::QueryFailed(e.to_string()))?;

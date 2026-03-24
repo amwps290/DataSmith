@@ -27,7 +27,6 @@ pub enum DatabaseType {
     SQLite,
     MongoDB,
     Redis,
-    Elasticsearch,
 }
 
 impl std::str::FromStr for DatabaseType {
@@ -40,7 +39,6 @@ impl std::str::FromStr for DatabaseType {
             "sqlite" => Ok(DatabaseType::SQLite),
             "mongodb" | "mongo" => Ok(DatabaseType::MongoDB),
             "redis" => Ok(DatabaseType::Redis),
-            "elasticsearch" | "es" => Ok(DatabaseType::Elasticsearch),
             _ => Err(format!("不支持的数据库类型: {}", s)),
         }
     }
@@ -54,7 +52,6 @@ impl std::fmt::Display for DatabaseType {
             DatabaseType::SQLite => "sqlite",
             DatabaseType::MongoDB => "mongodb",
             DatabaseType::Redis => "redis",
-            DatabaseType::Elasticsearch => "elasticsearch",
         };
         write!(f, "{}", s)
     }
@@ -67,6 +64,18 @@ pub struct QueryResult {
     pub rows: Vec<HashMap<String, serde_json::Value>>,
     pub affected_rows: u64,
     pub execution_time_ms: u128,
+}
+
+impl QueryResult {
+    /// 创建一个空的查询结果（无列、无行、无影响行数）
+    pub fn empty(execution_time_ms: u128) -> Self {
+        Self {
+            columns: vec![],
+            rows: vec![],
+            affected_rows: 0,
+            execution_time_ms,
+        }
+    }
 }
 
 /// 数据库元数据 - 数据库信息
@@ -206,6 +215,12 @@ pub enum DbError {
 
     #[error("其他错误: {0}")]
     Other(String),
+}
+
+impl DbError {
+    pub fn not_connected() -> Self {
+        DbError::ConnectionFailed("未连接数据库".into())
+    }
 }
 
 impl Serialize for DbError {

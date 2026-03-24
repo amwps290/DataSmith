@@ -1,7 +1,15 @@
+use std::sync::Arc;
 use crate::database::redis::RedisDatabase;
+use crate::database::DatabaseOperations;
 use crate::AppState;
+use super::error::ToCommandResult;
 use tauri::State;
 use std::collections::HashMap;
+
+/// 获取 Redis 数据库引用的辅助函数
+async fn get_redis_ref(connection_id: &str, state: &AppState) -> Result<Arc<dyn DatabaseOperations>, String> {
+    state.connection_manager.get_db_ref(connection_id).await.to_cmd_result()
+}
 
 /// 执行 Redis 命令
 #[tauri::command]
@@ -11,17 +19,7 @@ pub async fn execute_redis_command(
     args: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    let manager = &state.connection_manager;
-    let db_instance = manager.get_db_instance(&connection_id).await.map_err(|e| e.to_string())?;
-    let conns = db_instance.read().await;
-    
-    let real_id = if connection_id.contains(':') {
-        connection_id.clone()
-    } else {
-        format!("{}:metadata", connection_id)
-    };
-
-    let db = conns.get(&real_id).ok_or("连接不存在")?;
+    let db = get_redis_ref(&connection_id, &state).await?;
     let redis_db = db.as_any().downcast_ref::<RedisDatabase>().ok_or("不是 Redis 连接")?;
 
     match redis_db.execute_command(&command, args).await {
@@ -36,21 +34,11 @@ pub async fn get_redis_info(
     connection_id: String,
     state: State<'_, AppState>,
 ) -> Result<HashMap<String, String>, String> {
-    let manager = &state.connection_manager;
-    let db_instance = manager.get_db_instance(&connection_id).await.map_err(|e| e.to_string())?;
-    let conns = db_instance.read().await;
-    
-    let real_id = if connection_id.contains(':') {
-        connection_id.clone()
-    } else {
-        format!("{}:metadata", connection_id)
-    };
-
-    let db = conns.get(&real_id).ok_or("连接不存在")?;
+    let db = get_redis_ref(&connection_id, &state).await?;
     let redis_db = db.as_any().downcast_ref::<RedisDatabase>().ok_or("不是 Redis 连接")?;
 
-    let info_str = redis_db.get_server_info().await.map_err(|e| e.to_string())?;
-    
+    let info_str = redis_db.get_server_info().await.to_cmd_result()?;
+
     let mut info_map = HashMap::new();
     for line in info_str.lines() {
         if line.starts_with('#') || line.trim().is_empty() {
@@ -61,7 +49,7 @@ pub async fn get_redis_info(
             info_map.insert(parts[0].to_string(), parts[1].to_string());
         }
     }
-    
+
     Ok(info_map)
 }
 
@@ -72,21 +60,11 @@ pub async fn get_redis_key_value(
     key: String,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    let manager = &state.connection_manager;
-    let db_instance = manager.get_db_instance(&connection_id).await.map_err(|e| e.to_string())?;
-    let conns = db_instance.read().await;
-    
-    let real_id = if connection_id.contains(':') {
-        connection_id.clone()
-    } else {
-        format!("{}:metadata", connection_id)
-    };
-
-    let db = conns.get(&real_id).ok_or("连接不存在")?;
+    let db = get_redis_ref(&connection_id, &state).await?;
     let redis_db = db.as_any().downcast_ref::<RedisDatabase>().ok_or("不是 Redis 连接")?;
 
-    let ttl = redis_db.get_key_ttl(&key).await.map_err(|e| e.to_string())?;
-    let value = redis_db.get_key_value(&key).await.map_err(|e| e.to_string())?;
+    let ttl = redis_db.get_key_ttl(&key).await.to_cmd_result()?;
+    let value = redis_db.get_key_value(&key).await.to_cmd_result()?;
 
     Ok(serde_json::json!({
         "value": value,
@@ -103,20 +81,10 @@ pub async fn set_redis_key_value(
     ttl: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let manager = &state.connection_manager;
-    let db_instance = manager.get_db_instance(&connection_id).await.map_err(|e| e.to_string())?;
-    let conns = db_instance.read().await;
-    
-    let real_id = if connection_id.contains(':') {
-        connection_id.clone()
-    } else {
-        format!("{}:metadata", connection_id)
-    };
-
-    let db = conns.get(&real_id).ok_or("连接不存在")?;
+    let db = get_redis_ref(&connection_id, &state).await?;
     let redis_db = db.as_any().downcast_ref::<RedisDatabase>().ok_or("不是 Redis 连接")?;
 
-    redis_db.set_key_value(&key, &value, ttl).await.map_err(|e| e.to_string())
+    redis_db.set_key_value(&key, &value, ttl).await.to_cmd_result()
 }
 
 /// 删除 Redis Key
@@ -126,20 +94,10 @@ pub async fn delete_redis_key(
     key: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let manager = &state.connection_manager;
-    let db_instance = manager.get_db_instance(&connection_id).await.map_err(|e| e.to_string())?;
-    let conns = db_instance.read().await;
-    
-    let real_id = if connection_id.contains(':') {
-        connection_id.clone()
-    } else {
-        format!("{}:metadata", connection_id)
-    };
-
-    let db = conns.get(&real_id).ok_or("连接不存在")?;
+    let db = get_redis_ref(&connection_id, &state).await?;
     let redis_db = db.as_any().downcast_ref::<RedisDatabase>().ok_or("不是 Redis 连接")?;
 
-    redis_db.delete_key(&key).await.map_err(|e| e.to_string())
+    redis_db.delete_key(&key).await.to_cmd_result()
 }
 
 /// 将 Redis 的 Value 转换为 JSON Value (适配 1.0.2 版本变体名)

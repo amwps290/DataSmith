@@ -31,13 +31,5 @@ pub struct ConnectionTestResult {
     pub ping_time_ms: u128,
 }
 
-/// 连接状态
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum ConnectionStatus {
-    Connected,
-    Disconnected,
-    Connecting,
-    Error,
-}
+
 

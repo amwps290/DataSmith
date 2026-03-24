@@ -2,7 +2,7 @@
  * 数据库类型定义
  */
 
-export type DatabaseType = 'mysql' | 'postgresql' | 'sqlite' | 'mongodb' | 'redis' | 'elasticsearch'
+export type DatabaseType = 'mysql' | 'postgresql' | 'sqlite' | 'mongodb' | 'redis'
 
 /**
  * 连接配置
@@ -168,5 +168,37 @@ export interface DatabaseTreeNode {
   icon?: string
   children?: DatabaseTreeNode[]
   isLeaf?: boolean
-  metadata?: any
+  metadata?: Record<string, unknown>
+}
+
+/**
+ * 持久化存储的连接配置（对应 Rust StoredConnection）
+ */
+export interface StoredConnection {
+  id: string
+  name: string
+  db_type: DatabaseType
+  host: string
+  port: number
+  username: string
+  encrypted_password?: string
+  database?: string
+  ssl: boolean
+  connection_timeout: number
+  pool_size: number
+  group?: string
+  color?: string
+  tags: string[]
+  created_at: number
+  updated_at: number
+}
+
+/**
+ * 脚本文件信息（对应 Rust ScriptInfo）
+ */
+export interface ScriptInfo {
+  name: string
+  path: string
+  last_modified: number
+  size: number
 }

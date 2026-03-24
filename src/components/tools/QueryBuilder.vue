@@ -1,14 +1,14 @@
 <template>
   <div class="query-builder">
     <div class="builder-header">
-      <h3>可视化查询构建器</h3>
-      <p>通过可视化界面构建SQL查询</p>
+      <h3>{{ $t('tools.query_builder.title') }}</h3>
+      <p>{{ $t('tools.query_builder.subtitle') }}</p>
     </div>
 
     <div class="builder-config">
       <a-form layout="vertical">
-        <a-form-item label="数据库">
-          <a-select v-model:value="selectedDatabase" placeholder="选择数据库" @change="loadTables">
+        <a-form-item :label="$t('tools.query_builder.database')">
+          <a-select v-model:value="selectedDatabase" :placeholder="$t('tools.query_builder.database_placeholder')" @change="loadTables">
             <a-select-option
               v-for="db in databases"
               :key="db.name"
@@ -19,10 +19,10 @@
           </a-select>
         </a-form-item>
 
-        <a-form-item label="主表">
+        <a-form-item :label="$t('tools.query_builder.main_table')">
           <a-select
             v-model:value="mainTable"
-            placeholder="选择主表"
+            :placeholder="$t('tools.query_builder.main_table_placeholder')"
             :disabled="!selectedDatabase"
             @change="loadTableColumns"
           >
@@ -37,11 +37,11 @@
         </a-form-item>
       </a-form>
 
-      <a-divider>查询配置</a-divider>
+      <a-divider>{{ $t('tools.query_builder.query_config') }}</a-divider>
 
       <!-- SELECT 子句 -->
       <div class="query-section">
-        <h4>选择列 (SELECT)</h4>
+        <h4>{{ $t('tools.query_builder.select_columns') }}</h4>
         <a-checkbox-group v-model:value="selectedColumns" style="width: 100%;">
           <a-row>
             <a-col :span="8" v-for="col in columns" :key="col.name" style="margin-bottom: 8px;">
@@ -53,26 +53,26 @@
           </a-row>
         </a-checkbox-group>
         <a-button size="small" @click="selectAllColumns" style="margin-top: 8px;">
-          全选
+          {{ $t('common.select_all') }}
         </a-button>
         <a-button size="small" @click="clearAllColumns" style="margin-left: 8px;">
-          清空
+          {{ $t('common.clear') }}
         </a-button>
       </div>
 
       <!-- WHERE 子句 -->
       <div class="query-section">
         <h4>
-          过滤条件 (WHERE)
+          {{ $t('tools.query_builder.where_conditions') }}
           <a-button size="small" type="link" @click="addCondition">
             <PlusOutlined />
-            添加条件
+            {{ $t('tools.query_builder.add_condition') }}
           </a-button>
         </h4>
         <div v-for="(condition, index) in conditions" :key="index" class="condition-row">
           <a-row :gutter="8" align="middle">
             <a-col :span="5">
-              <a-select v-model:value="condition.column" placeholder="列">
+              <a-select v-model:value="condition.column" :placeholder="$t('tools.query_builder.column')">
                 <a-select-option
                   v-for="col in columns"
                   :key="col.name"
@@ -83,7 +83,7 @@
               </a-select>
             </a-col>
             <a-col :span="4">
-              <a-select v-model:value="condition.operator" placeholder="操作符">
+              <a-select v-model:value="condition.operator" :placeholder="$t('tools.query_builder.operator')">
                 <a-select-option value="=">=</a-select-option>
                 <a-select-option value="!=">!=</a-select-option>
                 <a-select-option value=">">></a-select-option>
@@ -99,12 +99,12 @@
             <a-col :span="6">
               <a-input
                 v-model:value="condition.value"
-                placeholder="值"
+                :placeholder="$t('tools.query_builder.value_label')"
                 :disabled="condition.operator === 'IS NULL' || condition.operator === 'IS NOT NULL'"
               />
             </a-col>
             <a-col :span="3">
-              <a-select v-model:value="condition.logic" placeholder="逻辑">
+              <a-select v-model:value="condition.logic" :placeholder="$t('tools.query_builder.logic')">
                 <a-select-option value="AND">AND</a-select-option>
                 <a-select-option value="OR">OR</a-select-option>
               </a-select>
@@ -120,10 +120,10 @@
 
       <!-- ORDER BY 子句 -->
       <div class="query-section">
-        <h4>排序 (ORDER BY)</h4>
+        <h4>{{ $t('tools.query_builder.order_by') }}</h4>
         <a-row :gutter="8">
           <a-col :span="12">
-            <a-select v-model:value="orderByColumn" placeholder="排序列" allow-clear>
+            <a-select v-model:value="orderByColumn" :placeholder="$t('tools.query_builder.order_column')" allow-clear>
               <a-select-option
                 v-for="col in columns"
                 :key="col.name"
@@ -134,9 +134,9 @@
             </a-select>
           </a-col>
           <a-col :span="12">
-            <a-select v-model:value="orderDirection" placeholder="排序方向">
-              <a-select-option value="ASC">升序 (ASC)</a-select-option>
-              <a-select-option value="DESC">降序 (DESC)</a-select-option>
+            <a-select v-model:value="orderDirection" :placeholder="$t('tools.query_builder.order_direction')">
+              <a-select-option value="ASC">{{ $t('tools.query_builder.asc') }}</a-select-option>
+              <a-select-option value="DESC">{{ $t('tools.query_builder.desc') }}</a-select-option>
             </a-select>
           </a-col>
         </a-row>
@@ -144,25 +144,25 @@
 
       <!-- LIMIT 子句 -->
       <div class="query-section">
-        <h4>限制行数 (LIMIT)</h4>
+        <h4>{{ $t('tools.query_builder.limit_rows') }}</h4>
         <a-input-number v-model:value="limitRows" :min="1" :max="10000" style="width: 200px;" />
       </div>
     </div>
 
     <!-- 生成的SQL -->
     <div class="generated-sql">
-      <a-divider>生成的SQL</a-divider>
+      <a-divider>{{ $t('tools.query_builder.generated_sql') }}</a-divider>
       <div class="sql-preview">
         <pre>{{ generatedSql }}</pre>
         <div class="sql-actions">
           <a-space>
             <a-button @click="copySql">
               <CopyOutlined />
-              复制
+              {{ $t('common.copy') }}
             </a-button>
             <a-button type="primary" @click="executeSql">
               <CaretRightOutlined />
-              执行
+              {{ $t('common.execute') }}
             </a-button>
           </a-space>
         </div>
@@ -180,7 +180,18 @@ import {
   CaretRightOutlined,
 } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
-import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
+import { metadataApi } from '@/api'
+import type { DatabaseInfo, TableInfo, ColumnInfo } from '@/types/database'
+
+interface WhereCondition {
+  column: string
+  operator: string
+  value: string
+  logic: string
+}
+
+const { t } = useI18n()
 
 const props = defineProps<{
   connectionId: string | null
@@ -188,13 +199,13 @@ const props = defineProps<{
 
 const emit = defineEmits(['execute-query'])
 
-const databases = ref<any[]>([])
+const databases = ref<DatabaseInfo[]>([])
 const selectedDatabase = ref('')
-const tables = ref<any[]>([])
+const tables = ref<TableInfo[]>([])
 const mainTable = ref('')
-const columns = ref<any[]>([])
+const columns = ref<ColumnInfo[]>([])
 const selectedColumns = ref<string[]>([])
-const conditions = ref<any[]>([])
+const conditions = ref<WhereCondition[]>([])
 const orderByColumn = ref('')
 const orderDirection = ref('ASC')
 const limitRows = ref(100)
@@ -202,28 +213,28 @@ const limitRows = ref(100)
 // 生成SQL
 const generatedSql = computed(() => {
   if (!selectedDatabase.value || !mainTable.value) {
-    return '-- 请选择数据库和表'
+    return t('tools.query_builder.placeholder_sql')
   }
-  
+
   let sql = 'SELECT '
-  
+
   // SELECT 子句
   if (selectedColumns.value.length === 0) {
     sql += '*'
   } else {
     sql += selectedColumns.value.map(col => `\`${col}\``).join(', ')
   }
-  
+
   // FROM 子句
   sql += `\nFROM \`${selectedDatabase.value}\`.\`${mainTable.value}\``
-  
+
   // WHERE 子句
   if (conditions.value.length > 0) {
     const whereConditions = conditions.value
       .filter(c => c.column && c.operator)
       .map((c, index) => {
         let condition = ''
-        
+
         if (c.operator === 'IS NULL' || c.operator === 'IS NOT NULL') {
           condition = `\`${c.column}\` ${c.operator}`
         } else if (c.operator === 'LIKE') {
@@ -233,67 +244,62 @@ const generatedSql = computed(() => {
         } else {
           condition = `\`${c.column}\` ${c.operator} '${c.value}'`
         }
-        
+
         if (index > 0 && c.logic) {
           return `${c.logic} ${condition}`
         }
         return condition
       })
-      
+
     if (whereConditions.length > 0) {
       sql += `\nWHERE ${whereConditions.join('\n  ')}`
     }
   }
-  
+
   // ORDER BY 子句
   if (orderByColumn.value) {
     sql += `\nORDER BY \`${orderByColumn.value}\` ${orderDirection.value}`
   }
-  
+
   // LIMIT 子句
   sql += `\nLIMIT ${limitRows.value}`
-  
+
   sql += ';'
-  
+
   return sql
 })
 
 // 加载数据库列表
 async function loadDatabases() {
   if (!props.connectionId) return
-  
+
   try {
-    const dbs = await invoke<any[]>('get_databases', {
-      connectionId: props.connectionId,
-    })
+    const dbs = await metadataApi.getDatabases(props.connectionId!)
     databases.value = dbs
-  } catch (error: any) {
-    message.error(`加载数据库列表失败: ${error}`)
+  } catch (error: unknown) {
+    message.error(t('tools.query_builder.load_db_fail', { error: String(error) }))
   }
 }
 
 // 加载表列表
 async function loadTables() {
   if (!selectedDatabase.value || !props.connectionId) return
-  
+
   try {
-    const tbls = await invoke<any[]>('get_tables', {
-      connectionId: props.connectionId,
-      database: selectedDatabase.value,
-    })
+    const tbls = await metadataApi.getTables(props.connectionId!, selectedDatabase.value)
     tables.value = tbls
-  } catch (error: any) {
-    message.error(`加载表列表失败: ${error}`)
+  } catch (error: unknown) {
+    message.error(t('tools.query_builder.load_table_fail', { error: String(error) }))
   }
 }
 
 // 加载表列
 async function loadTableColumns() {
   if (!mainTable.value || !selectedDatabase.value || !props.connectionId) return
-  
+
   try {
-    const cols = await invoke<any[]>('get_table_structure', {
-      connectionId: props.connectionId,
+    const cols = await metadataApi.getTableStructure({
+      connectionId: props.connectionId!,
       table: mainTable.value,
       schema: selectedDatabase.value,
       database: selectedDatabase.value,
@@ -301,8 +307,8 @@ async function loadTableColumns() {
     columns.value = cols
     selectedColumns.value = []
     conditions.value = []
-  } catch (error: any) {
-    message.error(`加载列失败: ${error}`)
+  } catch (error: unknown) {
+    message.error(t('tools.query_builder.load_column_fail', { error: String(error) }))
   }
 }
 
@@ -334,13 +340,13 @@ function removeCondition(index: number) {
 // 复制SQL
 function copySql() {
   navigator.clipboard.writeText(generatedSql.value)
-  message.success('SQL已复制到剪贴板')
+  message.success(t('tools.query_builder.copy_success'))
 }
 
 // 执行SQL
 function executeSql() {
   emit('execute-query', generatedSql.value)
-  message.success('SQL已发送到编辑器')
+  message.success(t('tools.query_builder.execute_success'))
 }
 
 // 初始化
@@ -434,4 +440,3 @@ watch(() => props.connectionId, (id) => {
   border-top-color: #303030;
 }
 </style>
-

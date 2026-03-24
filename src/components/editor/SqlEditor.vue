@@ -97,10 +97,11 @@ import { useI18n } from 'vue-i18n'
 import * as monaco from 'monaco-editor'
 import { getSqlAutocompleteManager } from '@/services/sqlAutocomplete'
 import { message } from 'ant-design-vue'
-import { invoke } from '@tauri-apps/api/core'
+import { queryApi, metadataApi, utilsApi } from '@/api'
 import type { QueryResult } from '@/types/database'
 import { useConnectionStore } from '@/stores/connection'
 import { useAppStore } from '@/stores/app'
+import { getStorageItem, setStorageItem, STORAGE_KEYS } from '@/utils/storageService'
 import SaveQueryDialog from './SaveQueryDialog.vue'
 import SqlSnippetsManager from './SqlSnippetsManager.vue'
 import type { VxeGridProps } from 'vxe-table'
@@ -197,11 +198,11 @@ async function loadNextPage(index: number) {
   if (isSelect && !hasLimit && !cleanSql.includes(';')) {
     const pagedSql = `${baseSql} LIMIT ${state.pagination.pageSize} OFFSET ${offset};`
     try {
-      const results = await invoke<QueryResult[]>('execute_query', {
-        connectionId: sessionConnectionId.value,
-        sql: pagedSql,
-        database: selectedDatabase.value || null,
-      })
+      const results = await queryApi.executeQuery(
+        sessionConnectionId.value,
+        pagedSql,
+        selectedDatabase.value || null,
+      )
       if (results.length > 0) {
         const result = results[0]
         state.hasMore = result.rows.length === state.pagination.pageSize
@@ -283,11 +284,11 @@ async function executeQuery() {
     // 3. 合并回一个脚本发送给后端
     const finalSql = processedStatements.join('; ') + ';'
 
-    const results = await invoke<QueryResult[]>('execute_query', {
-      connectionId: connId,
-      sql: finalSql,
-      database: selectedDatabase.value || null,
-    })
+    const results = await queryApi.executeQuery(
+      connId,
+      finalSql,
+      selectedDatabase.value || null,
+    )
     
     queryResults.value = results
     
@@ -327,7 +328,7 @@ async function explainQuery() {
 
   executing.value = true
   try {
-    const results = await invoke<QueryResult[]>('explain_query', { connectionId: connId, sql, database: selectedDatabase.value || null })
+    const results = await queryApi.explainQuery(connId, sql, selectedDatabase.value || null)
     queryResults.value = results
     resultTabKey.value = 'result-0'
     addMessage('success', t('editor.explain_success'))
@@ -338,27 +339,27 @@ async function explainQuery() {
 }
 
 function stopExecution() { executing.value = false; addMessage('info', t('editor.manual_stop')) }
-async function formatSql() { if (!editor) return; try { const formatted = await invoke<string>('beautify_sql', { connectionId: sessionConnectionId.value, sql: editor.getValue() }); editor.setValue(formatted); message.success(t('editor.format_success')) } catch (e: any) { message.error(e) } }
+async function formatSql() { if (!editor) return; try { const formatted = await queryApi.beautifySql(sessionConnectionId.value, editor.getValue()); editor.setValue(formatted); message.success(t('editor.format_success')) } catch (e: any) { message.error(e) } }
 function clearEditor() { editor?.setValue(''); queryResults.value = []; messages.value = []; }
 function handleQuerySaved() { message.success(t('common.save')) }
 function insertSnippet(sql: string) { if (!editor) return; const selection = editor.getSelection(); editor.executeEdits('insert-snippet', [{ range: selection || editor.getSelection()!, text: sql }]); showSnippets.value = false }
 function openHistory() { showHistory.value = true }
 function openSnippets() { showSnippets.value = true }
 function useHistorySql(sql: string) { editor?.setValue(sql); showHistory.value = false; }
-function saveToHistory(sql: string) { sqlHistory.value.unshift({ sql, timestamp: Date.now(), database: selectedDatabase.value }); if (sqlHistory.value.length > 100) sqlHistory.value.pop(); localStorage.setItem('sql_history', JSON.stringify(sqlHistory.value)) }
+function saveToHistory(sql: string) { sqlHistory.value.unshift({ sql, timestamp: Date.now(), database: selectedDatabase.value }); if (sqlHistory.value.length > 100) sqlHistory.value.pop(); setStorageItem(STORAGE_KEYS.SQL_HISTORY, sqlHistory.value) }
 async function refreshAutocomplete() { const baseId = props.connectionId || connectionStore.activeConnectionId; if (!baseId) return; autocompleteManager.clearCache(baseId); updateAutocompleteContext(); message.success(t('editor.refresh_cache_success')) }
 async function setSelectedDatabase(database: string) { if (availableDatabases.value.length === 0) await loadAvailableDatabases(); selectedDatabase.value = database; updateAutocompleteContext() }
-async function handleSave(isAuto = false) { if (!editor || !props.filePath) return; const content = editor.getValue(); if (!content.trim()) return; try { await invoke('write_file', { path: props.filePath, content: content }); if (!isAuto) message.success(t('common.save')) } catch (err: any) { if (!isAuto) message.error(`${t('common.fail')}: ${err}`) } }
+async function handleSave(isAuto = false) { if (!editor || !props.filePath) return; const content = editor.getValue(); if (!content.trim()) return; try { await utilsApi.writeFile(props.filePath, content); if (!isAuto) message.success(t('common.save')) } catch (err: any) { if (!isAuto) message.error(`${t('common.fail')}: ${err}`) } }
 function startResize(e: MouseEvent) { isSplitResizing.value = true; const startY = e.clientY, startHeight = editorHeight.value; const doResize = (ev: MouseEvent) => { if (isSplitResizing.value) { editorHeight.value = Math.max(100, startHeight + (ev.clientY - startY)); } }; const stopResize = () => { isSplitResizing.value = false; document.removeEventListener('mousemove', doResize); document.removeEventListener('mouseup', stopResize); document.body.style.cursor = '' }; document.body.style.cursor = 'row-resize'; document.addEventListener('mousemove', doResize); document.addEventListener('mouseup', stopResize) }
 function updateAutocompleteContext() { const model = editor?.getModel(), baseId = props.connectionId || connectionStore.activeConnectionId; if (model && baseId && connectionStore.connections.length > 0) { const conn = connectionStore.connections.find(c => c.id === baseId); autocompleteManager.bindModel(model, { connectionId: baseId, database: selectedDatabase.value || null, dbType: conn?.db_type || null }) } }
-async function loadAvailableDatabases() { const baseId = props.connectionId || connectionStore.activeConnectionId; if (!baseId) return; try { const dbs = await invoke<any[]>('get_databases', { connectionId: baseId }); availableDatabases.value = dbs; emit('databasesLoaded', dbs) } catch (e) { console.error(e) } }
+async function loadAvailableDatabases() { const baseId = props.connectionId || connectionStore.activeConnectionId; if (!baseId) return; try { const dbs = await metadataApi.getDatabases(baseId); availableDatabases.value = dbs; emit('databasesLoaded', dbs) } catch (e) { console.error(e) } }
 function handleDatabaseChange(dbName: string) { selectedDatabase.value = dbName; updateAutocompleteContext() }
 
 onMounted(() => {
   if (!editorContainer.value) return
   editor = monaco.editor.create(editorContainer.value, { value: props.initialValue || t('editor.placeholder'), language: 'sql', theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs', automaticLayout: true, fontSize: 14, minimap: { enabled: false }, scrollBeyondLastLine: false, lineNumbers: 'on', renderLineHighlight: 'all', quickSuggestions: { other: true, comments: false, strings: false }, suggestOnTriggerCharacters: true, acceptSuggestionOnCommitCharacter: true, acceptSuggestionOnEnter: 'on', tabCompletion: 'on' })
   updateAutocompleteContext(); editor.onDidChangeModelContent(() => { emit('contentChange', editor?.getValue() || ''); triggerAutoSave() }); editor.addCommand(monaco.KeyCode.F5, () => executeQuery()); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => handleSave());
-  const history = localStorage.getItem('sql_history'); if (history) { try { sqlHistory.value = JSON.parse(history) } catch (e) { console.error(e) } }
+  sqlHistory.value = getStorageItem(STORAGE_KEYS.SQL_HISTORY, [])
   loadAvailableDatabases();
 })
 let autoSaveTimer: any = null; function triggerAutoSave() { if (autoSaveTimer) clearTimeout(autoSaveTimer); autoSaveTimer = setTimeout(() => { handleSave(true) }, 2000) }

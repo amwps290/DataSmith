@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ConnectionConfig, ConnectionStatus } from '@/types/database'
+import type { ConnectionConfig, ConnectionStatus, StoredConnection } from '@/types/database'
 import { connectionApi } from '@/api'
 import { withErrorHandler } from '@/utils/errorHandler'
 
@@ -20,7 +20,7 @@ export const useConnectionStore = defineStore('connection', () => {
   /**
    * 将 ConnectionConfig 转换为存储格式
    */
-  function toStoredConnection(config: ConnectionConfig, isNew: boolean = false): any {
+  function toStoredConnection(config: ConnectionConfig, isNew: boolean = false): StoredConnection {
     return {
       id: config.id,
       name: config.name,

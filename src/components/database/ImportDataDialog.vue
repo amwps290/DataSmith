@@ -1,14 +1,14 @@
 <template>
   <a-modal
     v-model:open="visible"
-    :title="`导入数据 - ${table}`"
+    :title="$t('dialog.import_data.title', { table })"
     width="600px"
     @ok="handleImport"
     @cancel="handleCancel"
     :confirm-loading="importing"
   >
     <a-form :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
-      <a-form-item label="文件格式" required>
+      <a-form-item :label="$t('dialog.import_data.file_format')" required>
         <a-radio-group v-model:value="importFormat">
           <a-radio value="csv">CSV</a-radio>
           <a-radio value="json">JSON</a-radio>
@@ -16,10 +16,10 @@
         </a-radio-group>
       </a-form-item>
 
-      <a-form-item label="选择文件" required>
+      <a-form-item :label="$t('dialog.import_data.select_file')" required>
         <a-input
           v-model:value="filePath"
-          placeholder="点击选择要导入的文件"
+          :placeholder="$t('dialog.import_data.select_file_placeholder')"
           readonly
           @click="selectFile"
         >
@@ -29,27 +29,27 @@
         </a-input>
       </a-form-item>
 
-      <a-form-item label="导入模式">
+      <a-form-item :label="$t('dialog.import_data.import_mode')">
         <a-radio-group v-model:value="importMode">
-          <a-radio value="insert">插入</a-radio>
-          <a-radio value="replace">替换</a-radio>
-          <a-radio value="truncate">清空后插入</a-radio>
+          <a-radio value="insert">{{ $t('dialog.import_data.mode_insert') }}</a-radio>
+          <a-radio value="replace">{{ $t('dialog.import_data.mode_replace') }}</a-radio>
+          <a-radio value="truncate">{{ $t('dialog.import_data.mode_truncate') }}</a-radio>
         </a-radio-group>
       </a-form-item>
 
-      <a-form-item v-if="importFormat === 'csv'" label="字段分隔符">
-        <a-input v-model:value="delimiter" placeholder="默认为逗号" />
+      <a-form-item v-if="importFormat === 'csv'" :label="$t('dialog.import_data.delimiter')">
+        <a-input v-model:value="delimiter" :placeholder="$t('dialog.import_data.delimiter_placeholder')" />
       </a-form-item>
 
-      <a-form-item v-if="importFormat === 'csv'" label="包含表头">
+      <a-form-item v-if="importFormat === 'csv'" :label="$t('dialog.import_data.has_header')">
         <a-switch v-model:checked="hasHeader" />
       </a-form-item>
     </a-form>
 
     <a-alert
       v-if="importMode === 'truncate'"
-      message="警告"
-      description="清空后插入模式将删除表中所有现有数据，此操作不可恢复！"
+      :message="$t('common.warning')"
+      :description="$t('dialog.import_data.truncate_warning')"
       type="warning"
       show-icon
       style="margin-top: 12px"
@@ -58,11 +58,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { FileOutlined } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
+import { useI18n } from 'vue-i18n'
+import { queryApi, metadataApi, dataApi, utilsApi } from '@/api'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import { useDialogModel } from '@/composables/useDialogModel'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: boolean
@@ -74,10 +79,7 @@ const props = defineProps<{
 
 const emit = defineEmits(['update:modelValue', 'imported'])
 
-const visible = computed({
-  get: () => props.modelValue,
-  set: (val: boolean) => emit('update:modelValue', val),
-})
+const visible = useDialogModel(props, emit)
 
 const importing = ref(false)
 const importFormat = ref('csv')
@@ -108,17 +110,17 @@ async function selectFile() {
 
 async function handleImport() {
   if (!filePath.value) {
-    message.error('请选择要导入的文件')
+    message.error(t('dialog.import_data.file_required'))
     return
   }
 
   if (importMode.value === 'truncate') {
     Modal.confirm({
-      title: '确认清空表',
-      content: '您选择了清空后插入模式，这将删除表中所有现有数据。确定继续吗？',
-      okText: '确定',
+      title: t('dialog.import_data.confirm_truncate_title'),
+      content: t('dialog.import_data.confirm_truncate_content'),
+      okText: t('common.ok'),
       okType: 'danger',
-      cancelText: '取消',
+      cancelText: t('common.cancel'),
       onOk: async () => {
         await doImport()
       },
@@ -142,9 +144,7 @@ async function doImport() {
     }
 
     // 读取文件内容
-    const fileContent = await invoke<string>('read_file', {
-      path: filePath.value,
-    })
+    const fileContent = await utilsApi.readFile(filePath.value)
 
     // 根据格式解析并导入
     if (importFormat.value === 'csv') {
@@ -155,11 +155,11 @@ async function doImport() {
       await importFromSQL(fileContent)
     }
 
-    message.success('导入成功')
+    message.success(t('dialog.import_data.success'))
     emit('imported')
     handleCancel()
-  } catch (error: any) {
-    message.error(`导入失败: ${error}`)
+  } catch (error: unknown) {
+    message.error(t('dialog.import_data.fail', { error: String(error) }))
   } finally {
     importing.value = false
   }
@@ -177,19 +177,19 @@ async function importFromCSV(content: string) {
     startIndex = 1
   } else {
     // 如果没有表头，使用表的列名
-    const columns = await invoke<any[]>('get_table_structure', {
+    const columns = await metadataApi.getTableStructure({
       connectionId: props.connectionId,
       table: props.table,
       schema: props.database,
       database: props.database,
-    })
+    }) as { name: string }[]
     headers = columns.map(col => col.name)
   }
 
   // 批量插入数据
   for (let i = startIndex; i < lines.length; i++) {
     const values = lines[i].split(delimiter.value).map(v => v.trim().replace(/^"|"$/g, ''))
-    const data: Record<string, any> = {}
+    const data: Record<string, string> = {}
 
     headers.forEach((header, index) => {
       if (values[index] !== undefined && values[index] !== '') {
@@ -197,7 +197,7 @@ async function importFromCSV(content: string) {
       }
     })
 
-    await invoke('insert_table_data', {
+    await dataApi.insertTableData({
       connectionId: props.connectionId,
       database: props.database,
       table: props.table,
@@ -212,7 +212,7 @@ async function importFromJSON(content: string) {
   const rows = Array.isArray(data) ? data : [data]
 
   for (const row of rows) {
-    await invoke('insert_table_data', {
+    await dataApi.insertTableData({
       connectionId: props.connectionId,
       database: props.database,
       table: props.table,
@@ -224,11 +224,7 @@ async function importFromJSON(content: string) {
 
 async function importFromSQL(content: string) {
   // 直接执行SQL
-  await invoke('execute_query', {
-    connectionId: props.connectionId,
-    sql: content,
-    database: props.database,
-  })
+  await queryApi.executeQuery(props.connectionId, content, props.database)
 }
 
 function handleCancel() {
@@ -240,4 +236,3 @@ function handleCancel() {
   visible.value = false
 }
 </script>
-

@@ -1,21 +1,21 @@
 <template>
   <a-modal
     v-model:open="visible"
-    title="保存查询"
+    :title="$t('dialog.save_query.title')"
     width="500px"
     @ok="handleSave"
     @cancel="handleCancel"
     :confirm-loading="saving"
   >
     <a-form :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
-      <a-form-item label="查询名称" required>
-        <a-input v-model:value="queryName" placeholder="为查询起一个名称" />
+      <a-form-item :label="$t('dialog.save_query.query_name')" required>
+        <a-input v-model:value="queryName" :placeholder="$t('dialog.save_query.query_name_placeholder')" />
       </a-form-item>
 
-      <a-form-item label="分类">
+      <a-form-item :label="$t('dialog.save_query.category')">
         <a-select
           v-model:value="category"
-          placeholder="选择分类"
+          :placeholder="$t('dialog.save_query.category_placeholder')"
           :options="categoryOptions"
           :show-search="true"
           :allow-clear="true"
@@ -25,18 +25,18 @@
               <div>{{ menuNode }}</div>
               <a-divider style="margin: 4px 0" />
               <div style="padding: 4px 8px; cursor: pointer" @click="showAddCategory = true">
-                <PlusOutlined /> 添加新分类
+                <PlusOutlined /> {{ $t('dialog.save_query.add_category') }}
               </div>
             </div>
           </template>
         </a-select>
       </a-form-item>
 
-      <a-form-item label="描述">
-        <a-textarea v-model:value="description" placeholder="查询说明（可选）" :rows="3" />
+      <a-form-item :label="$t('dialog.save_query.description')">
+        <a-textarea v-model:value="description" :placeholder="$t('dialog.save_query.description_placeholder')" :rows="3" />
       </a-form-item>
 
-      <a-form-item label="SQL预览">
+      <a-form-item :label="$t('dialog.save_query.sql_preview')">
         <div class="sql-preview">
           {{ sqlPreview }}
         </div>
@@ -46,12 +46,12 @@
     <!-- 添加分类对话框 -->
     <a-modal
       v-model:open="showAddCategory"
-      title="添加分类"
+      :title="$t('dialog.save_query.add_category_title')"
       width="400px"
       @ok="handleAddCategory"
       @cancel="showAddCategory = false"
     >
-      <a-input v-model:value="newCategory" placeholder="输入分类名称" />
+      <a-input v-model:value="newCategory" :placeholder="$t('dialog.save_query.category_input_placeholder')" />
     </a-modal>
   </a-modal>
 </template>
@@ -60,6 +60,9 @@
 import { ref, computed, watch } from 'vue'
 import { PlusOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
+import { useI18n } from 'vue-i18n'
+import { useDialogModel } from '@/composables/useDialogModel'
+import { getStorageItem, setStorageItem, STORAGE_KEYS } from '@/utils/storageService'
 
 interface SavedQuery {
   id: string
@@ -71,6 +74,8 @@ interface SavedQuery {
   updatedAt: number
 }
 
+const { t } = useI18n()
+
 const props = defineProps<{
   modelValue: boolean
   sql: string
@@ -78,10 +83,7 @@ const props = defineProps<{
 
 const emit = defineEmits(['update:modelValue', 'saved'])
 
-const visible = computed({
-  get: () => props.modelValue,
-  set: (val) => emit('update:modelValue', val),
-})
+const visible = useDialogModel(props, emit)
 
 const saving = ref(false)
 const queryName = ref('')
@@ -105,58 +107,40 @@ const sqlPreview = computed(() => {
 
 // 加载分类列表
 function loadCategories() {
-  const stored = localStorage.getItem('query_categories')
-  if (stored) {
-    try {
-      categories.value = JSON.parse(stored)
-    } catch (e) {
-      categories.value = ['常用查询', '数据分析', '报表查询']
-    }
-  } else {
-    categories.value = ['常用查询', '数据分析', '报表查询']
-  }
+  categories.value = getStorageItem<string[]>(STORAGE_KEYS.QUERY_CATEGORIES, ['常用查询', '数据分析', '报表查询'])
 }
 
 // 添加分类
 function handleAddCategory() {
   if (!newCategory.value.trim()) {
-    message.error('请输入分类名称')
+    message.error(t('dialog.save_query.category_name_required'))
     return
   }
 
   if (categories.value.includes(newCategory.value)) {
-    message.error('分类已存在')
+    message.error(t('dialog.save_query.category_exists'))
     return
   }
 
   categories.value.push(newCategory.value)
-  localStorage.setItem('query_categories', JSON.stringify(categories.value))
+  setStorageItem(STORAGE_KEYS.QUERY_CATEGORIES, categories.value)
   category.value = newCategory.value
   newCategory.value = ''
   showAddCategory.value = false
-  message.success('分类添加成功')
+  message.success(t('dialog.save_query.category_added'))
 }
 
 // 保存查询
 function handleSave() {
   if (!queryName.value.trim()) {
-    message.error('请输入查询名称')
+    message.error(t('dialog.save_query.name_required'))
     return
   }
 
   saving.value = true
   try {
     // 获取已保存的查询
-    const stored = localStorage.getItem('saved_queries')
-    let queries: SavedQuery[] = []
-    
-    if (stored) {
-      try {
-        queries = JSON.parse(stored)
-      } catch (e) {
-        queries = []
-      }
-    }
+    let queries: SavedQuery[] = getStorageItem<SavedQuery[]>(STORAGE_KEYS.SAVED_QUERIES, [])
 
     // 创建新查询
     const query: SavedQuery = {
@@ -176,13 +160,13 @@ function handleSave() {
       queries = queries.slice(0, 200)
     }
 
-    localStorage.setItem('saved_queries', JSON.stringify(queries))
-    
-    message.success('查询保存成功')
+    setStorageItem(STORAGE_KEYS.SAVED_QUERIES, queries)
+
+    message.success(t('dialog.save_query.success'))
     emit('saved', query)
     handleCancel()
-  } catch (error: any) {
-    message.error(`保存失败: ${error}`)
+  } catch (error: unknown) {
+    message.error(t('dialog.save_query.fail', { error: String(error) }))
   } finally {
     saving.value = false
   }
@@ -216,4 +200,3 @@ watch(visible, (newVal) => {
   word-break: break-all;
 }
 </style>
-

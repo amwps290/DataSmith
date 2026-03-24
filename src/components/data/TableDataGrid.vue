@@ -135,8 +135,8 @@ import {
   ExportOutlined
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
+import { queryApi, metadataApi, dataApi } from '@/api'
 import { invoke } from '@tauri-apps/api/core'
-import type { QueryResult } from '@/types/database'
 import { useConnectionStore } from '@/stores/connection'
 import type { VxeGridProps, VxeGridInstance, VxeGridEvents } from 'vxe-table'
 
@@ -284,7 +284,7 @@ async function submitChanges() {
       })
 
       for (const [field, change] of Object.entries(fields)) {
-        await invoke('update_table_data', {
+        await dataApi.updateTableData({
           connectionId: props.connectionId, database: props.database, table: props.table,
           schema: props.schema || null, column: field, value: change.new === null ? null : String(change.new), whereConditions
         })
@@ -341,14 +341,14 @@ async function loadData(isAppend: boolean) {
   loading.value = true; if (!isAppend) gridOptions.loading = true
   try {
     if (primaryKeys.value.length === 0) {
-      const struct = await invoke<any[]>('get_table_structure', { connectionId: props.connectionId, table: props.table, schema: props.schema || props.database, database: props.database })
+      const struct = await metadataApi.getTableStructure({ connectionId: props.connectionId, table: props.table, schema: props.schema || props.database, database: props.database })
       primaryKeys.value = struct.filter(c => c.is_primary_key).map(c => c.name)
     }
     const offset = (pagination.current - 1) * pagination.pageSize
     let sql = `SELECT * FROM ${tableRef()}`
     if (filterCondition.value) sql += ` WHERE ${filterCondition.value}`
     sql += ` LIMIT ${pagination.pageSize} OFFSET ${offset}`
-    const results = await invoke<QueryResult[]>('execute_query', { connectionId: props.connectionId, sql, database: props.database })
+    const results = await queryApi.executeQuery(props.connectionId, sql, props.database)
     const result = results[0]
     if (!result) { hasMore.value = false; if (!isAppend) { gridOptions.columns = []; gridOptions.data = [] }; return }
     hasMore.value = result.rows.length === pagination.pageSize
@@ -392,9 +392,9 @@ async function deleteSelected() {
             whereConditions[pk] = record._originalData[pk]
           })
           
-          await invoke('delete_table_data', { 
-            connectionId: props.connectionId, database: props.database, table: props.table, 
-            schema: props.schema || null, whereConditions 
+          await dataApi.deleteTableData({
+            connectionId: props.connectionId, database: props.database, table: props.table,
+            schema: props.schema || null, whereConditions
           })
         }
         message.success(t('data.delete_success')); refresh()

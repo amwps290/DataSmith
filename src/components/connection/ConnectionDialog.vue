@@ -116,7 +116,7 @@ import { message, Modal } from 'ant-design-vue'
 import { useConnectionStore } from '@/stores/connection'
 import type { ConnectionConfig, DatabaseType } from '@/types/database'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { invoke } from '@tauri-apps/api/core'
+import { connectionApi } from '@/api'
 
 const { t } = useI18n()
 const props = defineProps<{
@@ -303,7 +303,7 @@ async function handleCreateFile() {
       filters: [{ name: 'SQLite Database', extensions: ['db', 'sqlite', 'sqlite3'] }]
     })
     if (path) {
-      await invoke("create_sqlite_database", { path })
+      await connectionApi.createSqliteDatabase(path)
       formData.host = path
       // 自动设置连接名称
       const fileName = path.split(/[\\/]/).pop()?.split('.')[0] || 'New SQLite'

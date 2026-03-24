@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 use tokio_postgres::{Client, NoTls};
 use tracing::{info, instrument, error, debug};
@@ -8,10 +9,13 @@ use postgres_native_tls::MakeTlsConnector;
 use tokio::sync::Mutex;
 
 use super::traits::*;
+use super::constants::PG_DEFAULT_SCHEMA;
+use super::sql_helpers::{build_where_clause, ParamStyle};
+use crate::utils::sql_sanitize::{escape_pg_id, escape_string_literal};
 
 /// PostgreSQL 驱动状态容器 - 用于内部互斥
 struct PgState {
-    client: Option<Client>,
+    client: Option<Arc<Client>>,
     config: Option<ConnectionConfig>,
 }
 
@@ -27,11 +31,26 @@ impl PostgreSqlDatabase {
         }
     }
 
+    /// libpq 连接字符串值转义：用单引号包裹，转义反斜杠和单引号
+    fn escape_connstr_value(val: &str) -> String {
+        format!("'{}'", val.replace('\\', "\\\\").replace('\'', "\\'"))
+    }
+
+    /// 获取已连接客户端的 Arc 引用（不持有锁），若未连接则返回错误
+    async fn get_client_arc(&self) -> DbResult<Arc<Client>> {
+        let state = self.state.lock().await;
+        state.client.as_ref().cloned().ok_or(DbError::not_connected())
+    }
+
     async fn create_client(config: &ConnectionConfig) -> DbResult<Client> {
         let db_name = config.database.as_deref().unwrap_or("postgres");
         let conn_str = format!(
             "host={} port={} user={} password={} dbname={}",
-            config.host, config.port, config.username, config.password, db_name
+            Self::escape_connstr_value(&config.host),
+            config.port,
+            Self::escape_connstr_value(&config.username),
+            Self::escape_connstr_value(&config.password),
+            Self::escape_connstr_value(db_name)
         );
         
         debug!(conn = %conn_str.replace(&config.password, "******"), "正在建立 PostgreSQL 物理连接...");
@@ -61,7 +80,7 @@ impl DatabaseOperations for PostgreSqlDatabase {
     async fn connect(&self, config: ConnectionConfig) -> DbResult<()> {
         let client = Self::create_client(&config).await?;
         let mut state = self.state.lock().await;
-        state.client = Some(client);
+        state.client = Some(Arc::new(client));
         state.config = Some(config);
         Ok(())
     }
@@ -85,7 +104,7 @@ impl DatabaseOperations for PostgreSqlDatabase {
         config.database = Some(database.to_string());
         
         let client = Self::create_client(&config).await?;
-        state.client = Some(client);
+        state.client = Some(Arc::new(client));
         state.config = Some(config);
         Ok(())
     }
@@ -93,8 +112,7 @@ impl DatabaseOperations for PostgreSqlDatabase {
     #[instrument(skip(self, sql))]
     async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         let start = Instant::now();
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let client = self.get_client_arc().await?;
         
         debug!(sql = %sql.replace('\n', " "), "执行查询");
 
@@ -149,52 +167,42 @@ impl DatabaseOperations for PostgreSqlDatabase {
         }
 
         if results.is_empty() {
-            results.push(QueryResult {
-                columns: vec![],
-                rows: vec![],
-                affected_rows: 0,
-                execution_time_ms: start.elapsed().as_millis(),
-            });
+            results.push(QueryResult::empty(start.elapsed().as_millis()));
         }
 
         Ok(results)
     }
 
     async fn get_databases(&self) -> DbResult<Vec<DatabaseInfo>> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let client = self.get_client_arc().await?;
         let rows = client.query("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname", &[]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(rows.into_iter().map(|r| DatabaseInfo { name: r.get(0), charset: None, collation: None }).collect())
     }
 
     async fn get_schemas(&self, _db: Option<&str>) -> DbResult<Vec<SchemaInfo>> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let client = self.get_client_arc().await?;
         let sql = "SELECT nspname, pg_catalog.pg_get_userbyid(nspowner) FROM pg_catalog.pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname != 'information_schema' ORDER BY nspname";
         let rows = client.query(sql, &[]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(rows.into_iter().map(|r| SchemaInfo { name: r.get(0), owner: r.try_get(1).ok(), comment: None }).collect())
     }
 
     async fn get_tables(&self, _db: Option<&str>) -> DbResult<Vec<TableInfo>> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let client = self.get_client_arc().await?;
         let sql = "SELECT n.nspname, c.relname, obj_description(c.oid) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind = 'r' AND n.nspname NOT IN ('pg_catalog', 'information_schema') ORDER BY n.nspname, c.relname";
         let rows = client.query(sql, &[]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(rows.into_iter().map(|r| TableInfo { name: r.get(1), schema: Some(r.get(0)), table_type: "TABLE".into(), engine: None, rows: None, size_mb: None, comment: r.try_get(2).ok() }).collect())
     }
 
     async fn get_views(&self, _db: Option<&str>) -> DbResult<Vec<TableInfo>> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let client = self.get_client_arc().await?;
         let sql = "SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind = 'v' AND n.nspname NOT IN ('pg_catalog', 'information_schema') ORDER BY n.nspname, c.relname";
         let rows = client.query(sql, &[]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(rows.into_iter().map(|r| TableInfo { name: r.get(1), schema: Some(r.get(0)), table_type: "VIEW".into(), engine: None, rows: None, size_mb: None, comment: None }).collect())
     }
 
     async fn get_table_structure(&self, table: &str, schema: Option<&str>, _db: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
-        let schema_name = schema.unwrap_or("public");
+        let client = self.get_client_arc().await?;
+        let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
         
         let sql = "
             SELECT a.attname, format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END, pg_get_expr(d.adbin, d.adrelid), CASE WHEN a.attlen = -1 THEN 0 ELSE a.attlen END
@@ -223,37 +231,24 @@ impl DatabaseOperations for PostgreSqlDatabase {
     }
 
     async fn update_data(&self, table: &str, schema: Option<&str>, column: &str, value: Option<String>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
-        
-        let schema_name = schema.unwrap_or("public");
-        
-        // 构造 WHERE 子句和参数
+        let client = self.get_client_arc().await?;
+
+        let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
+
+        // $1 是新值，WHERE 参数从 $2 开始
+        let wc = build_where_clause(&where_conditions, escape_pg_id, ParamStyle::DollarNumber(1));
+
         let mut params: Vec<Option<String>> = Vec::new();
-        params.push(value); // $1 是新值
-        
-        let mut where_parts = Vec::new();
-        for (i, (col, val)) in where_conditions.iter().enumerate() {
-            let param_idx = i + 2; // 从 $2 开始
-            if val.is_null() {
-                where_parts.push(format!("\"{}\" IS NULL", col));
-            } else {
-                where_parts.push(format!("\"{}\" = ${}", col, param_idx));
-                params.push(Some(match val {
-                    serde_json::Value::String(s) => s.clone(),
-                    _ => val.to_string(),
-                }));
-            }
-        }
+        params.push(value); // $1
+        params.extend(wc.param_values);
 
         let sql = format!(
-            "UPDATE \"{}\".\"{}\" SET \"{}\" = $1 WHERE {}", 
-            schema_name, table, column, where_parts.join(" AND ")
+            "UPDATE {}.{} SET {} = $1 WHERE {}",
+            escape_pg_id(schema_name), escape_pg_id(table), escape_pg_id(column), wc.sql
         );
-        
+
         debug!(sql = %sql, "执行 PostgreSQL 参数化更新");
-        
-        // 将 Vec<Option<String>> 转换为 &[&(dyn ToSql + Sync)]
+
         let mut query_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
         for p in &params {
             query_params.push(p);
@@ -264,33 +259,21 @@ impl DatabaseOperations for PostgreSqlDatabase {
     }
 
     async fn delete_data(&self, table: &str, schema: Option<&str>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
-        
-        let schema_name = schema.unwrap_or("public");
-        
-        let mut params: Vec<Option<String>> = Vec::new();
-        let mut where_parts = Vec::new();
-        for (i, (col, val)) in where_conditions.iter().enumerate() {
-            let param_idx = i + 1;
-            if val.is_null() {
-                where_parts.push(format!("\"{}\" IS NULL", col));
-            } else {
-                where_parts.push(format!("\"{}\" = ${}", col, param_idx));
-                params.push(Some(match val {
-                    serde_json::Value::String(s) => s.clone(),
-                    _ => val.to_string(),
-                }));
-            }
-        }
+        let client = self.get_client_arc().await?;
+
+        let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
+
+        // DELETE 参数从 $1 开始
+        let wc = build_where_clause(&where_conditions, escape_pg_id, ParamStyle::DollarNumber(0));
 
         let sql = format!(
-            "DELETE FROM \"{}\".\"{}\" WHERE {}", 
-            schema_name, table, where_parts.join(" AND ")
+            "DELETE FROM {}.{} WHERE {}",
+            escape_pg_id(schema_name), escape_pg_id(table), wc.sql
         );
-        
+
         debug!(sql = %sql, "执行 PostgreSQL 参数化删除");
-        
+
+        let params = wc.param_values;
         let mut query_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
         for p in &params {
             query_params.push(p);
@@ -301,9 +284,8 @@ impl DatabaseOperations for PostgreSqlDatabase {
     }
 
     async fn get_indexes(&self, table: &str, schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
-        let schema_name = schema.unwrap_or("public");
+        let client = self.get_client_arc().await?;
+        let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
         let sql = "SELECT i.relname, a.attname, ix.indisunique, ix.indisprimary FROM pg_class t JOIN pg_index ix ON t.oid = ix.indrelid JOIN pg_class i ON i.oid = ix.indexrelid JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) JOIN pg_namespace n ON n.oid = t.relnamespace WHERE t.relname = $1 AND n.nspname = $2";
         let rows = client.query(sql, &[&table, &schema_name]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         let mut map: HashMap<String, IndexInfo> = HashMap::new();
@@ -317,9 +299,8 @@ impl DatabaseOperations for PostgreSqlDatabase {
     }
 
     async fn get_schema_indexes(&self, _database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
-        let schema_name = schema.unwrap_or("public");
+        let client = self.get_client_arc().await?;
+        let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
         let sql = "SELECT i.relname, a.attname, ix.indisunique, ix.indisprimary FROM pg_index ix JOIN pg_class i ON i.oid = ix.indexrelid JOIN pg_class t ON t.oid = ix.indrelid JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) JOIN pg_namespace n ON n.oid = i.relnamespace WHERE n.nspname = $1";
         let rows = client.query(sql, &[&schema_name]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         let mut map: HashMap<String, IndexInfo> = HashMap::new();
@@ -334,9 +315,8 @@ impl DatabaseOperations for PostgreSqlDatabase {
     }
 
     async fn get_foreign_keys(&self, table: &str, schema: Option<&str>) -> DbResult<Vec<ForeignKeyInfo>> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
-        let schema_name = schema.unwrap_or("public");
+        let client = self.get_client_arc().await?;
+        let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
         
         let sql = "
             SELECT
@@ -376,37 +356,36 @@ impl DatabaseOperations for PostgreSqlDatabase {
     }
 
     async fn alter_table(&self, table: &str, schema: Option<&str>, _database: Option<&str>, changes: Vec<TableChange>) -> DbResult<()> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
-        let schema_name = schema.unwrap_or("public");
+        let client = self.get_client_arc().await?;
+        let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
         
         let mut sql_parts = Vec::new();
         for change in &changes {
             match change {
                 TableChange::AddColumn(col) => {
-                    let mut part = format!("ADD COLUMN \"{}\" {}", col.name, col.data_type);
+                    let mut part = format!("ADD COLUMN {} {}", escape_pg_id(&col.name), col.data_type);
                     if !col.nullable { part.push_str(" NOT NULL"); }
-                    if let Some(ref d) = col.default_value { part.push_str(&format!(" DEFAULT {}", d)); }
+                    if let Some(ref d) = col.default_value { part.push_str(&format!(" DEFAULT {}", escape_string_literal(d))); }
                     sql_parts.push(part);
                 },
                 TableChange::ModifyColumn { old_name, new_column } => {
                     if old_name != &new_column.name {
-                        sql_parts.push(format!("RENAME COLUMN \"{}\" TO \"{}\"", old_name, new_column.name));
+                        sql_parts.push(format!("RENAME COLUMN {} TO {}", escape_pg_id(old_name), escape_pg_id(&new_column.name)));
                     }
-                    sql_parts.push(format!("ALTER COLUMN \"{}\" TYPE {}", new_column.name, new_column.data_type));
+                    sql_parts.push(format!("ALTER COLUMN {} TYPE {}", escape_pg_id(&new_column.name), new_column.data_type));
                     if new_column.nullable {
-                        sql_parts.push(format!("ALTER COLUMN \"{}\" DROP NOT NULL", new_column.name));
+                        sql_parts.push(format!("ALTER COLUMN {} DROP NOT NULL", escape_pg_id(&new_column.name)));
                     } else {
-                        sql_parts.push(format!("ALTER COLUMN \"{}\" SET NOT NULL", new_column.name));
+                        sql_parts.push(format!("ALTER COLUMN {} SET NOT NULL", escape_pg_id(&new_column.name)));
                     }
                 },
                 TableChange::DropColumn(name) => {
-                    sql_parts.push(format!("DROP COLUMN \"{}\"", name));
+                    sql_parts.push(format!("DROP COLUMN {}", escape_pg_id(name)));
                 },
                 TableChange::AddIndex(idx) => {
-                    let cols = idx.columns.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+                    let cols = idx.columns.iter().map(|c| escape_pg_id(c)).collect::<Vec<_>>().join(", ");
                     let unique = if idx.is_unique { "UNIQUE " } else { "" };
-                    sql_parts.push(format!("ADD {}INDEX \"{}\" ({})", unique, idx.name, cols));
+                    sql_parts.push(format!("ADD {}INDEX {} ({})", unique, escape_pg_id(&idx.name), cols));
                 },
                 TableChange::DropIndex(name) => {
                     // PostgreSQL DROP INDEX 是独立命令，不能放在 ALTER TABLE 中
@@ -414,21 +393,21 @@ impl DatabaseOperations for PostgreSqlDatabase {
                 },
                 TableChange::AddForeignKey(fk) => {
                     sql_parts.push(format!(
-                        "ADD CONSTRAINT \"{}\" FOREIGN KEY (\"{}\") REFERENCES \"{}\".\"{}\" (\"{}\") ON UPDATE {} ON DELETE {}",
-                        fk.name, fk.column_name, schema_name, fk.referenced_table_name, fk.referenced_column_name,
+                        "ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {}.{} ({}) ON UPDATE {} ON DELETE {}",
+                        escape_pg_id(&fk.name), escape_pg_id(&fk.column_name), escape_pg_id(schema_name), escape_pg_id(&fk.referenced_table_name), escape_pg_id(&fk.referenced_column_name),
                         fk.update_rule.as_deref().unwrap_or("NO ACTION"),
                         fk.delete_rule.as_deref().unwrap_or("NO ACTION")
                     ));
                 },
                 TableChange::DropForeignKey(name) => {
-                    sql_parts.push(format!("DROP CONSTRAINT \"{}\"", name));
+                    sql_parts.push(format!("DROP CONSTRAINT {}", escape_pg_id(name)));
                 },
             }
         }
 
         // 处理 ALTER TABLE 内部变更
         if !sql_parts.is_empty() {
-            let alter_sql = format!("ALTER TABLE \"{}\".\"{}\" {}", schema_name, table, sql_parts.join(", "));
+            let alter_sql = format!("ALTER TABLE {}.{} {}", escape_pg_id(schema_name), escape_pg_id(table), sql_parts.join(", "));
             debug!(sql = %alter_sql, "执行 PostgreSQL ALTER TABLE");
             client.batch_execute(&alter_sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         }
@@ -436,7 +415,7 @@ impl DatabaseOperations for PostgreSqlDatabase {
         // 处理独立的 DROP INDEX 变更
         for change in &changes {
             if let TableChange::DropIndex(name) = change {
-                let drop_idx_sql = format!("DROP INDEX \"{}\".\"{}\"", schema_name, name);
+                let drop_idx_sql = format!("DROP INDEX {}.{}", escape_pg_id(schema_name), escape_pg_id(name));
                 debug!(sql = %drop_idx_sql, "执行 PostgreSQL DROP INDEX");
                 client.batch_execute(&drop_idx_sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
             }
@@ -446,30 +425,29 @@ impl DatabaseOperations for PostgreSqlDatabase {
     }
 
     async fn get_table_ddl(&self, table: &str, schema: Option<&str>) -> DbResult<String> {
-        let schema_name = schema.unwrap_or("public");
+        let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
         let columns = self.get_table_structure(table, Some(schema_name), None).await?;
         
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
-        
+        let client = self.get_client_arc().await?;
+
         let view_sql = "SELECT pg_get_viewdef(c.oid, true) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'v'";
         let view_rows = client.query(view_sql, &[&schema_name, &table]).await.unwrap_or_default();
         
         if let Some(row) = view_rows.first() {
             let definition: String = row.get(0);
-            return Ok(format!("CREATE OR REPLACE VIEW \"{}\".\"{}\" AS\n{}", schema_name, table, definition));
+            return Ok(format!("CREATE OR REPLACE VIEW {}.{} AS\n{}", escape_pg_id(schema_name), escape_pg_id(table), definition));
         }
 
-        let mut ddl = format!("CREATE TABLE \"{}\".\"{}\" (\n", schema_name, table);
+        let mut ddl = format!("CREATE TABLE {}.{} (\n", escape_pg_id(schema_name), escape_pg_id(table));
         let mut col_defs = Vec::new();
         let mut pks = Vec::new();
 
         for col in columns {
-            let mut def = format!("  \"{}\" {}", col.name, col.data_type);
+            let mut def = format!("  {} {}", escape_pg_id(&col.name), col.data_type);
             if !col.nullable { def.push_str(" NOT NULL"); }
-            if let Some(ref d) = col.default_value { def.push_str(&format!(" DEFAULT {}", d)); }
+            if let Some(ref d) = col.default_value { def.push_str(&format!(" DEFAULT {}", escape_string_literal(d))); }
             col_defs.push(def);
-            if col.is_primary_key { pks.push(format!("\"{}\"", col.name)); }
+            if col.is_primary_key { pks.push(escape_pg_id(&col.name)); }
         }
 
         ddl.push_str(&col_defs.join(",\n"));
@@ -482,9 +460,8 @@ impl DatabaseOperations for PostgreSqlDatabase {
     }
 
     async fn get_functions(&self, _database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
-        let schema_name = schema.unwrap_or("public");
+        let client = self.get_client_arc().await?;
+        let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
         let sql = "SELECT p.proname, n.nspname, pg_catalog.pg_get_function_result(p.oid), pg_catalog.pg_get_function_arguments(p.oid), l.lanname, obj_description(p.oid, 'pg_proc') FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang WHERE n.nspname = $1 AND p.prokind != 'a' ORDER BY p.proname";
         
         debug!(sc = %schema_name, "正在查询 PostgreSQL 函数...");
@@ -495,17 +472,15 @@ impl DatabaseOperations for PostgreSqlDatabase {
     }
 
     async fn get_aggregate_functions(&self, _database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
-        let schema_name = schema.unwrap_or("public");
+        let client = self.get_client_arc().await?;
+        let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
         let sql = "SELECT p.proname, n.nspname, pg_catalog.pg_get_function_result(p.oid), pg_catalog.pg_get_function_arguments(p.oid), obj_description(p.oid, 'pg_proc') FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = $1 AND p.prokind = 'a' ORDER BY p.proname";
         let rows = client.query(sql, &[&schema_name]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(rows.into_iter().map(|r| FunctionInfo { name: r.get(0), schema: Some(r.get(1)), return_type: Some(r.get(2)), arguments: Some(r.get(3)), language: None, function_type: "aggregate".into(), comment: r.try_get(4).ok() }).collect())
     }
 
     async fn get_extensions(&self, _database: Option<&str>) -> DbResult<Vec<ExtensionInfo>> {
-        let state = self.state.lock().await;
-        let client = state.client.as_ref().ok_or(DbError::ConnectionFailed("未连接数据库".into()))?;
+        let client = self.get_client_arc().await?;
         let sql = "SELECT extname, extversion, n.nspname, obj_description(e.oid, 'pg_extension') FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace ORDER BY extname";
         
         debug!("正在查询 PostgreSQL 扩展...");

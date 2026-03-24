@@ -1,0 +1,95 @@
+<template>
+  <div class="command-input-section">
+    <div ref="editorContainer" class="editor-wrapper"></div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, onUnmounted, watch } from 'vue'
+import * as monaco from 'monaco-editor'
+import { registerRedisCompletionProvider } from '@/services/redisAutocomplete'
+import { useAppStore } from '@/stores/app'
+
+const props = defineProps<{
+  initialValue?: string
+}>()
+
+const emit = defineEmits<{
+  execute: []
+  cursorChange: [line: number, column: number]
+}>()
+
+const appStore = useAppStore()
+const editorContainer = ref<HTMLElement>()
+let editor: monaco.editor.IStandaloneCodeEditor | null = null
+
+onMounted(() => {
+  if (!editorContainer.value) return
+
+  editor = monaco.editor.create(editorContainer.value, {
+    value: props.initialValue || '# 在此输入 Redis 命令\n# PING - 测试连接是否正常\n# INFO - 查看服务器信息\n# GET key - 获取键值\n# SET key value - 设置键值\n\nPING',
+    language: 'shell',
+    theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs',
+    automaticLayout: true,
+    fontSize: 14,
+    minimap: { enabled: false },
+    scrollBeyondLastLine: false,
+    lineNumbers: 'on',
+    renderLineHighlight: 'all',
+    quickSuggestions: {
+      other: true,
+      comments: false,
+      strings: false
+    },
+    suggestOnTriggerCharacters: true,
+    acceptSuggestionOnCommitCharacter: true,
+    acceptSuggestionOnEnter: 'on',
+    tabCompletion: 'on',
+  })
+
+  registerRedisCompletionProvider()
+
+  editor.onDidChangeCursorPosition((e) => {
+    emit('cursorChange', e.position.lineNumber, e.position.column)
+  })
+
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+    emit('execute')
+  })
+})
+
+onUnmounted(() => {
+  editor?.dispose()
+})
+
+watch(
+  () => appStore.theme,
+  (newTheme) => {
+    if (editor) {
+      monaco.editor.setTheme(newTheme === 'dark' ? 'vs-dark' : 'vs')
+    }
+  }
+)
+
+function getValue(): string {
+  return editor?.getValue()?.trim() || ''
+}
+
+function setValue(value: string) {
+  editor?.setValue(value)
+}
+
+defineExpose({ getValue, setValue })
+</script>
+
+<style scoped>
+.editor-wrapper {
+  flex: 1;
+  min-height: 300px;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.dark-mode .editor-wrapper {
+  border-bottom-color: #303030;
+}
+</style>

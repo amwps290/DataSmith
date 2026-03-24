@@ -1,7 +1,7 @@
 <template>
   <a-modal
     :open="visible"
-    title="新建数据库"
+    :title="$t('dialog.create_database.title')"
     @ok="handleCreate"
     @cancel="handleCancel"
     :confirm-loading="loading"
@@ -13,27 +13,27 @@
       :wrapper-col="{ span: 18 }"
     >
       <a-form-item
-        label="数据库名称"
+        :label="$t('dialog.create_database.name')"
         name="databaseName"
         :rules="[
-          { required: true, message: '请输入数据库名称' },
-          { pattern: /^[a-zA-Z0-9_]+$/, message: '只能包含字母、数字和下划线' }
+          { required: true, message: $t('dialog.create_database.name_required') },
+          { pattern: /^[a-zA-Z0-9_]+$/, message: $t('dialog.create_database.name_pattern') }
         ]"
       >
         <a-input
           v-model:value="formState.databaseName"
-          placeholder="例如: my_database"
+          :placeholder="$t('dialog.create_database.name_placeholder')"
           @pressEnter="handleCreate"
         />
       </a-form-item>
 
       <a-form-item
         v-if="isMysql"
-        label="字符集"
+        :label="$t('dialog.create_database.charset')"
         name="charset"
       >
         <a-select v-model:value="formState.charset">
-          <a-select-option value="utf8mb4">utf8mb4 (推荐)</a-select-option>
+          <a-select-option value="utf8mb4">utf8mb4 ({{ $t('dialog.create_database.charset_recommend') }})</a-select-option>
           <a-select-option value="utf8">utf8</a-select-option>
           <a-select-option value="latin1">latin1</a-select-option>
           <a-select-option value="gbk">gbk</a-select-option>
@@ -42,7 +42,7 @@
 
       <a-form-item
         v-if="isMysql"
-        label="排序规则"
+        :label="$t('dialog.create_database.collation')"
         name="collation"
       >
         <a-select v-model:value="formState.collation">
@@ -60,8 +60,11 @@
 <script setup lang="ts">
 import { reactive, ref, watch, computed } from 'vue'
 import { message } from 'ant-design-vue'
-import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
+import { queryApi } from '@/api'
 import type { FormInstance } from 'ant-design-vue'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   visible: boolean
@@ -97,50 +100,47 @@ function resetForm() {
 async function handleCreate() {
   try {
     await formRef.value?.validate()
-    
+
     loading.value = true
-    
+
     // SQLite 不支持 CREATE DATABASE 语句
     const dbType = props.dbType?.toLowerCase()
     if (dbType === 'sqlite') {
-      message.error('SQLite 不支持通过 SQL 创建数据库，请直接创建新的连接指向新文件')
+      message.error(t('dialog.create_database.sqlite_not_supported'))
       return
     }
-    
+
     // 根据数据库类型构建 CREATE DATABASE 语句
     let sql = ''
     if (dbType === 'mysql') {
       // MySQL 语法
-      sql = `CREATE DATABASE \`${formState.databaseName}\` 
-        CHARACTER SET ${formState.charset} 
+      sql = `CREATE DATABASE \`${formState.databaseName}\`
+        CHARACTER SET ${formState.charset}
         COLLATE ${formState.collation}`
     } else if (dbType === 'postgresql') {
       // PostgreSQL 语法（不支持 CHARSET 和 COLLATE 在 CREATE DATABASE 语句中）
       sql = `CREATE DATABASE "${formState.databaseName}"`
     } else {
       // 默认使用 MySQL 语法
-      sql = `CREATE DATABASE \`${formState.databaseName}\` 
-        CHARACTER SET ${formState.charset} 
+      sql = `CREATE DATABASE \`${formState.databaseName}\`
+        CHARACTER SET ${formState.charset}
         COLLATE ${formState.collation}`
     }
-    
-    await invoke('execute_query', {
-      connectionId: props.connectionId,
-      sql,
-    })
-    
-    message.success(`数据库 "${formState.databaseName}" 创建成功`)
-    
+
+    await queryApi.executeQuery(props.connectionId, sql)
+
+    message.success(t('dialog.create_database.success', { name: formState.databaseName }))
+
     emit('created', formState.databaseName)
     emit('update:visible', false)
-    
+
     resetForm()
-  } catch (error: any) {
-    if (error.errorFields) {
+  } catch (error: unknown) {
+    if (error && typeof error === 'object' && 'errorFields' in error) {
       // 表单验证错误
       return
     }
-    message.error(`创建数据库失败: ${error}`)
+    message.error(t('dialog.create_database.fail', { error: String(error) }))
   } finally {
     loading.value = false
   }
@@ -163,4 +163,3 @@ watch(() => props.visible, (visible) => {
 <style scoped>
 /* 样式可以根据需要添加 */
 </style>
-

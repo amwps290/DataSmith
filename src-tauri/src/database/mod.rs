@@ -1,5 +1,7 @@
 pub mod traits;
 pub mod manager;
+pub mod constants;
+pub mod sql_helpers;
 
 #[cfg(feature = "mysql")]
 pub mod mysql;

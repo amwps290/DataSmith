@@ -16,17 +16,53 @@ pub struct RedisDatabase {
     state: Mutex<RedisState>,
 }
 
+/// 对 Redis URL 中的特殊字符进行百分比编码（避免引入新依赖）
+fn urlencoding_simple(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            ':' | '@' | '/' | '?' | '#' | '[' | ']' | '%' => format!("%{:02X}", c as u8),
+            _ => c.to_string(),
+        })
+        .collect()
+}
+
 impl RedisDatabase {
     pub fn new() -> Self {
-        Self { 
+        Self {
             state: Mutex::new(RedisState { client: None, conn: None })
+        }
+    }
+
+    /// 根据连接配置构建 Redis URL（支持认证和 SSL）
+    fn build_redis_url(config: &ConnectionConfig) -> String {
+        let scheme = if config.ssl { "rediss" } else { "redis" };
+        match (
+            !config.password.is_empty(),
+            !config.username.is_empty(),
+        ) {
+            (true, true) => format!(
+                "{}://{}:{}@{}:{}",
+                scheme,
+                urlencoding_simple(&config.username),
+                urlencoding_simple(&config.password),
+                config.host,
+                config.port
+            ),
+            (true, false) => format!(
+                "{}://:{}@{}:{}",
+                scheme,
+                urlencoding_simple(&config.password),
+                config.host,
+                config.port
+            ),
+            _ => format!("{}://{}:{}", scheme, config.host, config.port),
         }
     }
 
     /// 执行原始 Redis 命令
     pub async fn execute_command(&self, cmd: &str, args: Vec<String>) -> DbResult<redis::Value> {
         let mut state = self.state.lock().await;
-        let conn = state.conn.as_mut().ok_or(DbError::ConnectionFailed("未连接到 Redis".into()))?;
+        let conn = state.conn.as_mut().ok_or(DbError::not_connected())?;
         
         let mut request = redis::cmd(cmd);
         for arg in args {
@@ -39,21 +75,21 @@ impl RedisDatabase {
     /// 获取服务器信息
     pub async fn get_server_info(&self) -> DbResult<String> {
         let mut state = self.state.lock().await;
-        let conn = state.conn.as_mut().ok_or(DbError::ConnectionFailed("未连接到 Redis".into()))?;
+        let conn = state.conn.as_mut().ok_or(DbError::not_connected())?;
         redis::cmd("INFO").query_async(conn).await.map_err(|e| DbError::QueryFailed(e.to_string()))
     }
 
     /// 获取 Key 的 TTL
     pub async fn get_key_ttl(&self, key: &str) -> DbResult<i64> {
         let mut state = self.state.lock().await;
-        let conn = state.conn.as_mut().ok_or(DbError::ConnectionFailed("未连接到 Redis".into()))?;
+        let conn = state.conn.as_mut().ok_or(DbError::not_connected())?;
         conn.ttl(key).await.map_err(|e| DbError::QueryFailed(e.to_string()))
     }
 
     /// 获取 Key 的值 (根据类型自动处理)
     pub async fn get_key_value(&self, key: &str) -> DbResult<serde_json::Value> {
         let mut state = self.state.lock().await;
-        let conn = state.conn.as_mut().ok_or(DbError::ConnectionFailed("未连接到 Redis".into()))?;
+        let conn = state.conn.as_mut().ok_or(DbError::not_connected())?;
         
         let key_type: String = redis::cmd("TYPE").arg(key).query_async(conn).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         
@@ -85,7 +121,7 @@ impl RedisDatabase {
     /// 设置 Key 的值
     pub async fn set_key_value(&self, key: &str, value: &str, ttl: Option<i64>) -> DbResult<()> {
         let mut state = self.state.lock().await;
-        let conn = state.conn.as_mut().ok_or(DbError::ConnectionFailed("未连接到 Redis".into()))?;
+        let conn = state.conn.as_mut().ok_or(DbError::not_connected())?;
         
         if let Some(t) = ttl {
             if t > 0 {
@@ -98,7 +134,7 @@ impl RedisDatabase {
     /// 删除 Key
     pub async fn delete_key(&self, key: &str) -> DbResult<()> {
         let mut state = self.state.lock().await;
-        let conn = state.conn.as_mut().ok_or(DbError::ConnectionFailed("未连接到 Redis".into()))?;
+        let conn = state.conn.as_mut().ok_or(DbError::not_connected())?;
         conn.del(key).await.map_err(|e| DbError::QueryFailed(e.to_string()))
     }
 }
@@ -106,7 +142,7 @@ impl RedisDatabase {
 #[async_trait]
 impl DatabaseOperations for RedisDatabase {
     async fn test_connection(&self, config: &ConnectionConfig) -> DbResult<bool> {
-        let url = format!("redis://{}:{}", config.host, config.port);
+        let url = Self::build_redis_url(config);
         let client = redis::Client::open(url).map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
         let mut conn = client.get_multiplexed_async_connection().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
         let _: String = redis::cmd("PING").query_async(&mut conn).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
@@ -114,7 +150,7 @@ impl DatabaseOperations for RedisDatabase {
     }
 
     async fn connect(&self, config: ConnectionConfig) -> DbResult<()> {
-        let url = format!("redis://{}:{}", config.host, config.port);
+        let url = Self::build_redis_url(&config);
         let client = redis::Client::open(url).map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
         let conn = client.get_multiplexed_async_connection().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
         let mut state = self.state.lock().await;

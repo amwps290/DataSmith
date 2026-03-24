@@ -1,4 +1,6 @@
+use super::error::ToCommandResult;
 use crate::database::QueryResult;
+use crate::utils::sql_sanitize::escape_mysql_id;
 use crate::AppState;
 use serde_json::Value;
 use std::fs::File;
@@ -11,12 +13,12 @@ pub async fn export_to_csv(
     data: QueryResult,
     file_path: String,
 ) -> Result<bool, String> {
-    let mut file = File::create(&file_path).map_err(|e| e.to_string())?;
-    
+    let mut file = File::create(&file_path).to_cmd_result()?;
+
     // 写入表头
     let header = data.columns.join(",");
-    writeln!(file, "{}", header).map_err(|e| e.to_string())?;
-    
+    writeln!(file, "{}", header).to_cmd_result()?;
+
     // 写入数据行
     for row in &data.rows {
         let values: Vec<String> = data
@@ -31,9 +33,9 @@ pub async fn export_to_csv(
                 }
             })
             .collect();
-        writeln!(file, "{}", values.join(",")).map_err(|e| e.to_string())?;
+        writeln!(file, "{}", values.join(",")).to_cmd_result()?;
     }
-    
+
     Ok(true)
 }
 
@@ -43,11 +45,11 @@ pub async fn export_to_json(
     data: QueryResult,
     file_path: String,
 ) -> Result<bool, String> {
-    let json = serde_json::to_string_pretty(&data.rows).map_err(|e| e.to_string())?;
-    
-    let mut file = File::create(&file_path).map_err(|e| e.to_string())?;
-    file.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
-    
+    let json = serde_json::to_string_pretty(&data.rows).to_cmd_result()?;
+
+    let mut file = File::create(&file_path).to_cmd_result()?;
+    file.write_all(json.as_bytes()).to_cmd_result()?;
+
     Ok(true)
 }
 
@@ -58,10 +60,11 @@ pub async fn export_to_sql(
     table_name: String,
     file_path: String,
 ) -> Result<bool, String> {
-    let mut file = File::create(&file_path).map_err(|e| e.to_string())?;
-    
+    let mut file = File::create(&file_path).to_cmd_result()?;
+
+    let columns = data.columns.iter().map(|c| escape_mysql_id(c)).collect::<Vec<_>>().join(", ");
+
     for row in &data.rows {
-        let columns = data.columns.join("`, `");
         let values: Vec<String> = data
             .columns
             .iter()
@@ -76,17 +79,17 @@ pub async fn export_to_sql(
                 }
             })
             .collect();
-        
+
         let insert_stmt = format!(
-            "INSERT INTO `{}` (`{}`) VALUES ({});\n",
-            table_name,
+            "INSERT INTO {} ({}) VALUES ({});\n",
+            escape_mysql_id(&table_name),
             columns,
             values.join(", ")
         );
-        
-        file.write_all(insert_stmt.as_bytes()).map_err(|e| e.to_string())?;
+
+        file.write_all(insert_stmt.as_bytes()).to_cmd_result()?;
     }
-    
+
     Ok(true)
 }
 
@@ -100,24 +103,10 @@ pub async fn export_table_ddl(
 ) -> Result<String, String> {
     let manager = &state.connection_manager;
 
-    // 获取表的 CREATE TABLE 语句
-    let sql = format!("SHOW CREATE TABLE `{}`.`{}`", database, table);
-    let results = manager
-        .execute_query(&connection_id, &sql, Some(&database))
+    let ddl = manager
+        .get_table_ddl(&connection_id, &table, None, Some(&database))
         .await
         .map_err(|e| format!("获取表结构失败: {}", e))?;
 
-    // SHOW CREATE TABLE 返回的结果中，第二列是 CREATE TABLE 语句
-    if let Some(result) = results.first() {
-        if let Some(row) = result.rows.first() {
-            if let Some(create_stmt) = row.get("Create Table") {
-                if let Some(ddl) = create_stmt.as_str() {
-                    return Ok(ddl.to_string());
-                }
-            }
-        }
-    }
-
-    Err(format!("无法获取表 {}.{} 的结构", database, table))
+    Ok(ddl)
 }
-

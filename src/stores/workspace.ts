@@ -37,7 +37,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       if (!session) return null
       
       return {
-        open_tabs: session.open_tabs.map((t: any) => ({
+        open_tabs: session.open_tabs.map((t) => ({
           key: t.key,
           title: t.title,
           type: t.type as TabType,

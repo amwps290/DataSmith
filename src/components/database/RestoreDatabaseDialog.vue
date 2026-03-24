@@ -1,17 +1,17 @@
 <template>
   <a-modal
     v-model:open="visible"
-    :title="`还原数据库 - ${database}`"
+    :title="$t('dialog.restore_database.title', { database })"
     width="600px"
     @ok="handleRestore"
     @cancel="handleCancel"
     :confirm-loading="restoring"
   >
     <a-form :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
-      <a-form-item label="备份文件" required>
+      <a-form-item :label="$t('dialog.restore_database.backup_file')" required>
         <a-input
           v-model:value="filePath"
-          placeholder="点击选择SQL备份文件"
+          :placeholder="$t('dialog.restore_database.backup_file_placeholder')"
           readonly
           @click="selectFile"
         >
@@ -21,25 +21,25 @@
         </a-input>
       </a-form-item>
 
-      <a-form-item label="还原模式">
+      <a-form-item :label="$t('dialog.restore_database.restore_mode')">
         <a-radio-group v-model:value="restoreMode">
-          <a-radio value="append">追加数据</a-radio>
-          <a-radio value="replace">替换数据</a-radio>
+          <a-radio value="append">{{ $t('dialog.restore_database.mode_append') }}</a-radio>
+          <a-radio value="replace">{{ $t('dialog.restore_database.mode_replace') }}</a-radio>
         </a-radio-group>
       </a-form-item>
 
-      <a-form-item label="跳过错误">
+      <a-form-item :label="$t('dialog.restore_database.skip_errors')">
         <a-switch v-model:checked="skipErrors" />
         <span style="margin-left: 8px; color: #999; font-size: 12px;">
-          遇到错误时继续执行
+          {{ $t('dialog.restore_database.skip_errors_tip') }}
         </span>
       </a-form-item>
     </a-form>
 
     <a-alert
       v-if="restoreMode === 'replace'"
-      message="警告"
-      description="替换模式将删除现有数据，此操作不可恢复！建议先备份当前数据。"
+      :message="$t('common.warning')"
+      :description="$t('dialog.restore_database.replace_warning')"
       type="warning"
       show-icon
       style="margin-top: 12px"
@@ -48,11 +48,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { FileOutlined } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
-import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
+import { queryApi, utilsApi } from '@/api'
 import { open } from '@tauri-apps/plugin-dialog'
+import { useDialogModel } from '@/composables/useDialogModel'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: boolean
@@ -62,10 +66,7 @@ const props = defineProps<{
 
 const emit = defineEmits(['update:modelValue', 'restored'])
 
-const visible = computed({
-  get: () => props.modelValue,
-  set: (val) => emit('update:modelValue', val),
-})
+const visible = useDialogModel(props, emit)
 
 const restoring = ref(false)
 const filePath = ref('')
@@ -75,7 +76,7 @@ const skipErrors = ref(false)
 async function selectFile() {
   const path = await open({
     filters: [{
-      name: 'SQL文件',
+      name: t('dialog.restore_database.sql_file'),
       extensions: ['sql'],
     }],
     multiple: false,
@@ -88,17 +89,17 @@ async function selectFile() {
 
 async function handleRestore() {
   if (!filePath.value) {
-    message.error('请选择备份文件')
+    message.error(t('dialog.restore_database.file_required'))
     return
   }
 
   if (restoreMode.value === 'replace') {
     Modal.confirm({
-      title: '确认还原数据库',
-      content: '您选择了替换模式，这将删除数据库中的现有数据。建议先备份。确定继续吗？',
-      okText: '确定',
+      title: t('dialog.restore_database.confirm_title'),
+      content: t('dialog.restore_database.confirm_content'),
+      okText: t('common.ok'),
       okType: 'danger',
-      cancelText: '取消',
+      cancelText: t('common.cancel'),
       onOk: async () => {
         await doRestore()
       },
@@ -112,9 +113,7 @@ async function doRestore() {
   restoring.value = true
   try {
     // 读取SQL文件
-    const sqlContent = await invoke<string>('read_file', {
-      path: filePath.value,
-    })
+    const sqlContent = await utilsApi.readFile(filePath.value)
 
     // 分割SQL语句（按分号分割，但要注意字符串和注释中的分号）
     const statements = splitSqlStatements(sqlContent)
@@ -127,26 +126,22 @@ async function doRestore() {
       if (!sql || sql.startsWith('--')) continue
 
       try {
-        await invoke('execute_query', {
-          connectionId: props.connectionId,
-          sql,
-          database: props.database,
-        })
+        await queryApi.executeQuery(props.connectionId, sql, props.database)
         successCount++
-      } catch (error: any) {
+      } catch (error: unknown) {
         errorCount++
         if (!skipErrors.value) {
-          throw new Error(`执行SQL失败: ${error}`)
+          throw new Error(t('dialog.restore_database.sql_error', { error: String(error) }))
         }
-        console.error('SQL执行错误（已跳过）:', error)
+        console.error('SQL error (skipped):', error)
       }
     }
 
-    message.success(`还原完成！成功: ${successCount}，失败: ${errorCount}`)
+    message.success(t('dialog.restore_database.success', { success: successCount, fail: errorCount }))
     emit('restored')
     handleCancel()
-  } catch (error: any) {
-    message.error(`还原失败: ${error}`)
+  } catch (error: unknown) {
+    message.error(t('dialog.restore_database.fail', { error: String(error) }))
   } finally {
     restoring.value = false
   }
@@ -220,4 +215,3 @@ function handleCancel() {
   visible.value = false
 }
 </script>
-

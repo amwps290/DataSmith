@@ -2,7 +2,7 @@ use crate::database::{ConnectionConfig, DatabaseType, sqlite::SqliteDatabase};
 use crate::models::{ConnectionTestResult, StoredConnection};
 use crate::utils::crypto;
 use crate::AppState;
-use crate::commands::query::ToCommandResult;
+use super::error::ToCommandResult;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tauri::{AppHandle, State};

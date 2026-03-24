@@ -1,29 +1,29 @@
 <template>
   <a-modal
     v-model:open="visible"
-    title="新建视图"
+    :title="$t('dialog.create_view.title')"
     width="800px"
     @ok="handleCreate"
     @cancel="handleCancel"
     :confirm-loading="creating"
   >
     <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 20 }">
-      <a-form-item label="视图名" required>
-        <a-input v-model:value="viewName" placeholder="请输入视图名" />
+      <a-form-item :label="$t('dialog.create_view.view_name')" required>
+        <a-input v-model:value="viewName" :placeholder="$t('dialog.create_view.view_name_placeholder')" />
       </a-form-item>
-      
-      <a-form-item label="SQL查询" required>
+
+      <a-form-item :label="$t('dialog.create_view.sql_query')" required>
         <div ref="editorContainer" style="height: 300px; border: 1px solid #d9d9d9; border-radius: 4px;"></div>
       </a-form-item>
-      
-      <a-form-item label="注释">
-        <a-input v-model:value="comment" placeholder="请输入视图注释" />
+
+      <a-form-item :label="$t('dialog.create_view.view_comment')">
+        <a-input v-model:value="comment" :placeholder="$t('dialog.create_view.view_comment_placeholder')" />
       </a-form-item>
     </a-form>
 
     <a-alert
-      message="提示"
-      description="请输入SELECT查询语句来定义视图内容，例如：SELECT id, name, email FROM users WHERE active = 1"
+      :message="$t('common.tip')"
+      :description="$t('dialog.create_view.tip_message')"
       type="info"
       show-icon
       style="margin-top: 12px"
@@ -32,10 +32,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed } from 'vue'
-import * as monaco from 'monaco-editor'
+import { ref } from 'vue'
 import { message } from 'ant-design-vue'
-import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
+import { queryApi } from '@/api'
+import { useMonacoEditor } from '@/composables/useMonacoEditor'
+import { useDialogModel } from '@/composables/useDialogModel'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: boolean
@@ -45,74 +49,57 @@ const props = defineProps<{
 
 const emit = defineEmits(['update:modelValue', 'created'])
 
-const visible = computed({
-  get: () => props.modelValue,
-  set: (val: boolean) => emit('update:modelValue', val),
-})
+const visible = useDialogModel(props, emit)
 
 const creating = ref(false)
 const viewName = ref('')
 const comment = ref('')
 const editorContainer = ref<HTMLElement>()
-let editor: monaco.editor.IStandaloneCodeEditor | null = null
-
-onMounted(() => {
-  if (!editorContainer.value) return
-
-  editor = monaco.editor.create(editorContainer.value, {
-    value: 'SELECT * FROM table_name',
-    language: 'sql',
-    theme: 'vs',
-    automaticLayout: true,
-    fontSize: 13,
-    minimap: { enabled: false },
-    scrollBeyondLastLine: false,
-    lineNumbers: 'on',
-  })
+const { editor, getValue, setValue: setEditorValue, createEditor } = useMonacoEditor(editorContainer, {
+  value: 'SELECT * FROM table_name',
+  language: 'sql',
 })
 
-onUnmounted(() => {
-  editor?.dispose()
+// 当对话框可见时初始化编辑器
+import { watch } from 'vue'
+watch(visible, (val) => {
+  if (val) createEditor()
 })
 
 function generateCreateViewSql(): string {
-  if (!viewName.value || !editor) {
+  if (!viewName.value || !editor.value) {
     return ''
   }
 
-  const selectSql = editor.getValue().trim()
+  const selectSql = getValue().trim()
   let sql = `CREATE VIEW \`${viewName.value}\` AS ${selectSql}`
-  
+
   return sql
 }
 
 async function handleCreate() {
   if (!viewName.value.trim()) {
-    message.error('请输入视图名')
+    message.error(t('dialog.create_view.view_name_required'))
     return
   }
 
-  const selectSql = editor?.getValue().trim()
+  const selectSql = getValue().trim()
   if (!selectSql) {
-    message.error('请输入SELECT查询语句')
+    message.error(t('dialog.create_view.sql_required'))
     return
   }
 
   creating.value = true
   try {
     const sql = generateCreateViewSql()
-    
-    await invoke('execute_query', {
-      connectionId: props.connectionId,
-      sql,
-      database: props.database,
-    })
 
-    message.success('视图创建成功')
+    await queryApi.executeQuery(props.connectionId, sql, props.database)
+
+    message.success(t('dialog.create_view.success'))
     emit('created')
     handleCancel()
-  } catch (error: any) {
-    message.error(`创建视图失败: ${error}`)
+  } catch (error: unknown) {
+    message.error(t('dialog.create_view.fail', { error: String(error) }))
   } finally {
     creating.value = false
   }
@@ -121,7 +108,7 @@ async function handleCreate() {
 function handleCancel() {
   viewName.value = ''
   comment.value = ''
-  editor?.setValue('SELECT * FROM table_name')
+  setEditorValue('SELECT * FROM table_name')
   visible.value = false
 }
 </script>
@@ -131,4 +118,3 @@ function handleCancel() {
   line-height: 1;
 }
 </style>
-

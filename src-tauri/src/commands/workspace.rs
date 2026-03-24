@@ -1,7 +1,9 @@
+use super::error::ToCommandResult;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
+use tracing::debug;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabState {
@@ -33,10 +35,10 @@ pub struct ScriptInfo {
 
 /// 获取应用数据目录下的脚本根目录
 fn get_scripts_root_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let app_dir = app.path().app_data_dir().to_cmd_result()?;
     let scripts_dir = app_dir.join("scripts");
     if !scripts_dir.exists() {
-        fs::create_dir_all(&scripts_dir).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&scripts_dir).to_cmd_result()?;
     }
     Ok(scripts_dir)
 }
@@ -67,7 +69,7 @@ pub async fn get_db_scripts_dir(
         fs::create_dir_all(&db_dir).map_err(|e| format!("无法创建脚本目录: {}", e))?;
     }
     
-    println!("[Workspace] 脚本存放目录: {}", path_str);
+    debug!("脚本存放目录: {}", path_str);
     Ok(path_str)
 }
 
@@ -85,10 +87,10 @@ pub async fn list_db_scripts(
     let db_dir = root.join(&conn_dir).join(&db_dir_name);
     let path_str = db_dir.to_string_lossy().to_string();
     
-    println!("[Workspace] 正在扫描目录: {}", path_str);
+    debug!("正在扫描目录: {}", path_str);
     
     if !db_dir.exists() {
-        println!("[Workspace] 目录不存在，返回空列表");
+        debug!("目录不存在，返回空列表");
         return Ok(Vec::new());
     }
 
@@ -96,12 +98,12 @@ pub async fn list_db_scripts(
     let entries = fs::read_dir(&db_dir).map_err(|e| format!("无法读取目录: {}", e))?;
 
     for entry in entries {
-        let entry = entry.map_err(|e| e.to_string())?;
+        let entry = entry.to_cmd_result()?;
         let path = entry.path();
         
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("sql") {
-            let metadata = entry.metadata().map_err(|e| e.to_string())?;
-            let last_modified = metadata.modified().map_err(|e| e.to_string())?
+            let metadata = entry.metadata().to_cmd_result()?;
+            let last_modified = metadata.modified().to_cmd_result()?
                 .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
             
             scripts.push(ScriptInfo {
@@ -113,7 +115,7 @@ pub async fn list_db_scripts(
         }
     }
 
-    println!("[Workspace] 扫描完成, 找到 {} 个有效 SQL 脚本", scripts.len());
+    debug!("扫描完成, 找到 {} 个有效 SQL 脚本", scripts.len());
     scripts.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
     
     Ok(scripts)
@@ -145,9 +147,9 @@ pub async fn create_db_script(
     let initial_content = content.unwrap_or_else(|| "-- 在此输入 SQL 查询\n".to_string());
     fs::write(&path, initial_content).map_err(|e| format!("创建脚本失败: {}", e))?;
     
-    println!("[Workspace] 物理文件已创建: {}", path.to_string_lossy());
+    debug!("物理文件已创建: {}", path.to_string_lossy());
     
-    let metadata = path.metadata().map_err(|e| e.to_string())?;
+    let metadata = path.metadata().to_cmd_result()?;
     
     Ok(ScriptInfo {
         name: file_name,
@@ -163,15 +165,15 @@ pub async fn save_session(
     state: SessionState,
     app: AppHandle,
 ) -> Result<(), String> {
-    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let app_dir = app.path().app_data_dir().to_cmd_result()?;
     let session_file = app_dir.join("session.json");
     
     if !app_dir.exists() {
-        fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&app_dir).to_cmd_result()?;
     }
 
-    let json = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
-    fs::write(session_file, json).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(&state).to_cmd_result()?;
+    fs::write(session_file, json).to_cmd_result()?;
     
     Ok(())
 }
@@ -181,15 +183,15 @@ pub async fn save_session(
 pub async fn load_session(
     app: AppHandle,
 ) -> Result<Option<SessionState>, String> {
-    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let app_dir = app.path().app_data_dir().to_cmd_result()?;
     let session_file = app_dir.join("session.json");
     
     if !session_file.exists() {
         return Ok(None);
     }
 
-    let json = fs::read_to_string(session_file).map_err(|e| e.to_string())?;
-    let state: SessionState = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    let json = fs::read_to_string(session_file).to_cmd_result()?;
+    let state: SessionState = serde_json::from_str(&json).to_cmd_result()?;
     
     Ok(Some(state))
 }

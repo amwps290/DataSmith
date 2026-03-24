@@ -111,7 +111,7 @@
     <div
       v-if="contextMenuVisible"
       class="context-menu-overlay"
-      @click="contextMenuVisible = false"
+      @click="hideContextMenu()"
     >
       <div
         class="context-menu"
@@ -148,8 +148,8 @@
 <script setup lang="ts">
 import { h, computed, ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { 
-  DatabaseOutlined, PlusOutlined, LinkOutlined, EditOutlined, DeleteOutlined, 
+import {
+  DatabaseOutlined, PlusOutlined, LinkOutlined, EditOutlined, DeleteOutlined,
   DisconnectOutlined, DownOutlined, RightOutlined, SearchOutlined
 } from '@ant-design/icons-vue'
 import { message, Modal, Empty } from 'ant-design-vue'
@@ -158,6 +158,7 @@ import type { ConnectionConfig } from '@/types/database'
 import DatabaseTree from '@/components/database/DatabaseTree.vue'
 import CreateDatabaseDialog from '@/components/database/CreateDatabaseDialog.vue'
 import { Icon } from '@iconify/vue'
+import { useContextMenu } from '@/composables/useContextMenu'
 
 const { t } = useI18n()
 const emit = defineEmits(['add-connection', 'edit-connection', 'table-selected', 'database-selected', 'new-query', 'design-table', 'view-structure', 'open-scripts'])
@@ -167,9 +168,7 @@ const searchText = ref('')
 const activeConnectionId = computed(() => connectionStore.activeConnectionId)
 const showCreateDatabaseDialog = ref(false)
 const expandedConnections = ref<Set<string>>(new Set())
-const contextMenuVisible = ref(false)
-const contextMenuX = ref(0)
-const contextMenuY = ref(0)
+const { contextMenuVisible, contextMenuX, contextMenuY, showContextMenu, hideContextMenu } = useContextMenu()
 const selectedConnection = ref<ConnectionConfig | null>(null)
 const databaseTreeRefs = new Map<string, any>()
 
@@ -246,12 +245,12 @@ async function handleDisconnect(conn: ConnectionConfig) {
 }
 
 function handleContextMenu(event: MouseEvent, conn: ConnectionConfig) {
-  event.preventDefault(); selectedConnection.value = conn; contextMenuX.value = event.clientX; contextMenuY.value = event.clientY; contextMenuVisible.value = true;
+  selectedConnection.value = conn; showContextMenu(event);
 }
 
 async function handleMenuClick({ key }: any) {
   if (!selectedConnection.value) return
-  contextMenuVisible.value = false
+  hideContextMenu()
   if (key === 'connect') await handleConnectToDatabase(selectedConnection.value)
   else if (key === 'disconnect') await handleDisconnect(selectedConnection.value)
   else if (key === 'create-database') showCreateDatabaseDialog.value = true
@@ -276,7 +275,7 @@ function getStatusBadge(id: string) {
 
 onMounted(() => {
   connectionStore.fetchConnections()
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') contextMenuVisible.value = false })
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideContextMenu() })
 })
 </script>
 

@@ -1,24 +1,24 @@
 <template>
   <div class="redis-key-viewer">
     <a-spin :spinning="loading">
-      <a-card v-if="keyData" :title="`键: ${keyName}`" size="small">
+      <a-card v-if="keyData" :title="$t('redis.key_viewer.key_label', { key: keyName })" size="small">
         <template #extra>
           <a-space>
             <a-tag :color="getTypeColor(keyData.key_type)">
               {{ keyData.key_type }}
             </a-tag>
             <a-tag v-if="keyData.ttl > 0" color="orange">
-              TTL: {{ keyData.ttl }}秒
+              {{ $t('redis.key_viewer.ttl_seconds', { ttl: keyData.ttl }) }}
             </a-tag>
             <a-tag v-else-if="keyData.ttl === -1" color="blue">
-              永不过期
+              {{ $t('redis.key_viewer.never_expire') }}
             </a-tag>
             <a-button size="small" danger @click="handleDelete">
-              删除
+              {{ $t('common.delete') }}
             </a-button>
           </a-space>
         </template>
-        
+
         <!-- 字符串类型 -->
         <div v-if="keyData.key_type === 'string'">
           <a-textarea
@@ -27,14 +27,14 @@
             :disabled="!editing"
           />
           <a-space style="margin-top: 12px">
-            <a-button v-if="!editing" @click="editing = true">编辑</a-button>
+            <a-button v-if="!editing" @click="editing = true">{{ $t('common.edit') }}</a-button>
             <template v-else>
-              <a-button type="primary" @click="handleSave">保存</a-button>
-              <a-button @click="cancelEdit">取消</a-button>
+              <a-button type="primary" @click="handleSave">{{ $t('common.save') }}</a-button>
+              <a-button @click="cancelEdit">{{ $t('common.cancel') }}</a-button>
             </template>
           </a-space>
         </div>
-        
+
         <!-- 列表类型 -->
         <div v-else-if="keyData.key_type === 'list'">
           <a-list
@@ -49,7 +49,7 @@
             </template>
           </a-list>
         </div>
-        
+
         <!-- 集合类型 -->
         <div v-else-if="keyData.key_type === 'set'">
           <a-list
@@ -62,7 +62,7 @@
             </template>
           </a-list>
         </div>
-        
+
         <!-- 有序集合类型 -->
         <div v-else-if="keyData.key_type === 'zset'">
           <a-table
@@ -73,7 +73,7 @@
             bordered
           />
         </div>
-        
+
         <!-- 哈希类型 -->
         <div v-else-if="keyData.key_type === 'hash'">
           <a-table
@@ -84,22 +84,31 @@
             bordered
           />
         </div>
-        
+
         <!-- 未知类型 -->
         <div v-else>
           <pre>{{ JSON.stringify(keyData.value, null, 2) }}</pre>
         </div>
       </a-card>
-      
-      <a-empty v-else description="选择一个键查看详情" />
+
+      <a-empty v-else :description="$t('redis.key_viewer.select_key')" />
     </a-spin>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
+import { redisApi } from '@/api'
+
+interface RedisKeyData {
+  key_type: string
+  value: unknown
+  ttl: number
+}
+
+const { t } = useI18n()
 
 const props = defineProps<{
   connectionId: string
@@ -109,37 +118,37 @@ const props = defineProps<{
 const emit = defineEmits(['deleted', 'updated'])
 
 const loading = ref(false)
-const keyData = ref<any>(null)
+const keyData = ref<RedisKeyData | null>(null)
 const editing = ref(false)
 const editedValue = ref('')
 
 // 哈希表列
-const hashColumns = [
+const hashColumns = computed(() => [
   {
-    title: '字段',
+    title: t('redis.key_viewer.field'),
     dataIndex: 'field',
     key: 'field',
   },
   {
-    title: '值',
+    title: t('redis.key_viewer.value'),
     dataIndex: 'value',
     key: 'value',
   },
-]
+])
 
 // 有序集合列
-const zsetColumns = [
+const zsetColumns = computed(() => [
   {
-    title: '成员',
+    title: t('redis.key_viewer.member'),
     dataIndex: 'member',
     key: 'member',
   },
   {
-    title: '分数',
+    title: t('redis.key_viewer.score'),
     dataIndex: 'score',
     key: 'score',
   },
-]
+])
 
 // 获取类型颜色
 function getTypeColor(type: string): string {
@@ -154,9 +163,9 @@ function getTypeColor(type: string): string {
 }
 
 // 格式化哈希数据
-function formatHashData(value: any): any[] {
+function formatHashData(value: unknown): { field: string; value: string }[] {
   if (Array.isArray(value)) {
-    const result = []
+    const result: { field: string; value: string }[] = []
     for (let i = 0; i < value.length; i += 2) {
       result.push({
         field: value[i],
@@ -169,16 +178,16 @@ function formatHashData(value: any): any[] {
 }
 
 // 格式化有序集合数据
-function formatZsetData(value: any): any[] {
+function formatZsetData(value: unknown): { member: string; score: string }[] {
   if (Array.isArray(value)) {
-    return value.map((item: any) => {
+    return value.map((item: unknown) => {
       if (Array.isArray(item) && item.length === 2) {
         return {
           member: item[0],
           score: item[1],
         }
       }
-      return item
+      return item as { member: string; score: string }
     })
   }
   return []
@@ -187,22 +196,22 @@ function formatZsetData(value: any): any[] {
 // 加载键值
 async function loadKeyValue() {
   if (!props.keyName) return
-  
+
   loading.value = true
   try {
-    const result = await invoke<any>('get_redis_key_value', {
-      connectionId: props.connectionId,
-      key: props.keyName,
-    })
-    
-    keyData.value = result
-    
+    const result = await redisApi.getKeyValue(
+      props.connectionId,
+      props.keyName,
+    )
+
+    keyData.value = result as RedisKeyData
+
     // 如果是字符串类型，初始化编辑值
     if (result.key_type === 'string') {
-      editedValue.value = result.value
+      editedValue.value = result.value as string
     }
-  } catch (error: any) {
-    message.error(`获取键值失败: ${error}`)
+  } catch (error: unknown) {
+    message.error(t('redis.key_viewer.get_fail', { error: String(error) }))
   } finally {
     loading.value = false
   }
@@ -211,47 +220,47 @@ async function loadKeyValue() {
 // 保存编辑
 async function handleSave() {
   try {
-    await invoke('set_redis_key_value', {
-      connectionId: props.connectionId,
-      key: props.keyName,
-      value: editedValue.value,
-      ttl: keyData.value.ttl > 0 ? keyData.value.ttl : null,
-    })
-    
-    message.success('保存成功')
+    await redisApi.setKeyValue(
+      props.connectionId,
+      props.keyName,
+      editedValue.value,
+      keyData.value!.ttl > 0 ? keyData.value!.ttl : undefined,
+    )
+
+    message.success(t('redis.key_viewer.save_success'))
     editing.value = false
     emit('updated')
     loadKeyValue()
-  } catch (error: any) {
-    message.error(`保存失败: ${error}`)
+  } catch (error: unknown) {
+    message.error(t('redis.key_viewer.save_fail', { error: String(error) }))
   }
 }
 
 // 取消编辑
 function cancelEdit() {
   editing.value = false
-  editedValue.value = keyData.value?.value || ''
+  editedValue.value = (keyData.value?.value as string) || ''
 }
 
 // 删除键
 function handleDelete() {
   Modal.confirm({
-    title: '确认删除',
-    content: `确定要删除键 "${props.keyName}" 吗？`,
-    okText: '删除',
+    title: t('redis.key_viewer.delete_confirm_title'),
+    content: t('redis.key_viewer.delete_confirm_content', { key: props.keyName }),
+    okText: t('common.delete'),
     okType: 'danger',
-    cancelText: '取消',
+    cancelText: t('common.cancel'),
     async onOk() {
       try {
-        await invoke('delete_redis_key', {
-          connectionId: props.connectionId,
-          key: props.keyName,
-        })
-        
-        message.success('删除成功')
+        await redisApi.deleteKey(
+          props.connectionId,
+          props.keyName,
+        )
+
+        message.success(t('redis.key_viewer.delete_success'))
         emit('deleted')
-      } catch (error: any) {
-        message.error(`删除失败: ${error}`)
+      } catch (error: unknown) {
+        message.error(t('redis.key_viewer.delete_fail', { error: String(error) }))
       }
     },
   })
@@ -275,4 +284,3 @@ watch(() => props.keyName, () => {
   overflow: auto;
 }
 </style>
-

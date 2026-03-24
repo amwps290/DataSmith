@@ -1,19 +1,12 @@
 // Prevents additional console window on Windows in release mode
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod commands;
-mod database;
-mod models;
-mod utils;
-
-use database::ConnectionManager;
+use datasmith::commands;
+use datasmith::database::ConnectionManager;
+use datasmith::utils;
+use datasmith::AppState;
 use std::sync::Arc;
 use tauri::Manager;
-
-/// 应用状态 - 移除全局 Mutex，因为 ConnectionManager 内部已实现细粒度锁
-pub struct AppState {
-    pub connection_manager: Arc<ConnectionManager>,
-}
 
 fn main() {
     // 1. 初始化日志系统

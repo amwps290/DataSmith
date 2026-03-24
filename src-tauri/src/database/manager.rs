@@ -4,6 +4,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, instrument};
 
 use super::traits::*;
+use super::constants::DEFAULT_SESSION_ID;
 #[cfg(feature = "mysql")]
 use super::mysql::MySqlDatabase;
 
@@ -25,11 +26,11 @@ impl ConnectionManager {
     }
 
     /// 核心：解析 ID 并获取驱动实例，获取后立即释放锁
-    async fn get_db_ref(&self, composite_id: &str) -> DbResult<Arc<dyn DatabaseOperations>> {
+    pub async fn get_db_ref(&self, composite_id: &str) -> DbResult<Arc<dyn DatabaseOperations>> {
         let real_id = if composite_id.contains(':') {
             composite_id.to_string()
         } else {
-            format!("{}:metadata", composite_id)
+            format!("{}:{}", composite_id, DEFAULT_SESSION_ID)
         };
 
         // 1. 尝试直接获取已存在的连接
@@ -43,7 +44,7 @@ impl ConnectionManager {
         // 2. 如果不存在，触发创建流程 (ensure_session 内部会处理锁)
         debug!(session = %real_id, "会话不存在，触发自动创建流程");
         let config_id = real_id.split(':').next().unwrap_or(composite_id);
-        let session_id = real_id.split(':').nth(1).unwrap_or("metadata");
+        let session_id = real_id.split(':').nth(1).unwrap_or(DEFAULT_SESSION_ID);
         
         self.ensure_session(config_id, session_id).await?;
         
@@ -90,7 +91,7 @@ impl ConnectionManager {
     ) -> DbResult<String> {
         let config_id = config.id.clone();
         self.configs.write().await.insert(config_id.clone(), config.clone());
-        self.ensure_session(&config_id, "metadata").await
+        self.ensure_session(&config_id, DEFAULT_SESSION_ID).await
     }
 
     fn create_instance(&self, db_type: &DatabaseType) -> DbResult<Box<dyn DatabaseOperations>> {
@@ -181,7 +182,7 @@ impl ConnectionManager {
     }
 
     pub async fn get_database_type(&self, composite_id: &str) -> DbResult<DatabaseType> {
-        let real_id = if composite_id.contains(':') { composite_id.to_string() } else { format!("{}:metadata", composite_id) };
+        let real_id = if composite_id.contains(':') { composite_id.to_string() } else { format!("{}:{}", composite_id, DEFAULT_SESSION_ID) };
         let config_id = real_id.split(':').next().unwrap_or(composite_id);
         
         if let Some(t) = self.connection_types.read().await.get(&real_id) {

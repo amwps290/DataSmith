@@ -1,31 +1,48 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { ScriptInfo } from '@/types/database'
+
+/** 后端 session 的原始格式（snake_case 字段） */
+interface RawSessionState {
+  open_tabs: Array<{
+    key: string
+    title: string
+    type: string
+    connection_id?: string
+    database?: string
+    schema?: string
+    content?: string
+    file_path?: string
+    read_only?: boolean
+  }>
+  active_tab_key: string
+}
 
 export const workspaceApi = {
   /**
    * 保存当前工作区会话
    */
-  async saveSession(state: any): Promise<void> {
+  async saveSession(state: RawSessionState): Promise<void> {
     return invoke('save_session', { state })
   },
 
   /**
    * 加载上次工作区会话
    */
-  async loadSession(): Promise<any | null> {
-    return invoke<any | null>('load_session')
+  async loadSession(): Promise<RawSessionState | null> {
+    return invoke<RawSessionState | null>('load_session')
   },
 
   /**
    * 列出数据库相关的脚本文件
    */
-  async listDbScripts(connectionId: string, database: string): Promise<any[]> {
-    return invoke('list_db_scripts', { connectionId, database })
+  async listDbScripts(connectionId: string, database: string): Promise<ScriptInfo[]> {
+    return invoke<ScriptInfo[]>('list_db_scripts', { connectionId, database })
   },
 
   /**
    * 创建新的数据库脚本文件
    */
-  async createDbScript(connectionId: string, database: string, content: string): Promise<any> {
-    return invoke('create_db_script', { connectionId, database, content })
+  async createDbScript(connectionId: string, database: string, content: string): Promise<ScriptInfo> {
+    return invoke<ScriptInfo>('create_db_script', { connectionId, database, content })
   }
 }

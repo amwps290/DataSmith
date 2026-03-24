@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { 
-  ConnectionConfig, 
-  ConnectionTestResult 
+import type {
+  ConnectionConfig,
+  ConnectionTestResult,
+  StoredConnection
 } from '@/types/database'
 
 export const connectionApi = {
@@ -22,15 +23,15 @@ export const connectionApi = {
   /**
    * 保存新连接
    */
-  async saveConnection(connection: any, password: string | null): Promise<any> {
-    return invoke('save_connection', { connection, password })
+  async saveConnection(connection: StoredConnection, password: string | null): Promise<StoredConnection> {
+    return invoke<StoredConnection>('save_connection', { connection, password })
   },
 
   /**
    * 更新现有连接
    */
-  async updateConnection(connection: any, password: string | null): Promise<any> {
-    return invoke('update_connection', { connection, password })
+  async updateConnection(connection: StoredConnection, password: string | null): Promise<StoredConnection> {
+    return invoke<StoredConnection>('update_connection', { connection, password })
   },
 
   /**
@@ -52,5 +53,12 @@ export const connectionApi = {
    */
   async disconnectDatabase(connectionId: string): Promise<void> {
     return invoke('disconnect_database', { connectionId })
+  },
+
+  /**
+   * 创建 SQLite 数据库文件
+   */
+  async createSqliteDatabase(path: string): Promise<string> {
+    return invoke<string>('create_sqlite_database', { path })
   }
 }

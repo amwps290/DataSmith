@@ -1,7 +1,7 @@
 <template>
   <a-modal
     v-model:open="visible"
-    :title="`插入记录 - ${table}`"
+    :title="$t('dialog.insert_record.title', { table })"
     width="700px"
     @ok="handleInsert"
     @cancel="handleCancel"
@@ -58,11 +58,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { invoke } from '@tauri-apps/api/core'
+import { useI18n } from 'vue-i18n'
+import { metadataApi, dataApi } from '@/api'
+import { useDialogModel } from '@/composables/useDialogModel'
 
-interface Column {
+interface InsertColumn {
   name: string
   data_type: string
   nullable: boolean
@@ -70,6 +72,8 @@ interface Column {
   default_value: string | null
   comment: string
 }
+
+const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: boolean
@@ -81,27 +85,24 @@ const props = defineProps<{
 
 const emit = defineEmits(['update:modelValue', 'inserted'])
 
-const visible = computed({
-  get: () => props.modelValue,
-  set: (val) => emit('update:modelValue', val),
-})
+const visible = useDialogModel(props, emit)
 
 const inserting = ref(false)
 const loadingColumns = ref(false)
-const columns = ref<Column[]>([])
+const columns = ref<InsertColumn[]>([])
 const formData = ref<Record<string, any>>({})
 
-function getPlaceholder(col: Column): string {
+function getPlaceholder(col: InsertColumn): string {
   if (col.is_auto_increment) {
-    return '自动生成'
+    return t('dialog.insert_record.auto_generated')
   }
   if (col.default_value) {
-    return `默认: ${col.default_value}`
+    return t('dialog.insert_record.default_value', { value: col.default_value })
   }
   if (col.nullable) {
-    return '可选'
+    return t('dialog.insert_record.optional')
   }
-  return '必填'
+  return t('dialog.insert_record.required')
 }
 
 async function loadTableStructure() {
@@ -109,17 +110,17 @@ async function loadTableStructure() {
 
   loadingColumns.value = true
   try {
-    const result = await invoke<Column[]>('get_table_structure', {
+    const result = await metadataApi.getTableStructure({
       connectionId: props.connectionId,
       table: props.table,
       schema: props.database,
       database: props.database,
-    })
+    }) as unknown as InsertColumn[]
 
     columns.value = result
     formData.value = {}
-  } catch (error: any) {
-    message.error(`加载表结构失败: ${error}`)
+  } catch (error: unknown) {
+    message.error(t('dialog.insert_record.load_fail', { error: String(error) }))
   } finally {
     loadingColumns.value = false
   }
@@ -129,7 +130,7 @@ async function handleInsert() {
   // 验证必填字段
   for (const col of columns.value) {
     if (!col.nullable && !col.is_auto_increment && !formData.value[col.name]) {
-      message.error(`请填写必填字段: ${col.name}`)
+      message.error(t('dialog.insert_record.field_required', { field: col.name }))
       return
     }
   }
@@ -144,7 +145,7 @@ async function handleInsert() {
       }
     }
 
-    await invoke('insert_table_data', {
+    await dataApi.insertTableData({
       connectionId: props.connectionId,
       database: props.database,
       table: props.table,
@@ -152,11 +153,11 @@ async function handleInsert() {
       data,
     })
 
-    message.success('记录插入成功')
+    message.success(t('dialog.insert_record.success'))
     emit('inserted')
     handleCancel()
-  } catch (error: any) {
-    message.error(`插入记录失败: ${error}`)
+  } catch (error: unknown) {
+    message.error(t('dialog.insert_record.fail', { error: String(error) }))
   } finally {
     inserting.value = false
   }
@@ -179,4 +180,3 @@ watch(visible, (newVal) => {
   margin-bottom: 16px;
 }
 </style>
-

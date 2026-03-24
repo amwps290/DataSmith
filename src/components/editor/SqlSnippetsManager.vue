@@ -1,7 +1,7 @@
 <template>
   <a-modal
     :open="visible"
-    title="SQL代码片段"
+    :title="$t('dialog.snippets.title')"
     :width="900"
     @cancel="handleCancel"
     :footer="null"
@@ -10,11 +10,11 @@
       <div class="snippets-toolbar">
         <a-space>
           <a-button :icon="h(PlusOutlined)" @click="handleAddSnippet" type="primary">
-            新建片段
+            {{ $t('dialog.snippets.new_snippet') }}
           </a-button>
           <a-input-search
             v-model:value="searchText"
-            placeholder="搜索片段..."
+            :placeholder="$t('dialog.snippets.search_placeholder')"
             style="width: 200px"
           />
         </a-space>
@@ -42,7 +42,7 @@
                     </div>
                   </template>
                   <template #description>
-                    {{ item.description || '无描述' }}
+                    {{ item.description || $t('dialog.snippets.no_description') }}
                   </template>
                 </a-list-item-meta>
                 <template #actions>
@@ -51,7 +51,7 @@
                     size="small"
                     :icon="h(CopyOutlined)"
                     @click.stop="copySnippet(item)"
-                    title="复制"
+                    :title="$t('common.copy')"
                   />
                   <a-button
                     type="text"
@@ -59,7 +59,7 @@
                     danger
                     :icon="h(DeleteOutlined)"
                     @click.stop="deleteSnippet(item)"
-                    title="删除"
+                    :title="$t('common.delete')"
                   />
                 </template>
               </a-list-item>
@@ -69,51 +69,51 @@
 
         <div class="snippet-editor" v-if="selectedSnippet">
           <a-form :label-col="{ span: 4 }" :wrapper-col="{ span: 20 }">
-            <a-form-item label="标题">
+            <a-form-item :label="$t('dialog.snippets.snippet_title')">
               <a-input v-model:value="selectedSnippet.title" />
             </a-form-item>
-            <a-form-item label="分类">
+            <a-form-item :label="$t('dialog.snippets.category')">
               <a-select
                 v-model:value="selectedSnippet.category"
                 :options="categoryOptions"
                 allow-clear
-                placeholder="选择或输入分类"
+                :placeholder="$t('dialog.snippets.category_placeholder')"
                 mode="tags"
                 :max-tag-count="1"
               />
             </a-form-item>
-            <a-form-item label="描述">
+            <a-form-item :label="$t('dialog.snippets.description')">
               <a-textarea v-model:value="selectedSnippet.description" :rows="2" />
             </a-form-item>
-            <a-form-item label="SQL代码">
+            <a-form-item :label="$t('dialog.snippets.sql_code')">
               <a-textarea
                 v-model:value="selectedSnippet.sql"
                 :rows="10"
                 class="sql-input"
-                placeholder="输入SQL代码..."
+                :placeholder="$t('dialog.snippets.sql_placeholder')"
               />
             </a-form-item>
-            <a-form-item label="快捷键">
+            <a-form-item :label="$t('dialog.snippets.shortcut')">
               <a-input
                 v-model:value="selectedSnippet.shortcut"
-                placeholder="例如: Ctrl+Shift+1"
+                :placeholder="$t('dialog.snippets.shortcut_placeholder')"
               />
             </a-form-item>
           </a-form>
-          
+
           <div class="snippet-actions">
             <a-space>
               <a-button @click="saveSnippet" type="primary">
                 <SaveOutlined />
-                保存
+                {{ $t('common.save') }}
               </a-button>
               <a-button @click="insertSnippet">
                 <CodeOutlined />
-                插入到编辑器
+                {{ $t('common.insert_to_editor') }}
               </a-button>
               <a-button @click="copySnippet(selectedSnippet)">
                 <CopyOutlined />
-                复制
+                {{ $t('common.copy') }}
               </a-button>
             </a-space>
           </div>
@@ -133,6 +133,8 @@ import {
   CodeOutlined,
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
+import { useI18n } from 'vue-i18n'
+import { getStorageItem, setStorageItem, STORAGE_KEYS } from '@/utils/storageService'
 
 interface SqlSnippet {
   id: string
@@ -145,6 +147,8 @@ interface SqlSnippet {
   updatedAt: number
 }
 
+const { t } = useI18n()
+
 const props = defineProps<{
   visible: boolean
 }>()
@@ -156,22 +160,22 @@ const selectedSnippet = ref<SqlSnippet | null>(null)
 const snippets = ref<SqlSnippet[]>([])
 
 // 默认分类
-const categoryOptions = [
+const categoryOptions = computed(() => [
   { label: 'SELECT', value: 'SELECT' },
   { label: 'INSERT', value: 'INSERT' },
   { label: 'UPDATE', value: 'UPDATE' },
   { label: 'DELETE', value: 'DELETE' },
   { label: 'DDL', value: 'DDL' },
-  { label: '常用', value: '常用' },
-  { label: '其他', value: '其他' },
-]
+  { label: t('dialog.snippets.category_common'), value: t('dialog.snippets.category_common') },
+  { label: t('dialog.snippets.category_other'), value: t('dialog.snippets.category_other') },
+])
 
 // 预置的代码片段
 const defaultSnippets: SqlSnippet[] = [
   {
     id: '1',
-    title: 'SELECT 基本查询',
-    description: '基本的SELECT查询模板',
+    title: 'SELECT Basic Query',
+    description: 'Basic SELECT query template',
     category: 'SELECT',
     sql: 'SELECT * FROM table_name\nWHERE condition\nORDER BY column_name\nLIMIT 100;',
     createdAt: Date.now(),
@@ -179,8 +183,8 @@ const defaultSnippets: SqlSnippet[] = [
   },
   {
     id: '2',
-    title: 'INSERT 插入数据',
-    description: '插入单行数据',
+    title: 'INSERT Data',
+    description: 'Insert single row',
     category: 'INSERT',
     sql: 'INSERT INTO table_name (column1, column2, column3)\nVALUES (value1, value2, value3);',
     createdAt: Date.now(),
@@ -188,8 +192,8 @@ const defaultSnippets: SqlSnippet[] = [
   },
   {
     id: '3',
-    title: 'UPDATE 更新数据',
-    description: '更新表数据',
+    title: 'UPDATE Data',
+    description: 'Update table data',
     category: 'UPDATE',
     sql: 'UPDATE table_name\nSET column1 = value1, column2 = value2\nWHERE condition;',
     createdAt: Date.now(),
@@ -197,8 +201,8 @@ const defaultSnippets: SqlSnippet[] = [
   },
   {
     id: '4',
-    title: 'DELETE 删除数据',
-    description: '删除表数据',
+    title: 'DELETE Data',
+    description: 'Delete table data',
     category: 'DELETE',
     sql: 'DELETE FROM table_name\nWHERE condition;',
     createdAt: Date.now(),
@@ -207,7 +211,7 @@ const defaultSnippets: SqlSnippet[] = [
   {
     id: '5',
     title: 'CREATE TABLE',
-    description: '创建表',
+    description: 'Create table',
     category: 'DDL',
     sql: `CREATE TABLE table_name (
   id INT PRIMARY KEY AUTO_INCREMENT,
@@ -220,8 +224,8 @@ const defaultSnippets: SqlSnippet[] = [
   },
   {
     id: '6',
-    title: 'JOIN 查询',
-    description: '多表关联查询',
+    title: 'JOIN Query',
+    description: 'Multi-table join query',
     category: 'SELECT',
     sql: `SELECT t1.*, t2.column_name
 FROM table1 t1
@@ -232,8 +236,8 @@ WHERE t1.condition;`,
   },
   {
     id: '7',
-    title: '分组统计',
-    description: 'GROUP BY聚合查询',
+    title: 'GROUP BY',
+    description: 'GROUP BY aggregate query',
     category: 'SELECT',
     sql: `SELECT column1, COUNT(*) as count, SUM(column2) as total
 FROM table_name
@@ -261,14 +265,9 @@ const filteredSnippets = computed(() => {
 
 // 加载片段
 function loadSnippets() {
-  const saved = localStorage.getItem('sql-snippets')
-  if (saved) {
-    try {
-      snippets.value = JSON.parse(saved)
-    } catch (e) {
-      console.error('加载片段失败:', e)
-      snippets.value = [...defaultSnippets]
-    }
+  const saved = getStorageItem<SqlSnippet[]>(STORAGE_KEYS.CODE_SNIPPETS, [])
+  if (saved.length > 0) {
+    snippets.value = saved
   } else {
     snippets.value = [...defaultSnippets]
   }
@@ -276,14 +275,14 @@ function loadSnippets() {
 
 // 保存片段到本地存储
 function saveToStorage() {
-  localStorage.setItem('sql-snippets', JSON.stringify(snippets.value))
+  setStorageItem(STORAGE_KEYS.CODE_SNIPPETS, snippets.value)
 }
 
 // 添加新片段
 function handleAddSnippet() {
   const newSnippet: SqlSnippet = {
     id: Date.now().toString(),
-    title: '新建片段',
+    title: t('dialog.snippets.new_snippet_title'),
     description: '',
     category: '',
     sql: '',
@@ -308,25 +307,25 @@ function saveSnippet() {
     selectedSnippet.value.updatedAt = Date.now()
     snippets.value[index] = { ...selectedSnippet.value }
     saveToStorage()
-    message.success('片段已保存')
+    message.success(t('dialog.snippets.save_success'))
   }
 }
 
 // 删除片段
 function deleteSnippet(snippet: SqlSnippet) {
   Modal.confirm({
-    title: '确认删除',
-    content: `确定要删除片段 "${snippet.title}" 吗？`,
-    okText: '删除',
+    title: t('dialog.snippets.delete_confirm_title'),
+    content: t('dialog.snippets.delete_confirm_content', { title: snippet.title }),
+    okText: t('common.delete'),
     okType: 'danger',
-    cancelText: '取消',
+    cancelText: t('common.cancel'),
     onOk() {
       snippets.value = snippets.value.filter((s) => s.id !== snippet.id)
       if (selectedSnippet.value?.id === snippet.id) {
         selectedSnippet.value = null
       }
       saveToStorage()
-      message.success('片段已删除')
+      message.success(t('dialog.snippets.delete_success'))
     },
   })
 }
@@ -334,14 +333,14 @@ function deleteSnippet(snippet: SqlSnippet) {
 // 复制片段
 function copySnippet(snippet: SqlSnippet) {
   navigator.clipboard.writeText(snippet.sql)
-  message.success('SQL已复制到剪贴板')
+  message.success(t('dialog.snippets.copy_success'))
 }
 
 // 插入片段到编辑器
 function insertSnippet() {
   if (!selectedSnippet.value) return
   emit('insert-snippet', selectedSnippet.value.sql)
-  message.success('已插入到编辑器')
+  message.success(t('dialog.snippets.insert_success'))
 }
 
 // 取消
@@ -442,4 +441,3 @@ watch(() => props.visible, (visible) => {
   border-top-color: #303030;
 }
 </style>
-
