@@ -113,6 +113,19 @@ impl MySqlDatabase {
             other => other.to_string(),
         }
     }
+
+    async fn resolve_database_name(&self, database: Option<&str>, schema: Option<&str>) -> DbResult<String> {
+        if let Some(name) = schema.or(database) {
+            return Ok(name.to_string());
+        }
+
+        let state = self.state.lock().await;
+        state
+            .config
+            .as_ref()
+            .and_then(|config| config.database.clone())
+            .ok_or_else(|| DbError::ConfigError("MySQL 需要指定数据库".into()))
+    }
 }
 
 #[async_trait]
@@ -250,7 +263,7 @@ impl DatabaseOperations for MySqlDatabase {
 
     async fn get_tables(&self, database: Option<&str>) -> DbResult<Vec<TableInfo>> {
         let sql = if let Some(db) = database {
-            format!("SELECT TABLE_NAME, TABLE_COMMENT, TABLE_ROWS, DATA_LENGTH FROM information_schema.TABLES WHERE TABLE_SCHEMA = {}", escape_string_literal(db))
+            format!("SELECT TABLE_NAME, TABLE_COMMENT, TABLE_ROWS, DATA_LENGTH, TABLE_SCHEMA FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME", escape_string_literal(db))
         } else {
             "SHOW TABLES".to_string()
         };
@@ -259,11 +272,34 @@ impl DatabaseOperations for MySqlDatabase {
         if let Some(res) = results.first() {
             Ok(res.rows.iter().map(|r| TableInfo {
                 name: r.get("TABLE_NAME").or_else(|| r.values().next()).and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                schema: None,
+                schema: r.get("TABLE_SCHEMA").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 table_type: "TABLE".into(),
                 engine: None,
                 rows: r.get("TABLE_ROWS").and_then(|v| v.as_u64()),
                 size_mb: r.get("DATA_LENGTH").and_then(|v| v.as_f64()).map(|s| s / 1024.0 / 1024.0),
+                comment: r.get("TABLE_COMMENT").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            }).collect())
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    async fn get_views(&self, database: Option<&str>) -> DbResult<Vec<TableInfo>> {
+        let target_db = self.resolve_database_name(database, None).await?;
+        let sql = format!(
+            "SELECT TABLE_NAME, TABLE_COMMENT, TABLE_SCHEMA FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} AND TABLE_TYPE = 'VIEW' ORDER BY TABLE_NAME",
+            escape_string_literal(&target_db)
+        );
+
+        let results = self.execute_query(&sql, None).await?;
+        if let Some(res) = results.first() {
+            Ok(res.rows.iter().map(|r| TableInfo {
+                name: r.get("TABLE_NAME").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                schema: r.get("TABLE_SCHEMA").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                table_type: "VIEW".into(),
+                engine: None,
+                rows: None,
+                size_mb: None,
                 comment: r.get("TABLE_COMMENT").and_then(|v| v.as_str()).map(|s| s.to_string()),
             }).collect())
         } else {
@@ -386,6 +422,65 @@ impl DatabaseOperations for MySqlDatabase {
             }
         }
         Ok(map.into_values().collect())
+    }
+
+    async fn get_schemas(&self, database: Option<&str>) -> DbResult<Vec<SchemaInfo>> {
+        if let Some(database_name) = database {
+            return Ok(vec![SchemaInfo {
+                name: database_name.to_string(),
+                owner: None,
+                comment: None,
+            }]);
+        }
+
+        let sql = "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME";
+        let results = self.execute_query(sql, None).await?;
+        if let Some(res) = results.first() {
+            Ok(res.rows.iter().map(|r| SchemaInfo {
+                name: r.get("SCHEMA_NAME").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                owner: None,
+                comment: None,
+            }).collect())
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    async fn get_functions(&self, database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
+        let target_schema = self.resolve_database_name(database, schema).await?;
+        let sql = format!(
+            "SELECT r.ROUTINE_NAME, r.ROUTINE_SCHEMA, r.DTD_IDENTIFIER AS RETURN_TYPE, \
+             GROUP_CONCAT(CASE \
+               WHEN p.PARAMETER_MODE IS NULL THEN NULL \
+               WHEN p.PARAMETER_NAME IS NULL OR p.PARAMETER_NAME = '' THEN CONCAT(p.PARAMETER_MODE, ' ', COALESCE(p.DTD_IDENTIFIER, p.DATA_TYPE, '')) \
+               ELSE CONCAT(p.PARAMETER_MODE, ' ', p.PARAMETER_NAME, ' ', COALESCE(p.DTD_IDENTIFIER, p.DATA_TYPE, '')) \
+             END ORDER BY p.ORDINAL_POSITION SEPARATOR ', ') AS ARGUMENTS, \
+             r.ROUTINE_BODY, r.ROUTINE_COMMENT \
+             FROM information_schema.ROUTINES r \
+             LEFT JOIN information_schema.PARAMETERS p \
+               ON p.SPECIFIC_SCHEMA = r.ROUTINE_SCHEMA \
+              AND p.SPECIFIC_NAME = r.SPECIFIC_NAME \
+              AND p.ORDINAL_POSITION > 0 \
+             WHERE r.ROUTINE_SCHEMA = {} AND r.ROUTINE_TYPE = 'FUNCTION' \
+             GROUP BY r.ROUTINE_NAME, r.ROUTINE_SCHEMA, r.DTD_IDENTIFIER, r.ROUTINE_BODY, r.ROUTINE_COMMENT \
+             ORDER BY r.ROUTINE_NAME",
+            escape_string_literal(&target_schema)
+        );
+
+        let results = self.execute_query(&sql, None).await?;
+        if let Some(res) = results.first() {
+            Ok(res.rows.iter().map(|r| FunctionInfo {
+                name: r.get("ROUTINE_NAME").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                schema: r.get("ROUTINE_SCHEMA").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                return_type: r.get("RETURN_TYPE").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                arguments: r.get("ARGUMENTS").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                language: r.get("ROUTINE_BODY").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                function_type: "function".into(),
+                comment: r.get("ROUTINE_COMMENT").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            }).collect())
+        } else {
+            Ok(vec![])
+        }
     }
 
     async fn get_foreign_keys(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<ForeignKeyInfo>> {

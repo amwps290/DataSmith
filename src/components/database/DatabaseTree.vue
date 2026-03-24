@@ -159,6 +159,12 @@ async function onLoadData(treeNode: TreeNode) {
         { key: `${treeNode.key}-schemas`, title: 'Schemas', type: 'schemas', isLeaf: false, metadata: { database: dbName } },
         { key: `${treeNode.key}-extensions`, title: t('tree.extensions'), type: 'database-extensions', isLeaf: false, metadata: { database: dbName } }
       ]
+    } else if (props.dbType === 'mysql') {
+      children = [
+        { key: `${treeNode.key}-tables`, title: t('tree.tables'), type: 'tables', isLeaf: false, metadata: { database: dbName } },
+        { key: `${treeNode.key}-views`, title: t('tree.views'), type: 'views', isLeaf: false, metadata: { database: dbName } },
+        { key: `${treeNode.key}-functions`, title: t('tree.functions'), type: 'functions', isLeaf: false, metadata: { database: dbName, schema: dbName } }
+      ]
     } else {
       children = [
         { key: `${treeNode.key}-tables`, title: t('tree.tables'), type: 'tables', isLeaf: false, metadata: { database: dbName } },
@@ -204,8 +210,8 @@ async function onLoadData(treeNode: TreeNode) {
       treeData.value = [...treeData.value]
     } catch (e: any) { message.error(e) }
   }
-  else if (['schema-indexes', 'schema-functions', 'schema-aggregates', 'database-extensions'].includes(treeNode.type)) {
-    const isFunction = treeNode.type === 'schema-functions'
+  else if (['schema-indexes', 'schema-functions', 'schema-aggregates', 'database-extensions', 'functions'].includes(treeNode.type)) {
+    const isFunction = treeNode.type === 'schema-functions' || treeNode.type === 'functions'
     const isAggregate = treeNode.type === 'schema-aggregates'
     const isIndex = treeNode.type === 'schema-indexes'
 
@@ -214,7 +220,7 @@ async function onLoadData(treeNode: TreeNode) {
       if (isIndex) {
         res = await metadataApi.getSchemaIndexes(connId, treeNode.metadata.database, treeNode.metadata.schema)
       } else if (isFunction) {
-        res = await metadataApi.getSchemaFunctions(connId, treeNode.metadata.database, treeNode.metadata.schema)
+        res = await metadataApi.getSchemaFunctions(connId, treeNode.metadata.database, treeNode.metadata.schema || treeNode.metadata.database)
       } else if (isAggregate) {
         res = await metadataApi.getSchemaAggregateFunctions(connId, treeNode.metadata.database, treeNode.metadata.schema)
       } else {
@@ -235,7 +241,7 @@ async function onLoadData(treeNode: TreeNode) {
         return {
           key: `${treeNode.key}-${item.name || item.index_name}`,
           title,
-          type: 'leaf',
+          type: isFunction ? 'function' : 'leaf',
           isLeaf: true,
           metadata: { ...item, database: treeNode.metadata.database, schema: treeNode.metadata.schema }
         }

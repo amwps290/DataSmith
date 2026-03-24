@@ -111,6 +111,12 @@ struct AutocompleteFunction {
     function_type: String,
 }
 
+#[derive(Serialize)]
+#[allow(non_snake_case)]
+pub struct RoutineName {
+    ROUTINE_NAME: String,
+}
+
 fn default_keywords() -> Vec<&'static str> {
     vec![
         "SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE", "JOIN", "LEFT", "RIGHT",
@@ -119,6 +125,82 @@ fn default_keywords() -> Vec<&'static str> {
         "INTO", "SET", "DISTINCT", "UNION", "ALL", "AND", "OR", "NOT", "NULL",
         "IS", "IN", "EXISTS", "LIKE", "BETWEEN", "AS", "CASE", "WHEN", "THEN", "ELSE", "END",
     ]
+}
+
+#[tauri::command]
+pub async fn get_functions(
+    connection_id: String,
+    database: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<RoutineName>, String> {
+    let manager = &state.connection_manager;
+    let db_type = manager.get_database_type(&connection_id).await.to_cmd_result()?;
+
+    let names = match db_type {
+        DatabaseType::MySQL => manager
+            .get_functions(&connection_id, Some(&database), Some(&database))
+            .await
+            .to_cmd_result()?
+            .into_iter()
+            .map(|item| item.name)
+            .collect(),
+        DatabaseType::PostgreSQL => {
+            let schemas = manager.get_schemas(&connection_id, Some(&database)).await.unwrap_or_default();
+            let schema_names = if schemas.is_empty() {
+                vec!["public".to_string()]
+            } else {
+                schemas.into_iter().map(|schema| schema.name).collect::<Vec<_>>()
+            };
+
+            let mut names = BTreeSet::new();
+            for schema in schema_names {
+                for function in manager
+                    .get_functions(&connection_id, Some(&database), Some(&schema))
+                    .await
+                    .unwrap_or_default()
+                {
+                    names.insert(function.name);
+                }
+            }
+            names.into_iter().collect()
+        }
+        _ => Vec::new(),
+    };
+
+    Ok(names.into_iter().map(|name| RoutineName { ROUTINE_NAME: name }).collect())
+}
+
+#[tauri::command]
+pub async fn get_procedures(
+    connection_id: String,
+    database: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<RoutineName>, String> {
+    let manager = &state.connection_manager;
+    let db_type = manager.get_database_type(&connection_id).await.to_cmd_result()?;
+
+    let sql = match db_type {
+        DatabaseType::MySQL => format!(
+            "SELECT ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = '{}' AND ROUTINE_TYPE = 'PROCEDURE' ORDER BY ROUTINE_NAME",
+            database.replace('\'', "''")
+        ),
+        DatabaseType::PostgreSQL => "SELECT p.proname AS ROUTINE_NAME FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE p.prokind = 'p' AND n.nspname NOT IN ('pg_catalog', 'information_schema') ORDER BY p.proname".to_string(),
+        _ => return Ok(Vec::new()),
+    };
+
+    let results = manager.execute_query(&connection_id, &sql, Some(&database)).await.to_cmd_result()?;
+    let names = results
+        .first()
+        .map(|result| {
+            result.rows.iter().filter_map(|row| {
+                row.get("ROUTINE_NAME")
+                    .and_then(|value| value.as_str())
+                    .map(|name| RoutineName { ROUTINE_NAME: name.to_string() })
+            }).collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok(names)
 }
 
 #[tauri::command]
@@ -222,6 +304,20 @@ pub async fn get_autocomplete_data(
                     function_type: function.function_type,
                 }));
             }
+        } else if matches!(db_type, DatabaseType::MySQL) {
+            let schema_functions = manager
+                .get_functions(&connection_id, Some(&db_name), Some(&db_name))
+                .await
+                .unwrap_or_default();
+
+            functions.extend(schema_functions.into_iter().map(|function| AutocompleteFunction {
+                name: function.name,
+                schema: function.schema,
+                database: db_name.clone(),
+                return_type: function.return_type,
+                arguments: function.arguments,
+                function_type: function.function_type,
+            }));
         }
     }
 
