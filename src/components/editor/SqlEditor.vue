@@ -28,6 +28,18 @@
                 <a-divider type="vertical" />
                 <span class="affected-text" v-if="result.affected_rows > 0">{{ $t('editor.affected_rows', { n: result.affected_rows }) }}</span>
               </a-space>
+              <a-dropdown>
+                <template #overlay>
+                  <a-menu @click="({ key }) => handleExportResult(index, String(key))">
+                    <a-menu-item key="csv">{{ $t('data.export_csv') }}</a-menu-item>
+                    <a-menu-item key="json">{{ $t('data.export_json') }}</a-menu-item>
+                    <a-menu-item key="sql">{{ $t('data.export_sql') }}</a-menu-item>
+                  </a-menu>
+                </template>
+                <a-button size="small" :icon="h(ExportOutlined)" :disabled="result.columns.length === 0">
+                  {{ $t('editor.export_result') }}
+                </a-button>
+              </a-dropdown>
             </div>
             
             <div class="table-wrapper">
@@ -92,12 +104,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch, ref, computed, onActivated, nextTick, reactive } from 'vue'
+import { onMounted, onUnmounted, watch, ref, computed, onActivated, nextTick, reactive, h } from 'vue'
 import { useI18n } from 'vue-i18n'
 import * as monaco from 'monaco-editor'
 import { getSqlAutocompleteManager } from '@/services/sqlAutocomplete'
 import { message } from 'ant-design-vue'
-import { queryApi, metadataApi, utilsApi } from '@/api'
+import { ExportOutlined } from '@ant-design/icons-vue'
+import { save } from '@tauri-apps/plugin-dialog'
+import { exportApi, queryApi, metadataApi, utilsApi } from '@/api'
 import type { QueryResult } from '@/types/database'
 import { useConnectionStore } from '@/stores/connection'
 import { useAppStore } from '@/stores/app'
@@ -234,6 +248,58 @@ async function loadNextPage(index: number) {
 }
 
 function addMessage(type: string, text: string) { messages.value.unshift({ type, text, time: new Date().toLocaleTimeString() }) }
+
+function sanitizeFileName(name: string) {
+  return name.replace(/[\\/:*?"<>|]+/g, '_').trim() || t('editor.export_default_name')
+}
+
+function unquoteIdentifier(name: string) {
+  return name.replace(/^["'`[]+|["'`\]]+$/g, '')
+}
+
+function inferInsertTargetTable(index: number) {
+  const sql = queryResultStates[index]?.sql?.trim() || ''
+  const normalized = sql.replace(/\s+/g, ' ')
+  const match = normalized.match(/\bFROM\s+((?:["`\[]?[\w$]+["`\]]?\.)?["`\[]?[\w$]+["`\]]?)/i)
+  const target = match?.[1]?.split('.').pop()
+  return target ? unquoteIdentifier(target) : `query_result_${index + 1}`
+}
+
+function inferExportBaseName(index: number, format: string) {
+  const tableName = inferInsertTargetTable(index)
+  const databaseName = selectedDatabase.value || currentDatabaseLabel.value || t('editor.export_default_name')
+  return sanitizeFileName(`${databaseName}_${tableName}.${format}`)
+}
+
+async function handleExportResult(index: number, format: string) {
+  const result = queryResults.value[index]
+  if (!result || result.columns.length === 0) return
+
+  try {
+    const defaultPath = inferExportBaseName(index, format)
+    const path = await save({
+      defaultPath,
+      filters: [{ name: format.toUpperCase(), extensions: [format] }],
+    })
+    if (!path) return
+
+    if (format === 'csv') {
+      await exportApi.toCsv(result, path)
+    } else if (format === 'json') {
+      await exportApi.toJson(result, path)
+    } else if (format === 'sql') {
+      await exportApi.toSql(result, inferInsertTargetTable(index), path)
+    } else {
+      throw new Error(`Unsupported export format: ${format}`)
+    }
+
+    message.success(t('data.export_success', { path }))
+  } catch (e: any) {
+    const errorMessage = getErrorMessage(e)
+    message.error(errorMessage)
+    addMessage('error', errorMessage)
+  }
+}
 
 function getErrorMessage(error: unknown): string {
   if (typeof error === 'string') return error
@@ -477,7 +543,7 @@ defineExpose({ setSelectedDatabase, executing, executeQuery, explainQuery, handl
 .result-content { flex: 1; display: flex; flex-direction: column; padding: 12px; overflow: hidden; position: relative; }
 .executing-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255, 255, 255, 0.7); display: flex; align-items: center; justify-content: center; z-index: 10; }
 .dark-mode .executing-overlay { background: rgba(0, 0, 0, 0.6); }
-.result-info { margin-bottom: 8px; flex-shrink: 0; }
+.result-info { margin-bottom: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .affected-text { font-size: 12px; color: #8c8c8c; }
 .table-wrapper { flex: 1; min-height: 0; overflow: hidden; }
 .messages-content { flex: 1; padding: 12px; overflow-y: auto; font-family: monospace; }
@@ -491,4 +557,11 @@ defineExpose({ setSelectedDatabase, executing, executeQuery, explainQuery, handl
 .dark-mode .history-item:hover { background: #262626; }
 .history-sql { font-family: monospace; background: transparent; padding: 0; }
 .null-text { color: #bfbfbf; font-style: italic; }
+
+@media (max-width: 768px) {
+  .result-info {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
 </style>
