@@ -18,6 +18,7 @@ export interface TableSuggestion {
   name: string
   schema?: string
   database: string
+  table_type?: string
   columns: ColumnSuggestion[]
 }
 
@@ -27,6 +28,7 @@ export interface FunctionSuggestion {
   database: string
   return_type?: string
   arguments?: string
+  function_type?: string
 }
 
 export interface ColumnSuggestion {
@@ -40,6 +42,12 @@ interface ModelContext {
   dbType: DatabaseType | null
 }
 
+interface QuerySource {
+  schema?: string
+  table: string
+  alias?: string
+}
+
 /**
  * 全局 SQL 自动补全管理器
  */
@@ -48,6 +56,7 @@ export class SqlAutocompleteManager implements monaco.languages.CompletionItemPr
   private contextMap = new Map<string, ModelContext>() // modelId -> context
   private dataCache = new Map<string, AutoCompleteData>() // "connId:db" -> data
   private loadingMap = new Map<string, Promise<AutoCompleteData>>() // 防止重复请求
+  public readonly triggerCharacters = [' ', '.', '(', ',']
 
   private constructor() {
     // 注册到 Monaco
@@ -158,6 +167,56 @@ export class SqlAutocompleteManager implements monaco.languages.CompletionItemPr
     return `${name}(${placeholders.join(', ')})$0`
   }
 
+  private isTableLikeFunction(func: FunctionSuggestion, dbType: DatabaseType | null): boolean {
+    if (dbType !== 'postgresql') return false
+    const returnType = (func.return_type || '').toUpperCase()
+    return returnType.includes('SETOF') || returnType.startsWith('TABLE(')
+  }
+
+  private normalizeIdentifier(identifier: string): string {
+    return identifier.replace(/^["`]|["`]$/g, '')
+  }
+
+  private parseQuerySources(sql: string): QuerySource[] {
+    const sources: QuerySource[] = []
+    const sourceRegex = /(?:FROM|JOIN|UPDATE|INTO)\s+((?:"[^"]+"|`[^`]+`|[a-zA-Z0-9_]+)(?:\.(?:"[^"]+"|`[^`]+`|[a-zA-Z0-9_]+))?)(?:\s+(?:AS\s+)?([a-zA-Z_][\w$]*))?/gi
+    let match: RegExpExecArray | null
+
+    while ((match = sourceRegex.exec(sql)) !== null) {
+      const rawName = match[1]
+      const alias = match[2]
+      const parts = rawName.split('.').map(part => this.normalizeIdentifier(part))
+      const [schema, table] = parts.length > 1 ? [parts[0], parts[1]] : [undefined, parts[0]]
+
+      if (!table) continue
+
+      sources.push({
+        schema,
+        table,
+        alias: alias ? this.normalizeIdentifier(alias) : undefined,
+      })
+    }
+
+    return sources
+  }
+
+  private getQualifier(textUntilPosition: string): string | null {
+    const match = textUntilPosition.match(/((?:"[^"]+"|`[^`]+`|[a-zA-Z0-9_]+))\.$/)
+    return match ? this.normalizeIdentifier(match[1]) : null
+  }
+
+  private findTablesForSources(tables: TableSuggestion[], sources: QuerySource[]): Array<QuerySource & { tableDef: TableSuggestion }> {
+    return sources.flatMap((source) => {
+      return tables
+        .filter((table) => {
+          const tableNameMatches = this.normalizeIdentifier(table.name).toLowerCase() === source.table.toLowerCase()
+          const schemaMatches = !source.schema || this.normalizeIdentifier(table.schema || '').toLowerCase() === source.schema.toLowerCase()
+          return tableNameMatches && schemaMatches
+        })
+        .map((tableDef) => ({ ...source, tableDef }))
+    })
+  }
+
   /**
    * Monaco 补全核心回调
    */
@@ -186,9 +245,11 @@ export class SqlAutocompleteManager implements monaco.languages.CompletionItemPr
       endLineNumber: position.lineNumber,
       endColumn: position.column,
     })
-    const upperText = textUntilPosition.toUpperCase()
     const tokens = textUntilPosition.trim().split(/\s+/)
     const lastToken = tokens[tokens.length - 1]?.toUpperCase() || ''
+    const querySources = this.parseQuerySources(model.getValue())
+    const sourceTables = this.findTablesForSources(data.tables, querySources)
+    const qualifier = this.getQualifier(textUntilPosition)
 
     // 1. 关键字
     for (const keyword of data.keywords) {
@@ -202,7 +263,7 @@ export class SqlAutocompleteManager implements monaco.languages.CompletionItemPr
     }
 
     // 2. 数据库
-    const isDbContext = lastToken === 'FROM' || lastToken === 'USE' || lastToken === 'DATABASE' || upperText.includes('FROM')
+    const isDbContext = lastToken === 'USE' || lastToken === 'DATABASE'
     if (isDbContext) {
       for (const db of data.databases) {
         suggestions.push({
@@ -216,9 +277,15 @@ export class SqlAutocompleteManager implements monaco.languages.CompletionItemPr
     }
 
     // 3. 表建议
-    const isTableContext = lastToken === 'FROM' || lastToken === 'JOIN' || lastToken === 'TABLE' || upperText.includes('FROM')
+    const isTableContext = /(?:FROM|JOIN|UPDATE|INTO|TABLE)\s*$/i.test(textUntilPosition) || /(?:FROM|JOIN|UPDATE|INTO|TABLE)\s+[\w"`.\-]*$/i.test(textUntilPosition)
     if (isTableContext) {
+      const schemaFilter = qualifier && !sourceTables.some(source => source.alias?.toLowerCase() === qualifier.toLowerCase())
+        ? qualifier.toLowerCase()
+        : null
+
       for (const table of data.tables) {
+        if (schemaFilter && (table.schema || '').toLowerCase() !== schemaFilter) continue
+
         const quotedName = this.quoteIdentifier(table.name, context.dbType)
         const quotedSchema = table.schema ? this.quoteIdentifier(table.schema, context.dbType) : ''
         
@@ -230,46 +297,88 @@ export class SqlAutocompleteManager implements monaco.languages.CompletionItemPr
 
         suggestions.push({
           label,
-          kind: monaco.languages.CompletionItemKind.Class,
-          detail: `表 (${table.schema || 'public'})`,
+          kind: table.table_type?.toUpperCase() === 'VIEW'
+            ? monaco.languages.CompletionItemKind.Interface
+            : monaco.languages.CompletionItemKind.Class,
+          detail: `${table.table_type?.toUpperCase() === 'VIEW' ? '视图' : '表'} (${table.schema || 'public'})`,
           insertText,
           range,
           sortText: `2_${label}`,
         })
       }
+
+      for (const func of data.functions) {
+        if (!this.isTableLikeFunction(func, context.dbType)) continue
+        if (schemaFilter && (func.schema || '').toLowerCase() !== schemaFilter) continue
+
+        const quotedName = this.quoteIdentifier(func.name, context.dbType)
+        const quotedSchema = func.schema ? this.quoteIdentifier(func.schema, context.dbType) : ''
+        const functionNameWithSchema = quotedSchema ? `${quotedSchema}.${quotedName}` : quotedName
+        const signature = func.arguments?.startsWith('(')
+          ? func.arguments
+          : `(${func.arguments || ''})`
+
+        suggestions.push({
+          label: `${func.schema ? `${func.schema}.` : ''}${func.name}${signature}`,
+          kind: monaco.languages.CompletionItemKind.Function,
+          detail: `表函数 (${func.return_type || 'record'})`,
+          insertText: this.generateFunctionSnippet(functionNameWithSchema, func.arguments),
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          range,
+          sortText: `3_${func.name}`,
+        })
+      }
     }
 
     // 4. 列建议
-    const isColContext = lastToken === 'SELECT' || lastToken === 'WHERE' || lastToken === 'SET' || lastToken === ',' || upperText.includes('SELECT')
+    const isColContext = !isTableContext && (lastToken === 'SELECT' || lastToken === 'WHERE' || lastToken === 'SET' || lastToken === ',')
     if (isColContext) {
-      const tablesInQuery = this.extractTablesFromQuery(model.getValue())
-      for (const table of data.tables) {
-        const normalizedTableName = table.name.replace(/"/g, '').toLowerCase()
-        if (tablesInQuery.length > 0 && !tablesInQuery.some(t => t.replace(/"/g, '').toLowerCase() === normalizedTableName)) {
-          continue
-        }
+      const relevantSources = qualifier
+        ? sourceTables.filter(source =>
+            source.alias?.toLowerCase() === qualifier.toLowerCase() ||
+            source.table.toLowerCase() === qualifier.toLowerCase()
+          )
+        : sourceTables
 
-        for (const column of table.columns) {
+      const effectiveSources = relevantSources.length > 0
+        ? relevantSources
+        : data.tables.map((tableDef) => ({
+            table: this.normalizeIdentifier(tableDef.name),
+            schema: tableDef.schema ? this.normalizeIdentifier(tableDef.schema) : undefined,
+            alias: undefined,
+            tableDef,
+          }))
+
+      for (const source of effectiveSources) {
+        for (const column of source.tableDef.columns) {
           const quotedCol = this.quoteIdentifier(column.name, context.dbType)
-          const label = tablesInQuery.length > 1 ? `${table.name}.${column.name}` : column.name
-          const insertText = tablesInQuery.length > 1 ? `${this.quoteIdentifier(table.name, context.dbType)}.${quotedCol}` : quotedCol
+          const qualifierName = source.alias || source.table
+          const shouldPrefix = !qualifier && effectiveSources.length > 1
+          const label = qualifier ? column.name : shouldPrefix ? `${qualifierName}.${column.name}` : column.name
+          const insertText = qualifier
+            ? quotedCol
+            : shouldPrefix
+              ? `${this.quoteIdentifier(qualifierName, context.dbType)}.${quotedCol}`
+              : quotedCol
 
           suggestions.push({
             label,
             kind: monaco.languages.CompletionItemKind.Field,
-            detail: `${column.data_type} (${table.name})`,
+            detail: `${column.data_type} (${qualifierName})`,
             insertText,
             range,
-            sortText: `3_${label}`,
+            sortText: `4_${label}`,
           })
         }
       }
     }
 
     // 5. 函数建议
-    const isFuncContext = lastToken === 'SELECT' || lastToken === '(' || lastToken === ',' || upperText.includes('SELECT')
+    const isFuncContext = !isTableContext && (lastToken === 'SELECT' || lastToken === '(' || lastToken === ',' || /\bSELECT\s+[\w",.\s]*$/i.test(textUntilPosition))
     if (isFuncContext) {
       for (const func of data.functions) {
+        if (this.isTableLikeFunction(func, context.dbType)) continue
+
         const quotedName = this.quoteIdentifier(func.name, context.dbType)
         const quotedSchema = func.schema ? this.quoteIdentifier(func.schema, context.dbType) : ''
         
@@ -291,7 +400,7 @@ export class SqlAutocompleteManager implements monaco.languages.CompletionItemPr
         suggestions.push({
           label: labelObj,
           kind: monaco.languages.CompletionItemKind.Function,
-          detail: `函数: ${func.schema ? func.schema + '.' : ''}${func.name}${signature}`,
+          detail: `${func.function_type === 'aggregate' ? '聚合函数' : '函数'}: ${func.schema ? func.schema + '.' : ''}${func.name}${signature}`,
           documentation: {
             value: `### ${func.name}\n\n**签名:** \`${signature}\`\n\n**返回:** \`${func.return_type || 'void'}\`\n\n**路径:** \`${func.database}.${func.schema || 'public'}\``,
             isTrusted: true
@@ -299,7 +408,7 @@ export class SqlAutocompleteManager implements monaco.languages.CompletionItemPr
           insertText,
           insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
           range,
-          sortText: `4_${func.name}`,
+          sortText: `5_${func.name}`,
         })
 
       }
@@ -323,23 +432,13 @@ export class SqlAutocompleteManager implements monaco.languages.CompletionItemPr
             insertText: f.snippet,
             insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
             range,
-            sortText: `5_${f.name}`,
+            sortText: `6_${f.name}`,
           })
         }
       }
     }
 
     return { suggestions }
-  }
-
-  private extractTablesFromQuery(sql: string): string[] {
-    const tables: string[] = []
-    const tableRegex = /(?:FROM|JOIN|UPDATE|INTO|TABLE)\s+((?:"[^"]+")|(?:`[^`]+`)|(?:[a-zA-Z0-9_]+))/gi
-    let match
-    while ((match = tableRegex.exec(sql)) !== null) {
-      if (match[1]) tables.push(match[1])
-    }
-    return tables
   }
 
   /**

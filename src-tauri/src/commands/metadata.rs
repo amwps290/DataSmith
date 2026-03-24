@@ -1,8 +1,10 @@
-use crate::database::{ColumnInfo, IndexInfo, ForeignKeyInfo, DatabaseInfo, TableInfo, SchemaInfo, FunctionInfo, ExtensionInfo};
+use crate::database::{ColumnInfo, IndexInfo, ForeignKeyInfo, DatabaseInfo, TableInfo, SchemaInfo, FunctionInfo, ExtensionInfo, DatabaseType};
 use crate::AppState;
 use super::error::ToCommandResult;
 use tauri::State;
 use serde_json::Value;
+use serde::Serialize;
+use std::collections::BTreeSet;
 
 #[tauri::command]
 pub async fn get_databases(connection_id: String, state: State<'_, AppState>) -> Result<Vec<DatabaseInfo>, String> {
@@ -84,4 +86,149 @@ pub async fn get_create_table_ddl(connection_id: String, table: String, database
     state.connection_manager.get_table_ddl(&connection_id, &table, schema.as_deref(), database.as_deref()).await.to_cmd_result()
 }
 
-#[tauri::command] pub async fn get_autocomplete_data(_c: String, _d: Option<String>) -> Result<Value, String> { Ok(serde_json::json!({})) }
+#[derive(Serialize)]
+struct AutocompleteColumn {
+    name: String,
+    data_type: String,
+}
+
+#[derive(Serialize)]
+struct AutocompleteTable {
+    name: String,
+    schema: Option<String>,
+    database: String,
+    table_type: String,
+    columns: Vec<AutocompleteColumn>,
+}
+
+#[derive(Serialize)]
+struct AutocompleteFunction {
+    name: String,
+    schema: Option<String>,
+    database: String,
+    return_type: Option<String>,
+    arguments: Option<String>,
+    function_type: String,
+}
+
+fn default_keywords() -> Vec<&'static str> {
+    vec![
+        "SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE", "JOIN", "LEFT", "RIGHT",
+        "INNER", "OUTER", "ON", "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET",
+        "CREATE", "ALTER", "DROP", "TABLE", "VIEW", "INDEX", "DATABASE", "VALUES",
+        "INTO", "SET", "DISTINCT", "UNION", "ALL", "AND", "OR", "NOT", "NULL",
+        "IS", "IN", "EXISTS", "LIKE", "BETWEEN", "AS", "CASE", "WHEN", "THEN", "ELSE", "END",
+    ]
+}
+
+#[tauri::command]
+pub async fn get_autocomplete_data(
+    connection_id: String,
+    database: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let manager = &state.connection_manager;
+    let db_type = manager.get_database_type(&connection_id).await.to_cmd_result()?;
+    let configured_database = manager.get_configured_database(&connection_id).await;
+
+    let databases = manager
+        .get_databases(&connection_id)
+        .await
+        .unwrap_or_default();
+
+    let database_names = databases
+        .iter()
+        .map(|db| db.name.clone())
+        .collect::<Vec<_>>();
+
+    let target_databases = if let Some(database) = database.clone().or(configured_database) {
+        vec![database]
+    } else if matches!(db_type, DatabaseType::SQLite) {
+        vec!["main".to_string()]
+    } else {
+        Vec::new()
+    };
+
+    let mut tables = Vec::new();
+    let mut functions = Vec::new();
+
+    for db_name in target_databases {
+        let mut table_list = manager
+            .get_tables(&connection_id, Some(&db_name))
+            .await
+            .unwrap_or_default();
+
+        let mut view_list = manager
+            .get_views(&connection_id, Some(&db_name))
+            .await
+            .unwrap_or_default();
+
+        table_list.append(&mut view_list);
+
+        let mut schemas = BTreeSet::new();
+        let mut function_schemas = BTreeSet::new();
+
+        for table in table_list {
+            if let Some(schema) = &table.schema {
+                schemas.insert(schema.clone());
+            }
+
+            let columns = manager
+                .get_table_structure(&connection_id, &table.name, table.schema.as_deref(), Some(&db_name))
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|column| AutocompleteColumn {
+                    name: column.name,
+                    data_type: column.data_type,
+                })
+                .collect::<Vec<_>>();
+
+            tables.push(AutocompleteTable {
+                name: table.name,
+                schema: table.schema,
+                database: db_name.clone(),
+                table_type: table.table_type,
+                columns,
+            });
+        }
+
+        if matches!(db_type, DatabaseType::PostgreSQL) {
+            function_schemas.insert("pg_catalog".to_string());
+
+            if schemas.is_empty() {
+                function_schemas.insert("public".to_string());
+            } else {
+                function_schemas.extend(schemas);
+            }
+
+            for schema in function_schemas {
+                let schema_functions = manager
+                    .get_functions(&connection_id, Some(&db_name), Some(&schema))
+                    .await
+                    .unwrap_or_default();
+
+                let aggregate_functions = manager
+                    .get_aggregate_functions(&connection_id, Some(&db_name), Some(&schema))
+                    .await
+                    .unwrap_or_default();
+
+                functions.extend(schema_functions.into_iter().chain(aggregate_functions.into_iter()).map(|function| AutocompleteFunction {
+                    name: function.name,
+                    schema: function.schema,
+                    database: db_name.clone(),
+                    return_type: function.return_type,
+                    arguments: function.arguments,
+                    function_type: function.function_type,
+                }));
+            }
+        }
+    }
+
+    Ok(serde_json::json!({
+        "databases": database_names,
+        "tables": tables,
+        "functions": functions,
+        "keywords": default_keywords(),
+    }))
+}

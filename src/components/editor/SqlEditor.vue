@@ -351,14 +351,21 @@ async function refreshAutocomplete() { const baseId = props.connectionId || conn
 async function setSelectedDatabase(database: string) { if (availableDatabases.value.length === 0) await loadAvailableDatabases(); selectedDatabase.value = database; updateAutocompleteContext() }
 async function handleSave(isAuto = false) { if (!editor || !props.filePath) return; const content = editor.getValue(); if (!content.trim()) return; try { await utilsApi.writeFile(props.filePath, content); if (!isAuto) message.success(t('common.save')) } catch (err: any) { if (!isAuto) message.error(`${t('common.fail')}: ${err}`) } }
 function startResize(e: MouseEvent) { isSplitResizing.value = true; const startY = e.clientY, startHeight = editorHeight.value; const doResize = (ev: MouseEvent) => { if (isSplitResizing.value) { editorHeight.value = Math.max(100, startHeight + (ev.clientY - startY)); } }; const stopResize = () => { isSplitResizing.value = false; document.removeEventListener('mousemove', doResize); document.removeEventListener('mouseup', stopResize); document.body.style.cursor = '' }; document.body.style.cursor = 'row-resize'; document.addEventListener('mousemove', doResize); document.addEventListener('mouseup', stopResize) }
-function updateAutocompleteContext() { const model = editor?.getModel(), baseId = props.connectionId || connectionStore.activeConnectionId; if (model && baseId && connectionStore.connections.length > 0) { const conn = connectionStore.connections.find(c => c.id === baseId); autocompleteManager.bindModel(model, { connectionId: baseId, database: selectedDatabase.value || null, dbType: conn?.db_type || null }) } }
+function updateAutocompleteContext() {
+  const model = editor?.getModel(), baseId = props.connectionId || connectionStore.activeConnectionId
+  if (model && baseId && connectionStore.connections.length > 0) {
+    const conn = connectionStore.connections.find(c => c.id === baseId)
+    const fallbackDatabase = selectedDatabase.value || props.initialDatabase || conn?.database || (conn?.db_type === 'sqlite' ? 'main' : null)
+    autocompleteManager.bindModel(model, { connectionId: baseId, database: fallbackDatabase || null, dbType: conn?.db_type || null })
+  }
+}
 async function loadAvailableDatabases() { const baseId = props.connectionId || connectionStore.activeConnectionId; if (!baseId) return; try { const dbs = await metadataApi.getDatabases(baseId); availableDatabases.value = dbs; emit('databasesLoaded', dbs) } catch (e) { console.error(e) } }
 function handleDatabaseChange(dbName: string) { selectedDatabase.value = dbName; updateAutocompleteContext() }
 
 onMounted(() => {
   if (!editorContainer.value) return
   editor = monaco.editor.create(editorContainer.value, { value: props.initialValue || t('editor.placeholder'), language: 'sql', theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs', automaticLayout: true, readOnly: false, domReadOnly: false, fontSize: appStore.editorSettings.fontSize, fontFamily: appStore.editorSettings.fontFamily, minimap: { enabled: appStore.editorSettings.minimap }, scrollBeyondLastLine: false, lineNumbers: appStore.editorSettings.lineNumbers, renderLineHighlight: 'all', quickSuggestions: { other: true, comments: false, strings: false }, suggestOnTriggerCharacters: true, acceptSuggestionOnCommitCharacter: true, acceptSuggestionOnEnter: 'on', tabCompletion: 'on' })
-  updateAutocompleteContext(); editor.onDidChangeModelContent(() => { emit('contentChange', editor?.getValue() || ''); triggerAutoSave() }); editor.addCommand(monaco.KeyCode.F5, () => executeQuery()); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => handleSave());
+  updateAutocompleteContext(); editor.onDidChangeModelContent(() => { emit('contentChange', editor?.getValue() || ''); triggerAutoSave() }); editor.onKeyUp((event) => { if (event.keyCode === monaco.KeyCode.Space || event.keyCode === monaco.KeyCode.Period) editor?.trigger('keyboard', 'editor.action.triggerSuggest', {}) }); editor.addCommand(monaco.KeyCode.F5, () => executeQuery()); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => handleSave());
   sqlHistory.value = getStorageItem(STORAGE_KEYS.SQL_HISTORY, [])
   loadAvailableDatabases();
 })

@@ -192,6 +192,15 @@ impl ConnectionManager {
         self.configs.read().await.get(config_id).map(|c| c.db_type.clone()).ok_or(DbError::SessionNotFound(real_id))
     }
 
+    pub async fn get_configured_database(&self, composite_id: &str) -> Option<String> {
+        let config_id = composite_id.split(':').next().unwrap_or(composite_id);
+        self.configs
+            .read()
+            .await
+            .get(config_id)
+            .and_then(|config| config.database.clone())
+    }
+
     pub async fn get_schemas(&self, composite_id: &str, database: Option<&str>) -> DbResult<Vec<SchemaInfo>> {
         let db = self.get_db_ref(composite_id).await?;
         self.ensure_db_context(db.clone(), database).await?;
