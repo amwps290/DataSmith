@@ -39,6 +39,7 @@
           <a-tab-pane v-for="tab in dataTabs" :key="tab.key" :closable="tab.closable !== false">
             <template #tab>
               <span class="tab-title" @contextmenu.prevent="handleTabContextMenu($event, tab.key, tab.closable !== false)">
+                <span v-if="getConnectionColor(tab.connectionId)" class="tab-connection-dot" :style="{ backgroundColor: getConnectionColor(tab.connectionId) }"></span>
                 <FileTextOutlined v-if="tab.type === 'query'" />
                 <TableOutlined v-else-if="tab.type === 'data'" />
                 <EditOutlined v-else-if="tab.type === 'design'" />
@@ -215,6 +216,10 @@ async function handleNewQuery(d: QueryEventData) {
 
 function onTabEdit(key: string | number | MouseEvent | KeyboardEvent, action: string) { if (action === 'add') handleNewQuery({}); else closeTab(String(key)); }
 function handleEditConnection(c: ConnectionConfig) { editingConnection.value = c; showConnectionDialog.value = true; }
+function getConnectionColor(connectionId?: string) {
+  if (!connectionId) return ''
+  return connectionStore.connections.find(connection => connection.id === connectionId)?.color || ''
+}
 </script>
 
 <style scoped>
@@ -233,6 +238,9 @@ function handleEditConnection(c: ConnectionConfig) { editingConnection.value = c
 .dark-mode .workspace-tabs :deep(.ant-tabs-nav) { background: #141414; }
 .workspace-tabs :deep(.ant-tabs-content) { flex: 1; height: 100%; overflow: hidden; }
 .workspace-tabs :deep(.ant-tabs-tabpane) { height: 100%; display: flex; flex-direction: column; }
+.tab-title { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.tab-connection-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08); }
+.title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-content-wrapper { flex: 1; height: 100%; overflow: hidden; position: relative; }
 .empty-workspace { flex: 1; display: flex; align-items: center; justify-content: center; }
 </style>

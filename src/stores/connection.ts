@@ -32,6 +32,7 @@ export const useConnectionStore = defineStore('connection', () => {
       ssl: config.ssl,
       connection_timeout: config.connection_timeout,
       pool_size: config.pool_size,
+      color: config.color,
       tags: config.tags || [],
       created_at: isNew ? Date.now() : config.created_at,
       updated_at: Date.now(),

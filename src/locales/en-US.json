@@ -118,6 +118,8 @@
       "password": "Password",
       "database": "Database",
       "sqlite_file": "Database File",
+      "color": "Connection Color",
+      "color_none": "No color marker",
       "ssl": "SSL Connection",
       "timeout": "Timeout (sec)",
       "pool_size": "Pool Size",

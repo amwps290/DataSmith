@@ -118,6 +118,8 @@
       "password": "密码",
       "database": "数据库",
       "sqlite_file": "数据库文件",
+      "color": "连接颜色",
+      "color_none": "未设置颜色标记",
       "ssl": "SSL 连接",
       "timeout": "连接超时(秒)",
       "pool_size": "连接池大小",

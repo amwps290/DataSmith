@@ -27,6 +27,25 @@
         </a-select>
       </a-form-item>
 
+      <a-form-item :label="$t('connection.form.color')">
+        <div class="color-picker">
+          <button
+            v-for="color in connectionColors"
+            :key="color"
+            type="button"
+            class="color-swatch"
+            :class="{ active: formData.color === color }"
+            :style="{ backgroundColor: color }"
+            @click="formData.color = color"
+          ></button>
+          <a-button size="small" @click="formData.color = ''">{{ $t('common.clear') }}</a-button>
+        </div>
+        <div class="color-preview">
+          <span class="preview-dot" :style="{ backgroundColor: formData.color || '#d9d9d9' }"></span>
+          <span>{{ formData.color || $t('connection.form.color_none') }}</span>
+        </div>
+      </a-form-item>
+
       <!-- 非 SQLite 的常规参数 -->
       <template v-if="formData.db_type !== 'sqlite'">
         <a-form-item :label="$t('connection.form.host')" name="host">
@@ -130,6 +149,7 @@ const connectionStore = useConnectionStore()
 const formRef = ref()
 const testing = ref(false)
 const submitting = ref(false)
+const connectionColors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899']
 
 const dialogVisible = computed({
   get: () => props.visible,
@@ -148,6 +168,7 @@ const formData = reactive<{
   ssl: boolean
   connection_timeout: number
   pool_size: number
+  color: string
 }>({
   name: '',
   db_type: 'mysql',
@@ -159,6 +180,7 @@ const formData = reactive<{
   ssl: false,
   connection_timeout: 10,
   pool_size: 10,
+  color: '',
 })
 
 // 表单验证规则
@@ -196,6 +218,7 @@ watch(
         ssl: connection.ssl || false,
         connection_timeout: connection.connection_timeout || 10,
         pool_size: connection.pool_size || 10,
+        color: connection.color || '',
       })
     } else {
       resetForm()
@@ -252,6 +275,7 @@ async function handleSubmit() {
     const isNew = !props.editingConnection
     const config: ConnectionConfig = {
       ...formData,
+      color: formData.color || undefined,
       id: isNew ? window.crypto.randomUUID() : props.editingConnection.id,
       tags: isNew ? [] : props.editingConnection.tags || [],
       created_at: isNew ? Date.now() : props.editingConnection.created_at,
@@ -329,6 +353,58 @@ function resetForm() {
     ssl: false,
     connection_timeout: 10,
     pool_size: 10,
+    color: '',
   })
 }
 </script>
+
+<style scoped>
+:deep(.ant-form-item) {
+  margin-bottom: 16px;
+}
+
+.color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-swatch {
+  width: 22px;
+  height: 22px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.12);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.color-swatch:hover {
+  transform: scale(1.06);
+}
+
+.color-swatch.active {
+  border-color: #111827;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+
+.dark-mode .color-swatch.active {
+  border-color: #f8fafc;
+}
+
+.color-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.preview-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+</style>

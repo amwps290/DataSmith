@@ -39,6 +39,7 @@
               active: activeConnectionId === conn.id,
               expanded: expandedConnections.has(conn.id)
             }"
+            :style="{ '--connection-accent': conn.color || 'transparent' }"
             :title="`${conn.db_type} • ${conn.host}:${conn.port}`"
             @click="handleSelectConnection(conn)"
             @dblclick="handleToggleConnection(conn)"
@@ -67,6 +68,7 @@
             <div class="connection-name">{{ conn.name }}</div>
             
             <div class="connection-actions">
+              <span v-if="conn.color" class="connection-color-dot" :style="{ backgroundColor: conn.color }"></span>
               <a-badge :status="getStatusBadge(conn.id)" size="small" />
               <DisconnectOutlined 
                 v-if="getConnectionStatus(conn.id) === 'connected'"
@@ -80,6 +82,7 @@
           <div 
             v-if="getConnectionStatus(conn.id) === 'connected' && expandedConnections.has(conn.id)" 
             class="database-tree-wrapper"
+            :style="{ '--connection-accent': conn.color || '#e8e8e8' }"
           >
             <div class="root-tree-line"></div>
             
@@ -290,6 +293,7 @@ onMounted(() => {
 .panel-content { flex: 1; overflow: auto; padding: 4px 0; }
 .connection-group { position: relative; }
 .connection-item { display: flex; align-items: center; padding: 0 8px; height: 28px; cursor: pointer; transition: background-color 0.1s; user-select: none; position: relative; }
+.connection-item::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 3px; border-radius: 0 999px 999px 0; background-color: var(--connection-accent, transparent); opacity: 0.95; }
 .connection-item:hover { background-color: rgba(0, 0, 0, 0.04); }
 .dark-mode .connection-item:hover { background-color: rgba(255, 255, 255, 0.05); }
 .connection-item.active { background-color: #e6f7ff; color: #1890ff; }
@@ -302,11 +306,13 @@ onMounted(() => {
 .active .connection-name { color: inherit; }
 .connection-actions { display: flex; align-items: center; gap: 6px; opacity: 0.6; }
 .connection-item:hover .connection-actions { opacity: 1; }
+.connection-color-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08); }
 .disconnect-btn { font-size: 12px; color: #ff4d4f; cursor: pointer; }
 .disconnect-btn:hover { color: #ff7875; }
 .database-tree-wrapper { position: relative; }
-.root-tree-line { position: absolute; left: 16px; top: 0; bottom: 0; width: 1px; background-color: #e8e8e8; z-index: 1; pointer-events: none; }
-.dark-mode .root-tree-line { background-color: #303030; }
+.database-tree-wrapper :deep(.database-tree) { padding-left: 10px; box-sizing: border-box; }
+.root-tree-line { position: absolute; left: 16px; top: 0; bottom: 0; width: 1px; background-color: var(--connection-accent, #e8e8e8); z-index: 1; pointer-events: none; opacity: 0.55; }
+.dark-mode .root-tree-line { opacity: 0.4; }
 .context-menu-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9999; }
 .context-menu { position: absolute; background: #fff; border-radius: 4px; border: 1px solid #d9d9d9; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 10000; min-width: 120px; }
 .dark-mode .context-menu { background: #1f1f1f; border-color: #303030; }
