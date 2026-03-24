@@ -516,6 +516,8 @@
       "placeholder_sql": "-- Please select database and table",
       "copy_success": "SQL copied to clipboard",
       "execute_success": "SQL sent to editor",
+      "require_connection": "Select a database connection from the sidebar first",
+      "unsupported_connection": "The current connection type does not support query builder yet",
       "load_db_fail": "Failed to load databases: {error}",
       "load_table_fail": "Failed to load tables: {error}",
       "load_column_fail": "Failed to load columns: {error}"

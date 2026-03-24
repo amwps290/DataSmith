@@ -6,9 +6,9 @@
     </div>
 
     <div class="builder-config">
-      <a-form layout="vertical">
-        <a-form-item :label="$t('tools.query_builder.database')">
-          <a-select v-model:value="selectedDatabase" :placeholder="$t('tools.query_builder.database_placeholder')" @change="loadTables">
+        <a-form layout="vertical">
+          <a-form-item :label="$t('tools.query_builder.database')">
+            <a-select v-model:value="selectedDatabase" :placeholder="$t('tools.query_builder.database_placeholder')" @change="loadTables">
             <a-select-option
               v-for="db in databases"
               :key="db.name"
@@ -28,10 +28,10 @@
           >
             <a-select-option
               v-for="table in tables"
-              :key="table.name"
-              :value="table.name"
+              :key="buildTableKey(table)"
+              :value="buildTableKey(table)"
             >
-              {{ table.name }}
+              {{ formatTableLabel(table) }}
             </a-select-option>
           </a-select>
         </a-form-item>
@@ -70,8 +70,8 @@
           </a-button>
         </h4>
         <div v-for="(condition, index) in conditions" :key="index" class="condition-row">
-          <a-row :gutter="8" align="middle">
-            <a-col :span="5">
+          <div class="condition-grid">
+            <div class="condition-field condition-column">
               <a-select v-model:value="condition.column" :placeholder="$t('tools.query_builder.column')">
                 <a-select-option
                   v-for="col in columns"
@@ -81,8 +81,8 @@
                   {{ col.name }}
                 </a-select-option>
               </a-select>
-            </a-col>
-            <a-col :span="4">
+            </div>
+            <div class="condition-field condition-operator">
               <a-select v-model:value="condition.operator" :placeholder="$t('tools.query_builder.operator')">
                 <a-select-option value="=">=</a-select-option>
                 <a-select-option value="!=">!=</a-select-option>
@@ -95,34 +95,34 @@
                 <a-select-option value="IS NULL">IS NULL</a-select-option>
                 <a-select-option value="IS NOT NULL">IS NOT NULL</a-select-option>
               </a-select>
-            </a-col>
-            <a-col :span="6">
+            </div>
+            <div class="condition-field condition-value">
               <a-input
                 v-model:value="condition.value"
                 :placeholder="$t('tools.query_builder.value_label')"
                 :disabled="condition.operator === 'IS NULL' || condition.operator === 'IS NOT NULL'"
               />
-            </a-col>
-            <a-col :span="3">
+            </div>
+            <div class="condition-field condition-logic">
               <a-select v-model:value="condition.logic" :placeholder="$t('tools.query_builder.logic')">
                 <a-select-option value="AND">AND</a-select-option>
                 <a-select-option value="OR">OR</a-select-option>
               </a-select>
-            </a-col>
-            <a-col :span="2">
+            </div>
+            <div class="condition-field condition-action">
               <a-button type="text" danger @click="removeCondition(index)">
                 <DeleteOutlined />
               </a-button>
-            </a-col>
-          </a-row>
+            </div>
+          </div>
         </div>
       </div>
 
       <!-- ORDER BY 子句 -->
       <div class="query-section">
         <h4>{{ $t('tools.query_builder.order_by') }}</h4>
-        <a-row :gutter="8">
-          <a-col :span="12">
+        <div class="order-grid">
+          <div class="order-field order-column">
             <a-select v-model:value="orderByColumn" :placeholder="$t('tools.query_builder.order_column')" allow-clear>
               <a-select-option
                 v-for="col in columns"
@@ -132,14 +132,14 @@
                 {{ col.name }}
               </a-select-option>
             </a-select>
-          </a-col>
-          <a-col :span="12">
+          </div>
+          <div class="order-field order-direction">
             <a-select v-model:value="orderDirection" :placeholder="$t('tools.query_builder.order_direction')">
               <a-select-option value="ASC">{{ $t('tools.query_builder.asc') }}</a-select-option>
               <a-select-option value="DESC">{{ $t('tools.query_builder.desc') }}</a-select-option>
             </a-select>
-          </a-col>
-        </a-row>
+          </div>
+        </div>
       </div>
 
       <!-- LIMIT 子句 -->
@@ -182,7 +182,8 @@ import {
 import { message } from 'ant-design-vue'
 import { useI18n } from 'vue-i18n'
 import { metadataApi } from '@/api'
-import type { DatabaseInfo, TableInfo, ColumnInfo } from '@/types/database'
+import { useConnectionStore } from '@/stores/connection'
+import type { DatabaseInfo, TableInfo, ColumnInfo, DatabaseType } from '@/types/database'
 
 interface WhereCondition {
   column: string
@@ -192,12 +193,16 @@ interface WhereCondition {
 }
 
 const { t } = useI18n()
+const connectionStore = useConnectionStore()
 
 const props = defineProps<{
   connectionId: string | null
+  initialDatabase?: string | null
 }>()
 
-const emit = defineEmits(['execute-query'])
+const emit = defineEmits<{
+  executeQuery: [{ sql: string; database?: string }]
+}>()
 
 const databases = ref<DatabaseInfo[]>([])
 const selectedDatabase = ref('')
@@ -210,9 +215,42 @@ const orderByColumn = ref('')
 const orderDirection = ref('ASC')
 const limitRows = ref(100)
 
+const currentConnection = computed(() =>
+  props.connectionId ? connectionStore.connections.find(item => item.id === props.connectionId) || null : null
+)
+const currentDbType = computed<DatabaseType | null>(() => currentConnection.value?.db_type || null)
+const selectedTableInfo = computed(() => tables.value.find(table => buildTableKey(table) === mainTable.value) || null)
+
+function buildTableKey(table: TableInfo) {
+  return `${table.schema || ''}:${table.name}`
+}
+
+function formatTableLabel(table: TableInfo) {
+  return table.schema ? `${table.schema}.${table.name}` : table.name
+}
+
+function quoteIdentifier(name: string) {
+  if (currentDbType.value === 'mysql') return `\`${name}\``
+  return `"${name.replace(/"/g, '""')}"`
+}
+
+function buildMainTableSql() {
+  if (!selectedTableInfo.value) return ''
+
+  if (currentDbType.value === 'postgresql') {
+    return `${quoteIdentifier(selectedTableInfo.value.schema || 'public')}.${quoteIdentifier(selectedTableInfo.value.name)}`
+  }
+
+  if (currentDbType.value === 'mysql') {
+    return `${quoteIdentifier(selectedDatabase.value)}.${quoteIdentifier(selectedTableInfo.value.name)}`
+  }
+
+  return quoteIdentifier(selectedTableInfo.value.name)
+}
+
 // 生成SQL
 const generatedSql = computed(() => {
-  if (!selectedDatabase.value || !mainTable.value) {
+  if (!selectedDatabase.value || !selectedTableInfo.value) {
     return t('tools.query_builder.placeholder_sql')
   }
 
@@ -222,11 +260,11 @@ const generatedSql = computed(() => {
   if (selectedColumns.value.length === 0) {
     sql += '*'
   } else {
-    sql += selectedColumns.value.map(col => `\`${col}\``).join(', ')
+    sql += selectedColumns.value.map(col => quoteIdentifier(col)).join(', ')
   }
 
   // FROM 子句
-  sql += `\nFROM \`${selectedDatabase.value}\`.\`${mainTable.value}\``
+  sql += `\nFROM ${buildMainTableSql()}`
 
   // WHERE 子句
   if (conditions.value.length > 0) {
@@ -236,13 +274,13 @@ const generatedSql = computed(() => {
         let condition = ''
 
         if (c.operator === 'IS NULL' || c.operator === 'IS NOT NULL') {
-          condition = `\`${c.column}\` ${c.operator}`
+          condition = `${quoteIdentifier(c.column)} ${c.operator}`
         } else if (c.operator === 'LIKE') {
-          condition = `\`${c.column}\` LIKE '%${c.value}%'`
+          condition = `${quoteIdentifier(c.column)} LIKE '%${c.value}%'`
         } else if (c.operator === 'IN') {
-          condition = `\`${c.column}\` IN (${c.value})`
+          condition = `${quoteIdentifier(c.column)} IN (${c.value})`
         } else {
-          condition = `\`${c.column}\` ${c.operator} '${c.value}'`
+          condition = `${quoteIdentifier(c.column)} ${c.operator} '${c.value}'`
         }
 
         if (index > 0 && c.logic) {
@@ -258,7 +296,7 @@ const generatedSql = computed(() => {
 
   // ORDER BY 子句
   if (orderByColumn.value) {
-    sql += `\nORDER BY \`${orderByColumn.value}\` ${orderDirection.value}`
+    sql += `\nORDER BY ${quoteIdentifier(orderByColumn.value)} ${orderDirection.value}`
   }
 
   // LIMIT 子句
@@ -276,6 +314,13 @@ async function loadDatabases() {
   try {
     const dbs = await metadataApi.getDatabases(props.connectionId!)
     databases.value = dbs
+    if (props.initialDatabase && dbs.some(db => db.name === props.initialDatabase)) {
+      selectedDatabase.value = props.initialDatabase
+      await loadTables()
+    } else if (dbs.length === 1) {
+      selectedDatabase.value = dbs[0].name
+      await loadTables()
+    }
   } catch (error: unknown) {
     message.error(t('tools.query_builder.load_db_fail', { error: String(error) }))
   }
@@ -283,6 +328,12 @@ async function loadDatabases() {
 
 // 加载表列表
 async function loadTables() {
+  mainTable.value = ''
+  tables.value = []
+  columns.value = []
+  selectedColumns.value = []
+  conditions.value = []
+  orderByColumn.value = ''
   if (!selectedDatabase.value || !props.connectionId) return
 
   try {
@@ -295,13 +346,13 @@ async function loadTables() {
 
 // 加载表列
 async function loadTableColumns() {
-  if (!mainTable.value || !selectedDatabase.value || !props.connectionId) return
+  if (!selectedTableInfo.value || !selectedDatabase.value || !props.connectionId) return
 
   try {
     const cols = await metadataApi.getTableStructure({
       connectionId: props.connectionId!,
-      table: mainTable.value,
-      schema: selectedDatabase.value,
+      table: selectedTableInfo.value.name,
+      schema: selectedTableInfo.value.schema || null,
       database: selectedDatabase.value,
     })
     columns.value = cols
@@ -345,21 +396,36 @@ function copySql() {
 
 // 执行SQL
 function executeSql() {
-  emit('execute-query', generatedSql.value)
+  emit('executeQuery', { sql: generatedSql.value, database: selectedDatabase.value })
   message.success(t('tools.query_builder.execute_success'))
 }
 
 // 初始化
 watch(() => props.connectionId, (id) => {
-  if (id) {
-    loadDatabases()
-  }
+  databases.value = []
+  selectedDatabase.value = ''
+  tables.value = []
+  mainTable.value = ''
+  columns.value = []
+  selectedColumns.value = []
+  conditions.value = []
+  orderByColumn.value = ''
+  if (id) loadDatabases()
 }, { immediate: true })
 </script>
 
 <style scoped>
 .query-builder {
   padding: 24px;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+.builder-config,
+.generated-sql,
+.builder-header {
   max-width: 1200px;
   margin: 0 auto;
 }
@@ -404,6 +470,57 @@ watch(() => props.connectionId, (id) => {
   margin-bottom: 12px;
 }
 
+.condition-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 2.2fr) minmax(140px, 1.2fr) minmax(220px, 2fr) minmax(120px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.condition-field {
+  min-width: 0;
+}
+
+.condition-field :deep(.ant-select),
+.condition-field :deep(.ant-input) {
+  width: 100%;
+}
+
+.condition-field :deep(.ant-select-selector) {
+  min-height: 32px;
+}
+
+.condition-action {
+  display: flex;
+  justify-content: center;
+}
+
+.order-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.order-field {
+  min-width: 0;
+}
+
+.order-column {
+  flex: 1 1 360px;
+  max-width: 560px;
+}
+
+.order-direction {
+  flex: 0 1 180px;
+  min-width: 150px;
+  max-width: 220px;
+}
+
+.order-field :deep(.ant-select) {
+  width: 100%;
+}
+
 .generated-sql {
   margin-top: 24px;
 }
@@ -438,5 +555,41 @@ watch(() => props.connectionId, (id) => {
 
 .dark-mode .sql-actions {
   border-top-color: #303030;
+}
+
+@media (max-width: 960px) {
+  .condition-grid {
+    grid-template-columns: minmax(220px, 1fr) minmax(140px, 180px);
+  }
+
+  .order-column {
+    flex-basis: 280px;
+    max-width: 100%;
+  }
+
+  .condition-value,
+  .condition-logic {
+    grid-column: span 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .query-builder {
+    padding: 16px;
+  }
+
+  .condition-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .order-column,
+  .order-direction {
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+
+  .condition-action {
+    justify-content: flex-end;
+  }
 }
 </style>

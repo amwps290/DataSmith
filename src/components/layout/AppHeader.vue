@@ -18,6 +18,9 @@
             <a-menu-item key="new-connection" @click="$emit('newConnection')">
               <PlusOutlined /> {{ $t('connection.new') }}
             </a-menu-item>
+            <a-menu-item key="query-builder" @click="$emit('openQueryBuilder')">
+              <BuildOutlined /> {{ $t('tools.query_builder.title') }}
+            </a-menu-item>
             <a-menu-item key="data-compare" @click="$emit('openDataCompare')">
               <RetweetOutlined /> {{ $t('tools.data_compare.title') }}
             </a-menu-item>
@@ -109,7 +112,7 @@
 import { computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import {
-  DatabaseOutlined, PlusOutlined, SettingOutlined,
+  BuildOutlined, DatabaseOutlined, PlusOutlined, SettingOutlined,
   MenuOutlined, RetweetOutlined, SearchOutlined,
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
@@ -125,6 +128,7 @@ withDefaults(defineProps<{
 
 defineEmits<{
   newConnection: []
+  openQueryBuilder: []
   openDataCompare: []
   openSettings: []
   openSearch: []

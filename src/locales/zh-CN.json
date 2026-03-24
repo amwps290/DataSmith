@@ -516,6 +516,8 @@
       "placeholder_sql": "-- 请选择数据库和表",
       "copy_success": "SQL已复制到剪贴板",
       "execute_success": "SQL已发送到编辑器",
+      "require_connection": "请先在左侧选择一个数据库连接",
+      "unsupported_connection": "当前连接类型暂不支持查询构建器",
       "load_db_fail": "加载数据库列表失败: {error}",
       "load_table_fail": "加载表列表失败: {error}",
       "load_column_fail": "加载列失败: {error}"

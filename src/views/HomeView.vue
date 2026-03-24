@@ -3,6 +3,7 @@
     <!-- 顶部标题栏 -->
     <AppHeader
       @new-connection="showConnectionDialog = true"
+      @open-query-builder="handleOpenQueryBuilder"
       @open-data-compare="handleOpenDataCompare"
       @open-settings="openSettings"
       @open-search="showGlobalSearch = true"
@@ -44,6 +45,7 @@
                 <FileTextOutlined v-if="tab.type === 'query'" />
                 <TableOutlined v-else-if="tab.type === 'data'" />
                 <EditOutlined v-else-if="tab.type === 'design'" />
+                <BuildOutlined v-else-if="tab.type === 'builder'" />
                 <RetweetOutlined v-else-if="tab.type === 'compare'" />
                 <span class="title-text">{{ tab.title }}</span>
               </span>
@@ -53,6 +55,7 @@
                 <SqlEditor v-if="tab.type === 'query'" :key="tab.key" :ref="(el) => setSqlEditorRef(el, tab.key)" :connection-id="tab.connectionId" :initial-database="tab.database" :initial-value="tab.content" :file-path="tab.filePath" @content-change="(val) => handleContentChange(tab.key, val)" @file-saved="(path, title) => handleFileSaved(tab.key, path, title)" @databases-loaded="(dbs) => availableDatabases = dbs" @database-change="(db) => handleEditorDatabaseChange(tab.key, String(db || ''))" />
                 <TableDataGrid v-else-if="tab.type === 'data'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" />
                 <TableDesigner v-else-if="tab.type === 'design'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" :read-only="tab.readOnly" />
+                <QueryBuilder v-else-if="tab.type === 'builder'" :key="tab.key" :connection-id="tab.connectionId || null" :initial-database="tab.database || null" @execute-query="(payload) => handleQueryBuilderExecute(tab, payload)" />
                 <DataCompare v-else-if="tab.type === 'compare'" :key="tab.key" :connection-id="tab.connectionId || null" :initial-database="tab.database || null" />
                 <RedisEditor v-else-if="tab.type === 'redis'" :key="tab.key" :ref="redisEditorRef" />
               </KeepAlive>
@@ -79,7 +82,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
   FileTextOutlined,
-  TableOutlined, EditOutlined, RetweetOutlined,
+  TableOutlined, EditOutlined, RetweetOutlined, BuildOutlined,
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useConnectionStore } from '@/stores/connection'
@@ -102,6 +105,7 @@ const RedisEditor = defineAsyncComponent(() => import('@/components/editor/Redis
 const TableDataGrid = defineAsyncComponent(() => import('@/components/data/TableDataGrid.vue'))
 const TableDesigner = defineAsyncComponent(() => import('@/components/database/TableDesigner.vue'))
 const GlobalSearch = defineAsyncComponent(() => import('@/components/search/GlobalSearch.vue'))
+const QueryBuilder = defineAsyncComponent(() => import('@/components/tools/QueryBuilder.vue'))
 const DataCompare = defineAsyncComponent(() => import('@/components/tools/DataCompare.vue'))
 
 const { t } = useI18n()
@@ -169,6 +173,7 @@ onMounted(async () => {
 interface TableEventData { connectionId?: string; database?: string; table?: string; schema?: string; metadata?: { schema?: string } }
 interface QueryEventData { connectionId?: string; database?: string; filePath?: string; title?: string; content?: string }
 interface DatabaseEventData { connectionId?: string; name?: string }
+interface QueryBuilderExecutePayload { sql: string; database?: string }
 
 function handleOpenSavedScript(data: QueryEventData) { handleNewQuery(data) }
 function handleViewStructure(data: TableEventData) {
@@ -220,6 +225,45 @@ async function handleNewQuery(d: QueryEventData) {
   }
   const key = `query-${Date.now()}`
   addTab({ key, title: title || `script-${new Date().getTime()}.sql`, type: TabType.Query, connectionId: connId || undefined, database: dbName, content: initialContent, filePath })
+}
+
+function handleOpenQueryBuilder() {
+  const activeConnection = connectionStore.getActiveConnection()
+
+  if (!activeConnection?.id) {
+    message.warning(t('tools.query_builder.require_connection'))
+    return
+  }
+
+  if (['redis', 'mongodb'].includes(activeConnection.db_type)) {
+    message.warning(t('tools.query_builder.unsupported_connection'))
+    return
+  }
+
+  const key = `builder-${activeConnection.id}`
+  if (tabExists(key)) {
+    mainTabKey.value = key
+    return
+  }
+
+  addTab({
+    key,
+    title: t('tools.query_builder.title'),
+    type: TabType.Builder,
+    connectionId: activeConnection.id,
+    database: activeTabType.value === 'query' ? activeTabDatabase.value : activeConnection.database,
+  })
+}
+
+function handleQueryBuilderExecute(tab: DataTab, payload: QueryBuilderExecutePayload | string) {
+  const sql = typeof payload === 'string' ? payload : payload.sql
+  const database = typeof payload === 'string' ? tab.database : payload.database || tab.database
+
+  handleNewQuery({
+    connectionId: tab.connectionId,
+    database,
+    content: sql,
+  })
 }
 
 function handleOpenDataCompare() {
