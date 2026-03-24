@@ -1,6 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { QueryResult } from '@/types/database'
 
+export interface PreparedSqlStatement {
+  sql: string
+  can_page: boolean
+}
+
 export const queryApi = {
   /**
    * 执行 SQL 查询
@@ -35,8 +40,26 @@ export const queryApi = {
   /**
    * 批量执行 SQL
    */
-  async executeQueryBatch(connectionId: string, sqls: string[]): Promise<QueryResult[]> {
-    return invoke<QueryResult[]>('execute_query_batch', { connectionId, sqls })
+  async executeQueryBatch(
+    connectionId: string,
+    sqls: string[],
+    database?: string | null
+  ): Promise<QueryResult[]> {
+    return invoke<QueryResult[]>('execute_query_batch', {
+      connectionId,
+      sqls,
+      database: database || null,
+    })
+  },
+
+  /**
+   * 让后端按数据库方言解析 SQL 脚本
+   */
+  async prepareSqlScript(
+    connectionId: string,
+    sql: string
+  ): Promise<PreparedSqlStatement[]> {
+    return invoke<PreparedSqlStatement[]>('prepare_sql_script', { connectionId, sql })
   },
 
   /**

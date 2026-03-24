@@ -8,6 +8,7 @@ use tracing::{info, instrument, debug, error};
 use super::traits::*;
 use super::sql_helpers::{build_where_clause, ParamStyle};
 use crate::utils::sql_sanitize::{escape_mysql_id, escape_string_literal};
+use crate::utils::sql_script::split_sql_script;
 
 /// MySQL 数据库驱动状态
 struct MySqlState {
@@ -245,13 +246,12 @@ impl DatabaseOperations for MySqlDatabase {
 
         debug!(sql = %sql.replace('\n', " "), "执行 MySQL 查询");
 
-        // 手动拆分 SQL 语句
-        let sqls: Vec<&str> = sql.split(';').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let sqls = split_sql_script(sql, &DatabaseType::MySQL);
         let mut results = Vec::new();
 
-        for s in sqls {
+        for statement in sqls {
             let start_stmt = Instant::now();
-            let rows: Vec<Row> = conn.query(s).await.map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
+            let rows: Vec<Row> = conn.query(statement.sql.as_str()).await.map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
             
             let mut columns = Vec::new();
             if let Some(first_row) = rows.first() {

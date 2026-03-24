@@ -10,6 +10,7 @@ use std::path::Path;
 use super::traits::*;
 use super::sql_helpers::{build_where_clause, ParamStyle};
 use crate::utils::sql_sanitize::{escape_sqlite_id, escape_string_literal};
+use crate::utils::sql_script::split_sql_script;
 
 /// SQLite 数据库驱动状态
 struct SqliteState {
@@ -89,12 +90,11 @@ impl DatabaseOperations for SqliteDatabase {
         let state = self.state.lock().await;
         let conn = state.conn.as_ref().ok_or(DbError::not_connected())?;
 
-        // 简化的多语句支持逻辑：按分号初步分割 (复杂 SQL 可能需要解析器)
-        let sqls: Vec<&str> = sql.split(';').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let sqls = split_sql_script(sql, &DatabaseType::SQLite);
         let mut results = Vec::new();
 
-        for s in sqls {
-            let mut stmt = conn.prepare(s).map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        for statement in sqls {
+            let mut stmt = conn.prepare(&statement.sql).map_err(|e| DbError::QueryFailed(e.to_string()))?;
             let column_count = stmt.column_count();
             let column_names: Vec<String> = stmt.column_names().into_iter().map(|n| n.to_string()).collect();
 

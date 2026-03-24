@@ -113,6 +113,7 @@ import { ExportOutlined } from '@ant-design/icons-vue'
 import { save } from '@tauri-apps/plugin-dialog'
 import { exportApi, queryApi, metadataApi, utilsApi } from '@/api'
 import type { QueryResult } from '@/types/database'
+import type { PreparedSqlStatement } from '@/api/query'
 import { useConnectionStore } from '@/stores/connection'
 import { useAppStore } from '@/stores/app'
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from '@/utils/storageService'
@@ -366,45 +367,19 @@ async function executeQuery() {
   })
 
   try {
-    // 1. 拆分 SQL 语句 (简单拆分，实际可更复杂)
-    const statements = fullSql.split(';').map(s => s.trim()).filter(s => s.length > 0)
-    if (statements.length === 0) {
+    const preparedStatements = await queryApi.prepareSqlScript(connId, fullSql)
+    if (preparedStatements.length === 0) {
       executing.value = false
       return
     }
 
-    // 2. 为每一条符合条件的语句注入分页限制，并记录原始语句
-    const processedStatements: string[] = []
-    const statementConfigs: { sql: string; canPage: boolean }[] = []
+    const processedStatements = preparedStatements.map((statement: PreparedSqlStatement) =>
+      statement.can_page ? `${statement.sql} LIMIT 100` : statement.sql
+    )
 
-    for (const stmt of statements) {
-      // 判定逻辑：剥离注释后检查是否以 SELECT 开头
-      const cleanStmt = stmt
-        .replace(/\/\*[\s\S]*?\*\//g, '') // 移除块注释
-        .replace(/(--|#).*$/gm, '')       // 移除行注释
-        .trim()
-      
-      const normalizedClean = cleanStmt.toUpperCase()
-      // 检查是否为 SELECT 且不含 LIMIT 关键字（使用正则单词边界匹配）
-      const isSelect = normalizedClean.startsWith('SELECT')
-      const hasLimit = /\bLIMIT\b/i.test(normalizedClean)
-      const canPage = isSelect && !hasLimit
-      
-      statementConfigs.push({ sql: stmt, canPage })
-      if (canPage) {
-        // 在原始语句（保留注释）末尾追加 LIMIT
-        processedStatements.push(`${stmt} LIMIT 100`)
-      } else {
-        processedStatements.push(stmt)
-      }
-    }
-
-    // 3. 合并回一个脚本发送给后端
-    const finalSql = processedStatements.join('; ') + ';'
-
-    const results = await queryApi.executeQuery(
+    const results = await queryApi.executeQueryBatch(
       connId,
-      finalSql,
+      processedStatements,
       selectedDatabase.value || null,
     )
     
@@ -413,13 +388,13 @@ async function executeQuery() {
     // 4. 为每个结果集绑定其对应的原始语句和分页状态
     results.forEach((r, i) => {
       // 注意：如果结果集数量多于语句数量（某些数据库特性），安全起见做个兜底
-      const config = statementConfigs[i] || { sql: statements[statements.length - 1], canPage: false }
+      const config = preparedStatements[i] || preparedStatements[preparedStatements.length - 1]
       
       queryResultStates[i] = {
         pagination: { current: 1, pageSize: 100 },
         loading: false,
-        hasMore: config.canPage && r.rows.length === 100,
-        sql: config.sql // 存储该结果集对应的原始单条 SQL
+        hasMore: Boolean(config?.can_page) && r.rows.length === 100,
+        sql: config?.sql || '' // 存储该结果集对应的原始单条 SQL
       }
     })
 

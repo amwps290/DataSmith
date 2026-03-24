@@ -1,10 +1,18 @@
 use std::collections::HashMap;
 use crate::database::QueryResult;
 use crate::utils::sql_formatter::SqlFormatter;
+use crate::utils::sql_script::{can_paginate_select_statement, split_sql_script};
 use crate::AppState;
 use super::error::ToCommandResult;
+use serde::Serialize;
 use tauri::State;
 use tracing::{info, instrument};
+
+#[derive(Debug, Serialize)]
+pub struct PreparedSqlStatement {
+    pub sql: String,
+    pub can_page: bool,
+}
 
 /// 格式化 SQL
 #[tauri::command]
@@ -73,15 +81,39 @@ pub async fn explain_query(
 }
 
 #[tauri::command]
+#[instrument(skip(state, sql))]
+pub async fn prepare_sql_script(
+    connection_id: String,
+    sql: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<PreparedSqlStatement>, String> {
+    let manager = &state.connection_manager;
+    let db_type = manager
+        .get_database_type(&connection_id)
+        .await
+        .to_cmd_result()?;
+
+    let statements = split_sql_script(&sql, &db_type);
+    Ok(statements
+        .into_iter()
+        .map(|statement| PreparedSqlStatement {
+            can_page: can_paginate_select_statement(&statement.sql, &db_type),
+            sql: statement.sql,
+        })
+        .collect())
+}
+
+#[tauri::command]
 pub async fn execute_query_batch(
     connection_id: String,
     sqls: Vec<String>,
+    database: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<QueryResult>, String> {
     let manager = &state.connection_manager;
     let mut results = Vec::new();
     for sql in sqls {
-        let res_vec = manager.execute_query(&connection_id, &sql, None).await.to_cmd_result()?;
+        let res_vec = manager.execute_query(&connection_id, &sql, database.as_deref()).await.to_cmd_result()?;
         results.extend(res_vec);
     }
     Ok(results)
