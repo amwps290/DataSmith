@@ -193,8 +193,8 @@ onMounted(() => {
 .search-btn { margin-right: 8px; }
 .menu-icon { margin-right: 8px; }
 
-.window-controls { display: flex; height: 100%; }
-.win-btn { display: inline-flex; justify-content: center; align-items: center; width: 46px; height: 100%; cursor: pointer; transition: background-color 0.2s; font-size: 14px; color: #595959; }
+.window-controls { display: flex; align-items: center; gap: 2px; height: 100%; padding: 0 4px 0 2px; }
+.win-btn { display: inline-flex; justify-content: center; align-items: center; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; transition: background-color 0.2s; font-size: 14px; color: #595959; }
 .dark-mode .win-btn { color: #aaa; }
 .win-btn:hover { background-color: rgba(0, 0, 0, 0.05); }
 .dark-mode .win-btn:hover { background-color: rgba(255, 255, 255, 0.1); }

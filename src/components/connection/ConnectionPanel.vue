@@ -68,7 +68,6 @@
             <div class="connection-name">{{ conn.name }}</div>
             
             <div class="connection-actions">
-              <span v-if="conn.color" class="connection-color-dot" :style="{ backgroundColor: conn.color }"></span>
               <a-badge :status="getStatusBadge(conn.id)" size="small" />
               <DisconnectOutlined 
                 v-if="getConnectionStatus(conn.id) === 'connected'"
@@ -306,7 +305,6 @@ onMounted(() => {
 .active .connection-name { color: inherit; }
 .connection-actions { display: flex; align-items: center; gap: 6px; opacity: 0.6; }
 .connection-item:hover .connection-actions { opacity: 1; }
-.connection-color-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08); }
 .disconnect-btn { font-size: 12px; color: #ff4d4f; cursor: pointer; }
 .disconnect-btn:hover { color: #ff7875; }
 .database-tree-wrapper { position: relative; }

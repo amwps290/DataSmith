@@ -235,7 +235,7 @@ async function loadNextPage(index: number) {
 
 function addMessage(type: string, text: string) { messages.value.unshift({ type, text, time: new Date().toLocaleTimeString() }) }
 
-function getErrorMessage(error: unknown) {
+function getErrorMessage(error: unknown): string {
   if (typeof error === 'string') return error
   if (error instanceof Error) return error.message
   if (error && typeof error === 'object') {
@@ -245,7 +245,7 @@ function getErrorMessage(error: unknown) {
     if (typeof errorValue === 'string' && errorValue.trim()) return errorValue
     const causeValue = Reflect.get(error, 'cause')
     if (causeValue) {
-      const causeMessage = getErrorMessage(causeValue)
+      const causeMessage: string = getErrorMessage(causeValue)
       if (causeMessage && causeMessage !== '[object Object]') return causeMessage
     }
     const propertyMap = Object.fromEntries(
