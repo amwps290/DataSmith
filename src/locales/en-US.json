@@ -171,6 +171,9 @@
     "placeholder": "-- Enter SQL query here\n",
     "input_sql_warn": "Please input SQL",
     "executing_selection": "Executing selected SQL...",
+    "exec_context": "Current execution database: {database}",
+    "database_switched": "Switched current database to: {database}",
+    "default_database": "Default database",
     "manual_stop": "Manually stopped",
     "format_success": "Format complete",
     "refresh_cache_success": "Autocomplete cache refreshed"

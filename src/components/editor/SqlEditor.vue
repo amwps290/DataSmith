@@ -108,7 +108,7 @@ import type { VxeGridProps } from 'vxe-table'
 
 const { t } = useI18n()
 const props = defineProps<{ connectionId?: string; initialDatabase?: string; initialValue?: string; filePath?: string; tabId?: string; }>()
-const emit = defineEmits(['contentChange', 'fileSaved', 'databasesLoaded'])
+const emit = defineEmits(['contentChange', 'fileSaved', 'databasesLoaded', 'databaseChange'])
 const connectionStore = useConnectionStore()
 const appStore = useAppStore()
 
@@ -136,6 +136,14 @@ const showHistory = ref(false)
 const sqlHistory = ref<any[]>([])
 const showSaveDialog = ref(false)
 const showSnippets = ref(false)
+const currentDatabaseLabel = computed(() => {
+  const conn = connectionStore.connections.find(c => c.id === (props.connectionId || connectionStore.activeConnectionId))
+  if (selectedDatabase.value) return selectedDatabase.value
+  if (props.initialDatabase) return props.initialDatabase
+  if (conn?.database) return conn.database
+  if (conn?.db_type === 'sqlite') return 'main'
+  return t('editor.default_database')
+})
 
 const gridRefs = reactive<Record<number, any>>({})
 function setGridRef(el: any, index: number) { if (el) gridRefs[index] = el; else delete gridRefs[index]; }
@@ -212,7 +220,9 @@ async function loadNextPage(index: number) {
         state.hasMore = false
       }
     } catch (e: any) {
-      message.error(e)
+      const errorMessage = getErrorMessage(e)
+      message.error(errorMessage)
+      addMessage('error', errorMessage)
       state.hasMore = false
     } finally {
       state.loading = false
@@ -224,6 +234,38 @@ async function loadNextPage(index: number) {
 }
 
 function addMessage(type: string, text: string) { messages.value.unshift({ type, text, time: new Date().toLocaleTimeString() }) }
+
+function getErrorMessage(error: unknown) {
+  if (typeof error === 'string') return error
+  if (error instanceof Error) return error.message
+  if (error && typeof error === 'object') {
+    const messageValue = Reflect.get(error, 'message')
+    if (typeof messageValue === 'string' && messageValue.trim()) return messageValue
+    const errorValue = Reflect.get(error, 'error')
+    if (typeof errorValue === 'string' && errorValue.trim()) return errorValue
+    const causeValue = Reflect.get(error, 'cause')
+    if (causeValue) {
+      const causeMessage = getErrorMessage(causeValue)
+      if (causeMessage && causeMessage !== '[object Object]') return causeMessage
+    }
+    const propertyMap = Object.fromEntries(
+      Object.getOwnPropertyNames(error).map((key) => [key, Reflect.get(error, key)])
+    )
+    if (Object.keys(propertyMap).length > 0) {
+      try {
+        return JSON.stringify(propertyMap)
+      } catch {
+        // ignore
+      }
+    }
+    try {
+      return JSON.stringify(error)
+    } catch {
+      return String(error)
+    }
+  }
+  return String(error)
+}
 
 async function executeQuery() {
   const connId = sessionConnectionId.value
@@ -246,6 +288,12 @@ async function executeQuery() {
   Object.keys(queryResultStates).forEach(k => delete queryResultStates[Number(k)])
   
   if (isSelection) addMessage('info', t('editor.executing_selection'))
+  addMessage('info', t('editor.exec_context', { database: currentDatabaseLabel.value }))
+  console.info('[SQL] execute', {
+    connectionId: connId,
+    database: selectedDatabase.value || null,
+    displayDatabase: currentDatabaseLabel.value,
+  })
 
   try {
     // 1. 拆分 SQL 语句 (简单拆分，实际可更复杂)
@@ -314,8 +362,9 @@ async function executeQuery() {
     }
     saveToHistory(fullSql)
   } catch (e: any) {
-    message.error(`${t('connection.fail')}: ${e}`)
-    addMessage('error', String(e))
+    const errorMessage = getErrorMessage(e)
+    message.error(errorMessage)
+    addMessage('error', errorMessage)
     resultTabKey.value = 'messages'
   } finally { executing.value = false }
 }
@@ -328,18 +377,25 @@ async function explainQuery() {
 
   executing.value = true
   try {
+    addMessage('info', t('editor.exec_context', { database: currentDatabaseLabel.value }))
+    console.info('[SQL] explain', {
+      connectionId: connId,
+      database: selectedDatabase.value || null,
+      displayDatabase: currentDatabaseLabel.value,
+    })
     const results = await queryApi.explainQuery(connId, sql, selectedDatabase.value || null)
     queryResults.value = results
     resultTabKey.value = 'result-0'
     addMessage('success', t('editor.explain_success'))
   } catch (e: any) {
-    message.error(String(e))
-    addMessage('error', String(e))
+    const errorMessage = getErrorMessage(e)
+    message.error(errorMessage)
+    addMessage('error', errorMessage)
   } finally { executing.value = false }
 }
 
 function stopExecution() { executing.value = false; addMessage('info', t('editor.manual_stop')) }
-async function formatSql() { if (!editor) return; try { const formatted = await queryApi.beautifySql(sessionConnectionId.value, editor.getValue()); editor.setValue(formatted); message.success(t('editor.format_success')) } catch (e: any) { message.error(e) } }
+async function formatSql() { if (!editor) return; try { const formatted = await queryApi.beautifySql(sessionConnectionId.value, editor.getValue()); editor.setValue(formatted); message.success(t('editor.format_success')) } catch (e: any) { message.error(getErrorMessage(e)) } }
 function clearEditor() { editor?.setValue(''); queryResults.value = []; messages.value = []; }
 function handleQuerySaved() { message.success(t('common.save')) }
 function insertSnippet(sql: string) { if (!editor) return; const selection = editor.getSelection(); editor.executeEdits('insert-snippet', [{ range: selection || editor.getSelection()!, text: sql }]); showSnippets.value = false }
@@ -348,7 +404,12 @@ function openSnippets() { showSnippets.value = true }
 function useHistorySql(sql: string) { editor?.setValue(sql); showHistory.value = false; }
 function saveToHistory(sql: string) { sqlHistory.value.unshift({ sql, timestamp: Date.now(), database: selectedDatabase.value }); if (sqlHistory.value.length > 100) sqlHistory.value.pop(); setStorageItem(STORAGE_KEYS.SQL_HISTORY, sqlHistory.value) }
 async function refreshAutocomplete() { const baseId = props.connectionId || connectionStore.activeConnectionId; if (!baseId) return; autocompleteManager.clearCache(baseId); updateAutocompleteContext(); message.success(t('editor.refresh_cache_success')) }
-async function setSelectedDatabase(database: string) { if (availableDatabases.value.length === 0) await loadAvailableDatabases(); selectedDatabase.value = database; updateAutocompleteContext() }
+async function setSelectedDatabase(database: string) {
+  if (availableDatabases.value.length === 0) await loadAvailableDatabases()
+  selectedDatabase.value = database
+  updateAutocompleteContext()
+  emit('databaseChange', database)
+}
 async function handleSave(isAuto = false) { if (!editor || !props.filePath) return; const content = editor.getValue(); if (!content.trim()) return; try { await utilsApi.writeFile(props.filePath, content); if (!isAuto) message.success(t('common.save')) } catch (err: any) { if (!isAuto) message.error(`${t('common.fail')}: ${err}`) } }
 function startResize(e: MouseEvent) { isSplitResizing.value = true; const startY = e.clientY, startHeight = editorHeight.value; const doResize = (ev: MouseEvent) => { if (isSplitResizing.value) { editorHeight.value = Math.max(100, startHeight + (ev.clientY - startY)); } }; const stopResize = () => { isSplitResizing.value = false; document.removeEventListener('mousemove', doResize); document.removeEventListener('mouseup', stopResize); document.body.style.cursor = '' }; document.body.style.cursor = 'row-resize'; document.addEventListener('mousemove', doResize); document.addEventListener('mouseup', stopResize) }
 function updateAutocompleteContext() {
@@ -360,7 +421,19 @@ function updateAutocompleteContext() {
   }
 }
 async function loadAvailableDatabases() { const baseId = props.connectionId || connectionStore.activeConnectionId; if (!baseId) return; try { const dbs = await metadataApi.getDatabases(baseId); availableDatabases.value = dbs; emit('databasesLoaded', dbs) } catch (e) { console.error(e) } }
-function handleDatabaseChange(dbName: string) { selectedDatabase.value = dbName; updateAutocompleteContext() }
+function handleDatabaseChange(dbName: string) {
+  selectedDatabase.value = dbName
+  updateAutocompleteContext()
+  emit('databaseChange', dbName)
+  const notice = t('editor.database_switched', { database: currentDatabaseLabel.value })
+  addMessage('info', notice)
+  message.info(notice)
+  console.info('[SQL] database switched', {
+    connectionId: sessionConnectionId.value,
+    database: dbName || null,
+    displayDatabase: currentDatabaseLabel.value,
+  })
+}
 
 onMounted(() => {
   if (!editorContainer.value) return

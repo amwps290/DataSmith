@@ -35,7 +35,12 @@ pub async fn execute_query(
 ) -> Result<Vec<QueryResult>, String> {
     let manager = &state.connection_manager;
     
-    info!(sql = %sql.replace('\n', " ").trim(), "收到执行请求");
+    info!(
+        connection_id = %connection_id,
+        database = %database.as_deref().unwrap_or("<default>"),
+        sql = %sql.replace('\n', " ").trim(),
+        "收到执行请求"
+    );
     
     manager
         .execute_query(&connection_id, &sql, database.as_deref())
@@ -54,7 +59,12 @@ pub async fn explain_query(
 ) -> Result<Vec<QueryResult>, String> {
     let manager = &state.connection_manager;
     
-    info!(sql = %sql.replace('\n', " ").trim(), "收到解释请求");
+    info!(
+        connection_id = %connection_id,
+        database = %database.as_deref().unwrap_or("<default>"),
+        sql = %sql.replace('\n', " ").trim(),
+        "收到解释请求"
+    );
     
     manager
         .explain_query(&connection_id, &sql, database.as_deref())

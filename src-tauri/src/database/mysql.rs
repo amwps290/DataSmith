@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::time::Instant;
-use mysql_async::{prelude::*, Pool, Opts, Row, Value, OptsBuilder};
+use mysql_async::{prelude::*, Pool, Opts, Row, Value, OptsBuilder, Error as MySqlError};
 use tokio::sync::Mutex;
 use tracing::{info, instrument, debug, error};
 
@@ -99,6 +99,20 @@ impl MySqlDatabase {
         }
         part
     }
+
+    fn format_mysql_error(error: MySqlError) -> String {
+        match error {
+            MySqlError::Server(server_error) => {
+                format!(
+                    "ERROR {} ({}): {}",
+                    server_error.code,
+                    server_error.state,
+                    server_error.message
+                )
+            }
+            other => other.to_string(),
+        }
+    }
 }
 
 #[async_trait]
@@ -108,7 +122,7 @@ impl DatabaseOperations for MySqlDatabase {
         let pool = Pool::new(opts);
         match pool.get_conn().await {
             Ok(mut conn) => {
-                conn.query_drop("SELECT 1").await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+                conn.query_drop("SELECT 1").await.map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
                 pool.disconnect().await.ok();
                 Ok(true)
             },
@@ -180,7 +194,7 @@ impl DatabaseOperations for MySqlDatabase {
 
         for s in sqls {
             let start_stmt = Instant::now();
-            let rows: Vec<Row> = conn.query(s).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+            let rows: Vec<Row> = conn.query(s).await.map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
             
             let mut columns = Vec::new();
             if let Some(first_row) = rows.first() {
@@ -301,7 +315,7 @@ impl DatabaseOperations for MySqlDatabase {
         let params = mysql_async::Params::Positional(p_vec);
         let sql = format!("UPDATE {} SET {} = ? WHERE {}", escape_mysql_id(table), escape_mysql_id(column), wc.sql);
 
-        conn.exec_drop(sql, params).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        conn.exec_drop(sql, params).await.map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
         Ok(())
     }
 
@@ -328,7 +342,7 @@ impl DatabaseOperations for MySqlDatabase {
         let sql = format!("INSERT INTO {} ({}) VALUES ({})", escape_mysql_id(table), columns, placeholders);
         debug!(sql = %sql, "执行 MySQL 参数化插入");
 
-        conn.exec_drop(sql, params).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        conn.exec_drop(sql, params).await.map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
         Ok(())
     }
 
@@ -347,7 +361,7 @@ impl DatabaseOperations for MySqlDatabase {
         }
 
         let sql = format!("DELETE FROM {} WHERE {}", escape_mysql_id(table), wc.sql);
-        conn.exec_drop(sql, mysql_async::Params::Positional(p_vec)).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        conn.exec_drop(sql, mysql_async::Params::Positional(p_vec)).await.map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
         Ok(())
     }
 
@@ -450,7 +464,7 @@ impl DatabaseOperations for MySqlDatabase {
         if !sql_parts.is_empty() {
             let sql = format!("ALTER TABLE {}.{} {}", escape_mysql_id(db_name), escape_mysql_id(table), sql_parts.join(", "));
             debug!(sql = %sql, "执行 MySQL ALTER TABLE");
-            conn.query_drop(&sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+            conn.query_drop(&sql).await.map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
         }
 
         for (column, after_column) in reorder_changes {
@@ -466,7 +480,7 @@ impl DatabaseOperations for MySqlDatabase {
                 position
             );
             debug!(sql = %sql, "执行 MySQL 字段顺序调整");
-            conn.query_drop(&sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+            conn.query_drop(&sql).await.map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
         }
         
         Ok(())

@@ -171,6 +171,9 @@
     "placeholder": "-- 在此输入 SQL 查询\n",
     "input_sql_warn": "请输入 SQL",
     "executing_selection": "执行选中部分 SQL...",
+    "exec_context": "当前执行数据库: {database}",
+    "database_switched": "已切换当前数据库为: {database}",
+    "default_database": "默认数据库",
     "manual_stop": "已手动停止",
     "format_success": "格式化完成",
     "refresh_cache_success": "已刷新提示缓存"
