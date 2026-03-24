@@ -521,6 +521,43 @@ impl DatabaseOperations for MySqlDatabase {
         }
     }
 
+    async fn get_procedures(&self, database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
+        let target_schema = self.resolve_database_name(database, schema).await?;
+        let sql = format!(
+            "SELECT r.ROUTINE_NAME, r.ROUTINE_SCHEMA, \
+             GROUP_CONCAT(CASE \
+               WHEN p.PARAMETER_MODE IS NULL THEN NULL \
+               WHEN p.PARAMETER_NAME IS NULL OR p.PARAMETER_NAME = '' THEN CONCAT(p.PARAMETER_MODE, ' ', COALESCE(p.DTD_IDENTIFIER, p.DATA_TYPE, '')) \
+               ELSE CONCAT(p.PARAMETER_MODE, ' ', p.PARAMETER_NAME, ' ', COALESCE(p.DTD_IDENTIFIER, p.DATA_TYPE, '')) \
+             END ORDER BY p.ORDINAL_POSITION SEPARATOR ', ') AS ARGUMENTS, \
+             r.ROUTINE_BODY, r.ROUTINE_COMMENT \
+             FROM information_schema.ROUTINES r \
+             LEFT JOIN information_schema.PARAMETERS p \
+               ON p.SPECIFIC_SCHEMA = r.ROUTINE_SCHEMA \
+              AND p.SPECIFIC_NAME = r.SPECIFIC_NAME \
+              AND p.ORDINAL_POSITION > 0 \
+             WHERE r.ROUTINE_SCHEMA = {} AND r.ROUTINE_TYPE = 'PROCEDURE' \
+             GROUP BY r.ROUTINE_NAME, r.ROUTINE_SCHEMA, r.ROUTINE_BODY, r.ROUTINE_COMMENT \
+             ORDER BY r.ROUTINE_NAME",
+            escape_string_literal(&target_schema)
+        );
+
+        let results = self.execute_query(&sql, None).await?;
+        if let Some(res) = results.first() {
+            Ok(res.rows.iter().map(|r| FunctionInfo {
+                name: r.get("ROUTINE_NAME").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                schema: r.get("ROUTINE_SCHEMA").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                return_type: None,
+                arguments: r.get("ARGUMENTS").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                language: r.get("ROUTINE_BODY").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                function_type: "procedure".into(),
+                comment: r.get("ROUTINE_COMMENT").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            }).collect())
+        } else {
+            Ok(vec![])
+        }
+    }
+
     async fn get_foreign_keys(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<ForeignKeyInfo>> {
         let sql = format!(
             "SELECT kcu.CONSTRAINT_NAME, kcu.COLUMN_NAME, kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME, rc.UPDATE_RULE, rc.DELETE_RULE FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc ON kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA WHERE kcu.TABLE_NAME = {} AND kcu.REFERENCED_TABLE_NAME IS NOT NULL",

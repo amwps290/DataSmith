@@ -46,6 +46,7 @@ fn main() {
             commands::metadata::get_schema_tables,
             commands::metadata::get_schema_views,
             commands::metadata::get_schema_functions,
+            commands::metadata::get_schema_procedures,
             commands::metadata::get_schema_aggregate_functions,
             commands::metadata::get_functions,
             commands::metadata::get_procedures,

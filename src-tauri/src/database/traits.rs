@@ -312,6 +312,10 @@ pub trait DatabaseOperations: Send + Sync {
         Ok(Vec::new())
     }
 
+    async fn get_procedures(&self, _database: Option<&str>, _schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
+        Ok(Vec::new())
+    }
+
     async fn get_aggregate_functions(&self, _database: Option<&str>, _schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
         Ok(Vec::new())
     }

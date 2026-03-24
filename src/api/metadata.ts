@@ -54,6 +54,13 @@ export const metadataApi = {
   },
 
   /**
+   * 获取存储过程列表
+   */
+  async getSchemaProcedures(connectionId: string, database: string, schema: string): Promise<FunctionInfo[]> {
+    return invoke<FunctionInfo[]>('get_schema_procedures', { connectionId, database, schema })
+  },
+
+  /**
    * 获取聚合函数列表
    */
   async getSchemaAggregateFunctions(connectionId: string, database: string, schema: string): Promise<FunctionInfo[]> {

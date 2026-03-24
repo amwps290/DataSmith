@@ -156,6 +156,7 @@
   "tree": {
     "tables": "表",
     "views": "视图",
+    "procedures": "存储过程",
     "schemas": "Schemas",
     "functions": "函数",
     "aggregates": "聚合函数",

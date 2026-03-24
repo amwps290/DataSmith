@@ -30,7 +30,7 @@
             <a-menu-item key="refresh"><template #icon><ReloadOutlined /></template>{{ $t('tree.refresh_db') }}</a-menu-item>
           </template>
           
-          <template v-else-if="['schema', 'tables', 'views', 'schemas', 'functions', 'schema-tables', 'schema-views', 'schema-functions', 'schema-indexes'].includes(selectedNode?.type || '')">
+          <template v-else-if="['schema', 'tables', 'views', 'schemas', 'functions', 'procedures', 'schema-tables', 'schema-views', 'schema-functions', 'schema-procedures', 'schema-indexes'].includes(selectedNode?.type || '')">
             <a-menu-item key="refresh"><template #icon><ReloadOutlined /></template>{{ $t('common.refresh') }}</a-menu-item>
           </template>
           
@@ -163,7 +163,8 @@ async function onLoadData(treeNode: TreeNode) {
       children = [
         { key: `${treeNode.key}-tables`, title: t('tree.tables'), type: 'tables', isLeaf: false, metadata: { database: dbName } },
         { key: `${treeNode.key}-views`, title: t('tree.views'), type: 'views', isLeaf: false, metadata: { database: dbName } },
-        { key: `${treeNode.key}-functions`, title: t('tree.functions'), type: 'functions', isLeaf: false, metadata: { database: dbName, schema: dbName } }
+        { key: `${treeNode.key}-functions`, title: t('tree.functions'), type: 'functions', isLeaf: false, metadata: { database: dbName, schema: dbName } },
+        { key: `${treeNode.key}-procedures`, title: t('tree.procedures'), type: 'procedures', isLeaf: false, metadata: { database: dbName, schema: dbName } }
       ]
     } else {
       children = [
@@ -189,6 +190,7 @@ async function onLoadData(treeNode: TreeNode) {
       { key: `${treeNode.key}-views`, title: t('tree.views'), type: 'schema-views', isLeaf: false, metadata: { database: db, schema } },
       { key: `${treeNode.key}-indexes`, title: t('tree.indexes'), type: 'schema-indexes', isLeaf: false, metadata: { database: db, schema } },
       { key: `${treeNode.key}-functions`, title: t('tree.functions'), type: 'schema-functions', isLeaf: false, metadata: { database: db, schema } },
+      { key: `${treeNode.key}-procedures`, title: t('tree.procedures'), type: 'schema-procedures', isLeaf: false, metadata: { database: db, schema } },
       { key: `${treeNode.key}-aggregates`, title: t('tree.aggregates'), type: 'schema-aggregates', isLeaf: false, metadata: { database: db, schema } }
     ]
     updateNodeInTree(treeData.value, treeNode.key, (n) => n.children = children)
@@ -210,8 +212,9 @@ async function onLoadData(treeNode: TreeNode) {
       treeData.value = [...treeData.value]
     } catch (e: any) { message.error(e) }
   }
-  else if (['schema-indexes', 'schema-functions', 'schema-aggregates', 'database-extensions', 'functions'].includes(treeNode.type)) {
+  else if (['schema-indexes', 'schema-functions', 'schema-procedures', 'schema-aggregates', 'database-extensions', 'functions', 'procedures'].includes(treeNode.type)) {
     const isFunction = treeNode.type === 'schema-functions' || treeNode.type === 'functions'
+    const isProcedure = treeNode.type === 'schema-procedures' || treeNode.type === 'procedures'
     const isAggregate = treeNode.type === 'schema-aggregates'
     const isIndex = treeNode.type === 'schema-indexes'
 
@@ -221,6 +224,8 @@ async function onLoadData(treeNode: TreeNode) {
         res = await metadataApi.getSchemaIndexes(connId, treeNode.metadata.database, treeNode.metadata.schema)
       } else if (isFunction) {
         res = await metadataApi.getSchemaFunctions(connId, treeNode.metadata.database, treeNode.metadata.schema || treeNode.metadata.database)
+      } else if (isProcedure) {
+        res = await metadataApi.getSchemaProcedures(connId, treeNode.metadata.database, treeNode.metadata.schema || treeNode.metadata.database)
       } else if (isAggregate) {
         res = await metadataApi.getSchemaAggregateFunctions(connId, treeNode.metadata.database, treeNode.metadata.schema)
       } else {
@@ -230,7 +235,7 @@ async function onLoadData(treeNode: TreeNode) {
         let title = item.name || item.index_name
 
         // 针对函数和聚合函数，拼接参数列表
-        if ((isFunction || isAggregate) && item.arguments) {
+        if ((isFunction || isProcedure || isAggregate) && item.arguments) {
           title = `${item.name}(${item.arguments})`
         }
         // 针对索引类型，拼接关联列名
@@ -241,7 +246,7 @@ async function onLoadData(treeNode: TreeNode) {
         return {
           key: `${treeNode.key}-${item.name || item.index_name}`,
           title,
-          type: isFunction ? 'function' : 'leaf',
+          type: isFunction ? 'function' : isProcedure ? 'procedure' : 'leaf',
           isLeaf: true,
           metadata: { ...item, database: treeNode.metadata.database, schema: treeNode.metadata.schema }
         }

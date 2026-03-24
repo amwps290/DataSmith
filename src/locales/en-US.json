@@ -156,6 +156,7 @@
   "tree": {
     "tables": "Tables",
     "views": "Views",
+    "procedures": "Procedures",
     "schemas": "Schemas",
     "functions": "Functions",
     "aggregates": "Aggregate Functions",

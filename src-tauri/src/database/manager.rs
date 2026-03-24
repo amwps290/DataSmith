@@ -219,6 +219,12 @@ impl ConnectionManager {
         db.get_functions(database, schema).await
     }
 
+    pub async fn get_procedures(&self, composite_id: &str, database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {
+        let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
+        db.get_procedures(database, schema).await
+    }
+
     pub async fn get_indexes(&self, composite_id: &str, table: &str, schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
         let db = self.get_db_ref(composite_id).await?;
         db.get_indexes(table, schema).await

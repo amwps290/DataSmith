@@ -48,6 +48,15 @@ pub async fn get_schema_functions(connection_id: String, database: String, schem
 }
 
 #[tauri::command]
+pub async fn get_schema_procedures(connection_id: String, database: String, schema: String, state: State<'_, AppState>) -> Result<Vec<FunctionInfo>, String> {
+    tracing::info!(conn = %connection_id, db = %database, sc = %schema, "正在获取 Schema 存储过程...");
+    state.connection_manager.get_procedures(&connection_id, Some(&database), Some(&schema)).await.map_err(|e| {
+        tracing::error!(err = %e, "获取 Schema 存储过程失败");
+        e.to_string()
+    })
+}
+
+#[tauri::command]
 pub async fn get_schema_aggregate_functions(connection_id: String, database: String, schema: String, state: State<'_, AppState>) -> Result<Vec<FunctionInfo>, String> {
     state.connection_manager.get_aggregate_functions(&connection_id, Some(&database), Some(&schema)).await.to_cmd_result()
 }

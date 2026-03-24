@@ -117,6 +117,9 @@ function getIconConfig(node: TreeNode) {
     'schema-functions': { icon: 'ph:function-duotone', color: '#eb2f96' },
     functions: { icon: 'ph:function-duotone', color: '#eb2f96' },
     function: { icon: 'ph:function-duotone', color: '#eb2f96' },
+    'schema-procedures': { icon: 'ph:terminal-window-duotone', color: '#13c2c2' },
+    procedures: { icon: 'ph:terminal-window-duotone', color: '#13c2c2' },
+    procedure: { icon: 'ph:terminal-window-duotone', color: '#13c2c2' },
     'schema-aggregates': { icon: 'ph:function-duotone', color: '#722ed1' },
     aggregates: { icon: 'ph:function-duotone', color: '#722ed1' },
     'schema-indexes': { icon: 'ph:list-numbers-duotone', color: '#fa8c16' },
@@ -132,6 +135,7 @@ function getIconConfig(node: TreeNode) {
     const key = node.key.toLowerCase()
     if (key.includes('-indexes') || key.includes('-index')) return { icon: 'ph:list-numbers-duotone', color: '#fa8c16' }
     if (key.includes('-aggregates')) return { icon: 'ph:function-duotone', color: '#722ed1' }
+    if (key.includes('-procedures') || key.includes('-procedure')) return { icon: 'ph:terminal-window-duotone', color: '#13c2c2' }
     if (key.includes('-functions') || key.includes('-function')) return { icon: 'ph:function-duotone', color: '#eb2f96' }
     if (key.includes('-extensions') || key.includes('-extension')) return { icon: 'ph:puzzle-piece-duotone', color: '#1890ff' }
   }
