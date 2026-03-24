@@ -117,7 +117,7 @@ const workspaceStore = useWorkspaceStore()
 // Composables
 const { sidebarWidth, startResize } = useSidebarResize()
 const {
-  dataTabs, mainTabKey, sqlEditorRefs,
+  dataTabs, mainTabKey,
   activeTabType, activeTabDatabase, activeEditorExecuting,
   setSqlEditorRef, callActiveEditor, closeTab,
   tabExists, addTab, handleContentChange, handleFileSaved,
@@ -205,7 +205,6 @@ async function handleDatabaseSelected(d: DatabaseEventData) {
     }
     return
   }
-  const cur = dataTabs.value.find(tab => tab.key === mainTabKey.value); if (cur?.type === 'query') sqlEditorRefs[mainTabKey.value]?.setSelectedDatabase(d.name || '')
 }
 
 async function handleNewQuery(d: QueryEventData) {
