@@ -157,11 +157,11 @@ import {
   ExportOutlined
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
-import { queryApi, metadataApi, dataApi } from '@/api'
-import { invoke } from '@tauri-apps/api/core'
+import { queryApi, metadataApi, dataApi, exportApi } from '@/api'
+import { save } from '@tauri-apps/plugin-dialog'
 import { useConnectionStore } from '@/stores/connection'
 import type { VxeGridProps, VxeGridInstance, VxeGridEvents } from 'vxe-table'
-import type { ColumnInfo } from '@/types/database'
+import type { ColumnInfo, QueryResult } from '@/types/database'
 
 interface GridRow extends Record<string, any> {
   __rowIndex: number
@@ -749,7 +749,25 @@ async function deleteSelected() {
 async function handleExport({ key }: any) {
   try {
     const sql = `SELECT * FROM ${tableRef()}${filterCondition.value ? ' WHERE ' + filterCondition.value : ''}`
-    const path = await invoke<string>(`export_to_${key}`, { connectionId: props.connectionId, database: props.database, table: props.table, query: sql })
+    const path = await save({
+      defaultPath: `${props.table}.${key}`,
+      filters: [{ name: key.toUpperCase(), extensions: [key] }],
+    })
+    if (!path) return
+
+    const results = await queryApi.executeQuery(props.connectionId, sql, props.database)
+    const data: QueryResult = results[0] || { columns: [], rows: [], affected_rows: 0, execution_time_ms: 0 }
+
+    if (key === 'csv') {
+      await exportApi.toCsv(data, path)
+    } else if (key === 'json') {
+      await exportApi.toJson(data, path)
+    } else if (key === 'sql') {
+      await exportApi.toSql(data, props.table, path)
+    } else {
+      throw new Error(`Unsupported export format: ${key}`)
+    }
+
     message.success(t('data.export_success', { path }))
   } catch (e: any) { message.error(e) }
 }
