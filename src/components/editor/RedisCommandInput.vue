@@ -31,10 +31,13 @@ onMounted(() => {
     language: 'shell',
     theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs',
     automaticLayout: true,
-    fontSize: 14,
-    minimap: { enabled: false },
+    readOnly: false,
+    domReadOnly: false,
+    fontSize: appStore.editorSettings.fontSize,
+    fontFamily: appStore.editorSettings.fontFamily,
+    minimap: { enabled: appStore.editorSettings.minimap },
     scrollBeyondLastLine: false,
-    lineNumbers: 'on',
+    lineNumbers: appStore.editorSettings.lineNumbers,
     renderLineHighlight: 'all',
     quickSuggestions: {
       other: true,
@@ -63,10 +66,18 @@ onUnmounted(() => {
 })
 
 watch(
-  () => appStore.theme,
-  (newTheme) => {
+  () => [appStore.theme, appStore.editorSettings.fontSize, appStore.editorSettings.minimap, appStore.editorSettings.lineNumbers, appStore.editorSettings.fontFamily],
+  ([theme]) => {
     if (editor) {
-      monaco.editor.setTheme(newTheme === 'dark' ? 'vs-dark' : 'vs')
+      monaco.editor.setTheme(theme === 'dark' ? 'vs-dark' : 'vs')
+      editor.updateOptions({
+        readOnly: false,
+        domReadOnly: false,
+        fontSize: appStore.editorSettings.fontSize,
+        fontFamily: appStore.editorSettings.fontFamily,
+        minimap: { enabled: appStore.editorSettings.minimap },
+        lineNumbers: appStore.editorSettings.lineNumbers,
+      })
     }
   }
 )

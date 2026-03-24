@@ -25,20 +25,31 @@ export function useMonacoEditor(
     return appStore.theme === 'dark' ? 'vs-dark' : 'vs'
   }
 
+  const getEditorOptionValues = () => ({
+    fontSize: options.fontSize ?? appStore.editorSettings.fontSize,
+    minimap: options.minimap ?? appStore.editorSettings.minimap,
+    lineNumbers: options.lineNumbers ?? appStore.editorSettings.lineNumbers,
+    fontFamily: appStore.editorSettings.fontFamily,
+  })
+
   const createEditor = async () => {
     if (editor.value) return
     await nextTick()
     if (!containerRef.value) return
 
+    const editorOptions = getEditorOptionValues()
+
     editor.value = monaco.editor.create(containerRef.value, {
       language: options.language || 'sql',
       theme: getTheme(),
       readOnly: options.readOnly ?? false,
-      minimap: { enabled: options.minimap ?? false },
-      lineNumbers: options.lineNumbers || 'on',
+      domReadOnly: false,
+      minimap: { enabled: editorOptions.minimap },
+      lineNumbers: editorOptions.lineNumbers,
       automaticLayout: true,
       value: options.value || '',
-      fontSize: options.fontSize ?? 13,
+      fontSize: editorOptions.fontSize,
+      fontFamily: editorOptions.fontFamily,
       scrollBeyondLastLine: options.scrollBeyondLastLine ?? false,
     })
   }
@@ -59,9 +70,18 @@ export function useMonacoEditor(
   }
 
   // 监听主题变化
-  watch(() => appStore.theme, () => {
+  watch(() => [appStore.theme, appStore.editorSettings.fontSize, appStore.editorSettings.minimap, appStore.editorSettings.lineNumbers, appStore.editorSettings.fontFamily], () => {
     if (editor.value) {
       monaco.editor.setTheme(getTheme())
+      const editorOptions = getEditorOptionValues()
+      editor.value.updateOptions({
+        readOnly: options.readOnly ?? false,
+        domReadOnly: false,
+        fontSize: editorOptions.fontSize,
+        fontFamily: editorOptions.fontFamily,
+        minimap: { enabled: editorOptions.minimap },
+        lineNumbers: editorOptions.lineNumbers,
+      })
     }
   })
 

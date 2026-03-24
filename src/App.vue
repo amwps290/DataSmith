@@ -1,6 +1,6 @@
 <template>
   <a-config-provider :theme="themeConfig">
-    <div id="app" :class="{ 'dark-mode': isDark }">
+    <div id="app" :class="{ 'dark-mode': isDark }" :style="appStyleVars">
       <router-view />
     </div>
   </a-config-provider>
@@ -17,6 +17,10 @@ const isDark = computed(() => appStore.theme === 'dark')
 
 const themeConfig = computed(() => ({
   algorithm: isDark.value ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
+}))
+
+const appStyleVars = computed(() => ({
+  '--app-font-family': appStore.interfaceSettings.fontFamily,
 }))
 
 // 在组件挂载后再开始监听 Store 变化，确保 Pinia 已完全激活

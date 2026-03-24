@@ -64,24 +64,6 @@
       </div>
     </a-layout-content>
 
-    <!-- 设置弹窗 -->
-    <a-modal v-model:open="showSettings" :title="$t('common.settings')" @ok="handleSaveSettings">
-      <a-form :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
-        <a-form-item :label="$t('common.theme')">
-          <a-radio-group v-model:value="settingsForm.theme">
-            <a-radio value="light">{{ appStore.language === 'zh-CN' ? '明亮' : 'Light' }}</a-radio>
-            <a-radio value="dark">{{ appStore.language === 'zh-CN' ? '暗色' : 'Dark' }}</a-radio>
-          </a-radio-group>
-        </a-form-item>
-        <a-form-item :label="$t('common.language')">
-          <a-radio-group v-model:value="settingsForm.language">
-            <a-radio value="zh-CN">中文</a-radio>
-            <a-radio value="en-US">English</a-radio>
-          </a-radio-group>
-        </a-form-item>
-      </a-form>
-    </a-modal>
-
     <ConnectionDialog v-model:visible="showConnectionDialog" :editing-connection="editingConnection" @close="editingConnection = null" />
     <GlobalSearch v-model:visible="showGlobalSearch" :connection-id="connectionStore.activeConnectionId" @view-data="handleTableSelected" />
   </a-layout>
@@ -90,11 +72,12 @@
 <script setup lang="ts">
 import { defineAsyncComponent, reactive, ref, computed, nextTick, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import {
   FileTextOutlined,
   TableOutlined, EditOutlined,
 } from '@ant-design/icons-vue'
-import { useAppStore, type Theme, type Language } from '@/stores/app'
+import { useAppStore } from '@/stores/app'
 import { useConnectionStore } from '@/stores/connection'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ConnectionPanel from '@/components/connection/ConnectionPanel.vue'
@@ -117,6 +100,7 @@ const TableDesigner = defineAsyncComponent(() => import('@/components/database/T
 const GlobalSearch = defineAsyncComponent(() => import('@/components/search/GlobalSearch.vue'))
 
 const { t } = useI18n()
+const router = useRouter()
 const appStore = useAppStore()
 const connectionStore = useConnectionStore()
 const workspaceStore = useWorkspaceStore()
@@ -131,25 +115,13 @@ const {
 } = useTabManager()
 
 const showConnectionDialog = ref(false)
-const showSettings = ref(false)
 const showGlobalSearch = ref(false)
 const editingConnection = ref<ConnectionConfig | null>(null)
 const redisEditorRef = ref()
 const availableDatabases = ref<DatabaseInfo[]>([])
 
-const settingsForm = reactive({ theme: appStore.theme as string, language: appStore.language as string })
-
 function openSettings() {
-  settingsForm.theme = appStore.theme
-  settingsForm.language = appStore.language
-  showSettings.value = true
-}
-
-function handleSaveSettings() {
-  appStore.setTheme(settingsForm.theme as Theme)
-  appStore.setLanguage(settingsForm.language as Language)
-  showSettings.value = false
-  message.success(t('common.save'))
+  router.push({ name: 'Settings' })
 }
 
 const isSqlSupported = computed(() => {

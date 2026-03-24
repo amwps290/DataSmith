@@ -1,12 +1,14 @@
-import type { Theme, Language } from '@/stores/app'
+import type { EditorSettings, InterfaceSettings, ThemeMode, Language } from '@/stores/app'
 
-type StorageKey = 'theme' | 'language' | 'sidebar_collapsed' | 'sql_history'
+type StorageKey = 'theme' | 'language' | 'sidebar_collapsed' | 'sql_history' | 'editor_settings' | 'interface_settings'
 
 interface StorageSchema {
-  theme: Theme
+  theme: ThemeMode
   language: Language
   sidebar_collapsed: boolean
   sql_history: any[]
+  editor_settings: EditorSettings
+  interface_settings: InterfaceSettings
 }
 
 /**
