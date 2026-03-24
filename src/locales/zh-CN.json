@@ -202,6 +202,8 @@
     "discard_confirm": "确定要放弃所有未保存的修改吗？",
     "save_success": "保存成功",
     "save_fail": "保存失败: {error}",
+    "add_inline": "快速新增",
+    "add_form": "表单新增",
     "required_fields_missing": "以下字段为必填项: {fields}",
     "insert_empty_error": "请至少填写一列数据后再保存",
     "change_preview": "变更预览",
@@ -215,6 +217,8 @@
     "update_fail": "更新失败",
     "cell_modified": "已修改",
     "cell_viewer": "单元格查看器",
+    "select_cell_prompt": "请选择一个单元格",
+    "invalid_json": "无效的 JSON 格式",
     "format_json": "格式化 JSON",
     "copy_content": "复制内容"
   },

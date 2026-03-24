@@ -7,7 +7,10 @@
             {{ $t('common.refresh') }}
           </a-button>
           <a-button :icon="h(PlusOutlined)" @click="addRow">
-            {{ $t('common.add') }}
+            {{ $t('data.add_inline') }}
+          </a-button>
+          <a-button :icon="h(FormOutlined)" @click="showInsertDialog = true">
+            {{ $t('data.add_form') }}
           </a-button>
           <a-button 
             :icon="h(DeleteOutlined)" 
@@ -116,7 +119,7 @@
           @change="handleViewerValueChange"
         />
       </div>
-      <a-empty v-else :description="'请选择一个单元格'" />
+      <a-empty v-else :description="$t('data.select_cell_prompt')" />
     </a-drawer>
 
     <!-- 筛选对话框 -->
@@ -146,6 +149,15 @@
       <div class="preview-hint">{{ $t('data.preview_hint') }}</div>
       <a-textarea :value="previewSql" :rows="18" readonly class="preview-sql" />
     </a-modal>
+
+    <InsertRecordDialog
+      v-model="showInsertDialog"
+      :connection-id="props.connectionId"
+      :database="props.database"
+      :table="props.table"
+      :schema="props.schema"
+      @inserted="handleRecordInserted"
+    />
   </div>
 </template>
 
@@ -154,12 +166,13 @@ import { h, ref, watch, computed, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ReloadOutlined, PlusOutlined, DeleteOutlined, FilterOutlined,
-  ExportOutlined
+  ExportOutlined, FormOutlined
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
 import { queryApi, metadataApi, dataApi, exportApi } from '@/api'
 import { save } from '@tauri-apps/plugin-dialog'
 import { useConnectionStore } from '@/stores/connection'
+import InsertRecordDialog from '@/components/database/InsertRecordDialog.vue'
 import type { VxeGridProps, VxeGridInstance, VxeGridEvents } from 'vxe-table'
 import type { ColumnInfo, QueryResult } from '@/types/database'
 
@@ -206,6 +219,7 @@ const loading = ref(false)
 const hasMore = ref(true)
 const selectedRowKeys = ref<any[]>([])
 const showFilterDialog = ref(false)
+const showInsertDialog = ref(false)
 const filterCondition = ref('')
 const primaryKeys = ref<string[]>([])
 const tableColumns = ref<ColumnInfo[]>([])
@@ -339,7 +353,7 @@ function formatJsonInViewer() {
     viewerValue.value = JSON.stringify(obj, null, 2)
     handleViewerValueChange()
   } catch (e) {
-    message.error('无效的 JSON 格式')
+    message.error(t('data.invalid_json'))
   }
 }
 
@@ -713,6 +727,11 @@ function addRow() {
 
   const newRow = createGridRow(rowData, { isNew: true })
   gridOptions.data = [newRow, ...((gridOptions.data || []) as GridRow[])]
+}
+
+async function handleRecordInserted() {
+  showInsertDialog.value = false
+  await doRefresh()
 }
 
 async function deleteSelected() {

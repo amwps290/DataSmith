@@ -202,6 +202,8 @@
     "discard_confirm": "Are you sure you want to discard all unsaved changes?",
     "save_success": "Saved successfully",
     "save_fail": "Save failed: {error}",
+    "add_inline": "Quick Add",
+    "add_form": "Form Add",
     "required_fields_missing": "These fields are required: {fields}",
     "insert_empty_error": "Fill in at least one column before saving",
     "change_preview": "Change Preview",
@@ -215,6 +217,8 @@
     "update_fail": "Update failed",
     "cell_modified": "Modified",
     "cell_viewer": "Cell Viewer",
+    "select_cell_prompt": "Select a cell",
+    "invalid_json": "Invalid JSON format",
     "format_json": "Format JSON",
     "copy_content": "Copy Content"
   },
