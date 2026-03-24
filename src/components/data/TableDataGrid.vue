@@ -55,6 +55,9 @@
       </a-space>
       
       <div class="toolbar-right">
+        <a-tag v-if="deletedRows.length > 0" color="red">
+          {{ $t('data.pending_delete_count', { n: deletedRows.length }) }}
+        </a-tag>
         <div class="data-info">
           {{ $t('editor.loaded_rows', { n: gridOptions.data?.length || 0 }) }}
           <span v-if="loading" class="loading-text">
@@ -124,6 +127,25 @@
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <a-modal
+      v-model:open="showPreviewDialog"
+      :title="$t('data.change_preview')"
+      :ok-text="$t('data.confirm_execute')"
+      :cancel-text="$t('common.cancel')"
+      :confirm-loading="saving"
+      width="760px"
+      @ok="confirmSubmitChanges"
+      @cancel="resetPreviewState"
+    >
+      <div class="preview-summary">
+        <a-tag color="green">{{ $t('data.preview_insert_count', { n: previewPlan?.inserts.length || 0 }) }}</a-tag>
+        <a-tag color="gold">{{ $t('data.preview_update_count', { n: previewPlan?.updates.length || 0 }) }}</a-tag>
+        <a-tag color="red">{{ $t('data.preview_delete_count', { n: previewPlan?.deletes.length || 0 }) }}</a-tag>
+      </div>
+      <div class="preview-hint">{{ $t('data.preview_hint') }}</div>
+      <a-textarea :value="previewSql" :rows="18" readonly class="preview-sql" />
+    </a-modal>
   </div>
 </template>
 
@@ -145,7 +167,34 @@ interface GridRow extends Record<string, any> {
   __rowIndex: number
   _originalData: Record<string, any>
   _isNew?: boolean
+  _isDeletedPending?: boolean
   _newTouchedFields?: Record<string, boolean>
+}
+
+interface InsertPlanItem {
+  rowIndex: number
+  data: Record<string, any>
+  sql: string
+}
+
+interface UpdatePlanItem {
+  rowIndex: number
+  field: string
+  value: any
+  whereConditions: Record<string, any>
+  sql: string
+}
+
+interface DeletePlanItem {
+  rowIndex: number
+  whereConditions: Record<string, any>
+  sql: string
+}
+
+interface SubmitPreviewPlan {
+  inserts: InsertPlanItem[]
+  updates: UpdatePlanItem[]
+  deletes: DeletePlanItem[]
 }
 
 const { t } = useI18n()
@@ -162,14 +211,18 @@ const primaryKeys = ref<string[]>([])
 const tableColumns = ref<ColumnInfo[]>([])
 const saving = ref(false)
 const nextRowIndex = ref(0)
+const showPreviewDialog = ref(false)
+const previewSql = ref('')
+const previewPlan = ref<SubmitPreviewPlan | null>(null)
 
 // 变更追踪状态
 const pendingEdits = reactive<Record<number, Record<string, { old: any, new: any }>>>({})
 const newRows = computed(() => ((gridOptions.data || []) as GridRow[]).filter(row => row._isNew))
-const hasChanges = computed(() => Object.keys(pendingEdits).length > 0 || newRows.value.length > 0)
+const deletedRows = computed(() => ((gridOptions.data || []) as GridRow[]).filter(row => row._isDeletedPending))
+const hasChanges = computed(() => Object.keys(pendingEdits).length > 0 || newRows.value.length > 0 || deletedRows.value.length > 0)
 const changeCount = computed(() => {
   const updatedCells = Object.values(pendingEdits).reduce((acc, row) => acc + Object.keys(row).length, 0)
-  return updatedCells + newRows.value.length
+  return updatedCells + newRows.value.length + deletedRows.value.length
 })
 
 // 查看器状态
@@ -210,6 +263,9 @@ const handleScroll: VxeGridEvents.Scroll = ({ isY, scrollTop, bodyHeight, scroll
 }
 
 function getCellClassName({ row, column }: any) {
+  if (row._isDeletedPending) {
+    return 'cell-pending-delete'
+  }
   if (row._isNew) {
     return 'cell-new-row'
   }
@@ -221,6 +277,7 @@ function getCellClassName({ row, column }: any) {
 }
 
 function handleEditClosed({ row, column }: any) {
+  if (row._isDeletedPending) return
   recordChange(row, column.field, row[column.field])
   // 如果当前查看器正在显示这个单元格，同步它
   if (selectedCell.value && selectedCell.value.row.__rowIndex === row.__rowIndex && selectedCell.value.column.field === column.field) {
@@ -252,7 +309,7 @@ function recordChange(row: any, field: string, newVal: any) {
 }
 
 function handleCellClick({ row, column }: any) {
-  if (column.type === 'checkbox' || column.type === 'seq') return
+  if (column.type === 'checkbox' || column.type === 'seq' || row._isDeletedPending) return
   selectedCell.value = { row, column }
   viewerValue.value = row[column.field] === null ? '' : String(row[column.field])
   isViewerSetNull.value = row[column.field] === null
@@ -261,6 +318,7 @@ function handleCellClick({ row, column }: any) {
 function handleViewerValueChange() {
   if (!selectedCell.value) return
   const { row, column } = selectedCell.value
+  if (row._isDeletedPending) return
   row[column.field] = viewerValue.value
   recordChange(row, column.field, viewerValue.value)
 }
@@ -268,6 +326,7 @@ function handleViewerValueChange() {
 function handleViewerNullChange() {
   if (!selectedCell.value) return
   const { row, column } = selectedCell.value
+  if (row._isDeletedPending) return
   const newVal = isViewerSetNull.value ? null : ''
   row[column.field] = newVal
   viewerValue.value = newVal === null ? '' : ''
@@ -291,6 +350,18 @@ function copyViewerContent() {
 
 function clearPendingEdits() {
   Object.keys(pendingEdits).forEach(k => delete pendingEdits[Number(k)])
+}
+
+function clearPendingDeletes() {
+  for (const row of (gridOptions.data || []) as GridRow[]) {
+    delete row._isDeletedPending
+  }
+}
+
+function resetPreviewState() {
+  showPreviewDialog.value = false
+  previewPlan.value = null
+  previewSql.value = ''
 }
 
 function clearSelection() {
@@ -364,6 +435,80 @@ function buildInsertPayload(row: GridRow) {
   return { data, missingRequired }
 }
 
+function escapeSqlLiteral(value: any) {
+  if (value === null || value === undefined) return 'NULL'
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'NULL'
+  if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE'
+  return `'${String(value).replace(/'/g, "''")}'`
+}
+
+function buildWhereSql(whereConditions: Record<string, any>) {
+  return Object.entries(whereConditions)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([field, value]) => value === null ? `${quote(field)} IS NULL` : `${quote(field)} = ${escapeSqlLiteral(value)}`)
+    .join(' AND ')
+}
+
+function createPreviewPlan(): SubmitPreviewPlan {
+  const plan: SubmitPreviewPlan = { inserts: [], updates: [], deletes: [] }
+
+  const hasPendingUpdates = Object.keys(pendingEdits).length > 0
+  const hasPendingDeletes = deletedRows.value.length > 0
+  if ((hasPendingUpdates || hasPendingDeletes) && primaryKeys.value.length === 0) {
+    throw new Error(t('data.no_pk_error'))
+  }
+
+  for (const row of newRows.value) {
+    const { data, missingRequired } = buildInsertPayload(row)
+    if (missingRequired.length > 0) {
+      throw new Error(t('data.required_fields_missing', { fields: missingRequired.join(', ') }))
+    }
+    if (Object.keys(data).length === 0) {
+      throw new Error(t('data.insert_empty_error'))
+    }
+
+    const columns = Object.keys(data)
+    const sql = `INSERT INTO ${tableRef()} (${columns.map(name => quote(name)).join(', ')}) VALUES (${columns.map(name => escapeSqlLiteral(data[name])).join(', ')});`
+    plan.inserts.push({ rowIndex: row.__rowIndex, data, sql })
+  }
+
+  for (const [rowIndexStr, fields] of Object.entries(pendingEdits)) {
+    const rowIndex = Number(rowIndexStr)
+    const row = ((gridOptions.data || []) as GridRow[]).find(item => item.__rowIndex === rowIndex)
+    if (!row || row._isDeletedPending) continue
+
+    const whereConditions: Record<string, any> = {}
+    primaryKeys.value.forEach(pk => {
+      whereConditions[pk] = row._originalData[pk]
+    })
+
+    for (const [field, change] of Object.entries(fields)) {
+      plan.updates.push({
+        rowIndex,
+        field,
+        value: change.new,
+        whereConditions,
+        sql: `UPDATE ${tableRef()} SET ${quote(field)} = ${escapeSqlLiteral(change.new)} WHERE ${buildWhereSql(whereConditions)};`
+      })
+    }
+  }
+
+  for (const row of deletedRows.value) {
+    const whereConditions: Record<string, any> = {}
+    primaryKeys.value.forEach(pk => {
+      whereConditions[pk] = row._originalData[pk]
+    })
+
+    plan.deletes.push({
+      rowIndex: row.__rowIndex,
+      whereConditions,
+      sql: `DELETE FROM ${tableRef()} WHERE ${buildWhereSql(whereConditions)};`
+    })
+  }
+
+  return plan
+}
+
 function removeRows(rowIndexes: number[]) {
   if (rowIndexes.length === 0) return
 
@@ -375,52 +520,70 @@ function removeRows(rowIndexes: number[]) {
 }
 
 async function submitChanges() {
-  const hasPendingUpdates = Object.keys(pendingEdits).length > 0
-  if (hasPendingUpdates && primaryKeys.value.length === 0) return message.error(t('data.no_pk_error'))
+  try {
+    const plan = createPreviewPlan()
+    if (plan.inserts.length === 0 && plan.updates.length === 0 && plan.deletes.length === 0) {
+      message.info(t('common.no_data'))
+      return
+    }
+    previewPlan.value = plan
+    previewSql.value = [...plan.inserts, ...plan.updates, ...plan.deletes].map(item => item.sql).join('\n\n')
+    showPreviewDialog.value = true
+  } catch (e: any) {
+    message.error(t('data.save_fail', { error: String(e) }))
+  }
+}
+
+async function confirmSubmitChanges() {
+  if (!previewPlan.value) return
 
   saving.value = true
-  let shouldRefresh = false
+  let shouldRefresh = previewPlan.value.inserts.length > 0 || previewPlan.value.deletes.length > 0
+  let hasAppliedChanges = false
   try {
-    for (const row of newRows.value) {
-      const { data, missingRequired } = buildInsertPayload(row)
-
-      if (missingRequired.length > 0) {
-        throw new Error(t('data.required_fields_missing', { fields: missingRequired.join(', ') }))
-      }
-      if (Object.keys(data).length === 0) {
-        throw new Error(t('data.insert_empty_error'))
-      }
-
+    for (const insert of previewPlan.value.inserts) {
       await dataApi.insertTableData({
         connectionId: props.connectionId,
         database: props.database,
         table: props.table,
         schema: props.schema || undefined,
-        data,
+        data: insert.data,
       })
-      shouldRefresh = true
+      hasAppliedChanges = true
     }
 
-    for (const [rowIndexStr, fields] of Object.entries(pendingEdits)) {
-      const rowIndex = Number(rowIndexStr)
-      const row = (gridOptions.data || []).find((item: any) => item.__rowIndex === rowIndex) as GridRow | undefined
-      if (!row) continue
-
-      const whereConditions: Record<string, any> = {}
-      primaryKeys.value.forEach(pk => {
-        whereConditions[pk] = row._originalData[pk]
+    for (const update of previewPlan.value.updates) {
+      await dataApi.updateTableData({
+        connectionId: props.connectionId,
+        database: props.database,
+        table: props.table,
+        schema: props.schema || null,
+        column: update.field,
+        value: update.value === null ? null : String(update.value),
+        whereConditions: update.whereConditions
       })
+      hasAppliedChanges = true
 
-      for (const [field, change] of Object.entries(fields)) {
-        await dataApi.updateTableData({
-          connectionId: props.connectionId, database: props.database, table: props.table,
-          schema: props.schema || null, column: field, value: change.new === null ? null : String(change.new), whereConditions
-        })
-        row._originalData[field] = change.new
+      const row = ((gridOptions.data || []) as GridRow[]).find(item => item.__rowIndex === update.rowIndex)
+      if (row) {
+        row._originalData[update.field] = update.value
       }
     }
 
+    for (const deletion of previewPlan.value.deletes) {
+      await dataApi.deleteTableData({
+        connectionId: props.connectionId,
+        database: props.database,
+        table: props.table,
+        schema: props.schema || null,
+        whereConditions: deletion.whereConditions
+      })
+      hasAppliedChanges = true
+    }
+
+    resetPreviewState()
     clearPendingEdits()
+    clearPendingDeletes()
 
     if (shouldRefresh) {
       await doRefresh()
@@ -428,8 +591,12 @@ async function submitChanges() {
 
     message.success(t('data.save_success'))
   } catch (e: any) {
-    if (shouldRefresh) {
-      await doRefresh()
+    if (hasAppliedChanges) {
+      try {
+        await doRefresh()
+      } catch {
+        // 忽略刷新失败，保留原始错误提示
+      }
     }
     message.error(t('data.save_fail', { error: String(e) }))
   } finally {
@@ -448,6 +615,8 @@ function discardChanges() {
       }
       gridOptions.data = ((gridOptions.data || []) as GridRow[]).filter(row => !row._isNew)
       clearPendingEdits()
+      clearPendingDeletes()
+      resetPreviewState()
       if (selectedCell.value?.row._isNew) {
         clearViewerIfNeeded()
       } else if (selectedCell.value) {
@@ -472,6 +641,8 @@ async function doRefresh() {
   gridOptions.data = []
   nextRowIndex.value = 0
   clearPendingEdits()
+  clearPendingDeletes()
+  resetPreviewState()
   clearSelection()
   clearViewerIfNeeded()
   await loadData(false)
@@ -550,6 +721,7 @@ async function deleteSelected() {
     async onOk() {
       try {
         const records = (gridRef.value?.getCheckboxRecords() || []) as GridRow[]
+        const newRecords = records.filter(record => record._isNew)
         const existingRecords = records.filter(record => !record._isNew)
 
         if (existingRecords.length > 0 && primaryKeys.value.length === 0) {
@@ -557,20 +729,18 @@ async function deleteSelected() {
           return
         }
 
-        for (const record of existingRecords) {
-          const whereConditions: Record<string, any> = {}
-          primaryKeys.value.forEach(pk => {
-            whereConditions[pk] = record._originalData[pk]
-          })
-          
-          await dataApi.deleteTableData({
-            connectionId: props.connectionId, database: props.database, table: props.table,
-            schema: props.schema || null, whereConditions
-          })
+        if (newRecords.length > 0) {
+          removeRows(newRecords.map(record => record.__rowIndex))
         }
 
-        removeRows(records.map(record => record.__rowIndex))
-        message.success(t('data.delete_success'))
+        for (const record of existingRecords) {
+          record._isDeletedPending = true
+          delete pendingEdits[record.__rowIndex]
+        }
+
+        clearSelection()
+        clearViewerIfNeeded(new Set(records.map(record => record.__rowIndex)))
+        message.success(t('data.delete_staged'))
       } catch (e: any) { message.error(e) }
     }
   })
@@ -612,8 +782,13 @@ watch(
 .dark-mode :deep(.cell-modified) { background-color: #3e2b1a !important; }
 :deep(.cell-new-row) { background-color: #e6f4ff !important; }
 .dark-mode :deep(.cell-new-row) { background-color: #11263c !important; }
+:deep(.cell-pending-delete) { background-color: #fff1f0 !important; color: #cf1322; text-decoration: line-through; pointer-events: none; opacity: 0.75; }
+.dark-mode :deep(.cell-pending-delete) { background-color: #3b1618 !important; color: #ff7875; }
 
 .viewer-container { padding: 12px; height: 100%; display: flex; flex-direction: column; }
 .viewer-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .viewer-textarea { flex: 1; font-family: monospace; }
+.preview-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.preview-hint { margin-bottom: 12px; color: #8c8c8c; font-size: 12px; }
+.preview-sql :deep(textarea) { font-family: monospace; }
 </style>

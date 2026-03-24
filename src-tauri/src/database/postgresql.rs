@@ -431,6 +431,9 @@ impl DatabaseOperations for PostgreSqlDatabase {
                         sql_parts.push(format!("ALTER COLUMN {} SET NOT NULL", escape_pg_id(&new_column.name)));
                     }
                 },
+                TableChange::ReorderColumn { .. } => {
+                    return Err(DbError::Other("PostgreSQL 暂不支持调整字段顺序".into()));
+                },
                 TableChange::DropColumn(name) => {
                     sql_parts.push(format!("DROP COLUMN {}", escape_pg_id(name)));
                 },

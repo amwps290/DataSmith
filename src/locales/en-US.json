@@ -201,6 +201,14 @@
     "save_fail": "Save failed: {error}",
     "required_fields_missing": "These fields are required: {fields}",
     "insert_empty_error": "Fill in at least one column before saving",
+    "change_preview": "Change Preview",
+    "confirm_execute": "Confirm Submit",
+    "preview_insert_count": "Insert {n} row(s)",
+    "preview_update_count": "Update {n} item(s)",
+    "preview_delete_count": "Delete {n} row(s)",
+    "pending_delete_count": "Pending delete {n} row(s)",
+    "preview_hint": "The SQL below is for preview only. Actual submission still uses the safe structured APIs.",
+    "delete_staged": "Added to the pending delete list",
     "update_fail": "Update failed",
     "cell_modified": "Modified",
     "cell_viewer": "Cell Viewer",
@@ -237,7 +245,10 @@
     "save_success": "Table structure saved successfully",
     "load_success": "Table structure loaded successfully",
     "load_fail": "Failed to load table structure",
-    "confirm_save": "Are you sure you want to save changes to the table structure?"
+    "confirm_save": "Are you sure you want to save changes to the table structure?",
+    "change_preview": "Structure Change Preview",
+    "preview_change_count": "{n} structure change(s)",
+    "preview_hint": "The SQL below previews the structure changes that will be submitted. Actual execution still relies on the backend alter-table API."
   },
   "dialog": {
     "create_database": {

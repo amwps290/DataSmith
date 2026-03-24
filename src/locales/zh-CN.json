@@ -201,6 +201,14 @@
     "save_fail": "保存失败: {error}",
     "required_fields_missing": "以下字段为必填项: {fields}",
     "insert_empty_error": "请至少填写一列数据后再保存",
+    "change_preview": "变更预览",
+    "confirm_execute": "确认提交",
+    "preview_insert_count": "新增 {n} 行",
+    "preview_update_count": "修改 {n} 项",
+    "preview_delete_count": "删除 {n} 行",
+    "pending_delete_count": "待提交删除 {n} 行",
+    "preview_hint": "以下 SQL 仅用于预览，实际提交仍通过安全接口逐条执行。",
+    "delete_staged": "已加入待提交删除列表",
     "update_fail": "更新失败",
     "cell_modified": "已修改",
     "cell_viewer": "单元格查看器",
@@ -237,7 +245,10 @@
     "save_success": "表结构保存成功",
     "load_success": "表结构加载成功",
     "load_fail": "加载表结构失败",
-    "confirm_save": "确定要保存对表结构的修改吗？"
+    "confirm_save": "确定要保存对表结构的修改吗？",
+    "change_preview": "结构变更预览",
+    "preview_change_count": "共 {n} 项结构变更",
+    "preview_hint": "以下 SQL 为即将提交的结构变更预览，实际执行仍以后端结构变更接口为准。"
   },
   "dialog": {
     "create_database": {

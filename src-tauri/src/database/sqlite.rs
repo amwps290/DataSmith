@@ -273,6 +273,9 @@ impl DatabaseOperations for SqliteDatabase {
                     debug!(sql = %sql, "执行 SQLite ALTER TABLE ADD COLUMN");
                     conn.execute(&sql, []).map_err(|e| DbError::QueryFailed(e.to_string()))?;
                 },
+                TableChange::ReorderColumn { .. } => {
+                    return Err(DbError::Other("SQLite 暂不支持调整字段顺序".into()));
+                },
                 _ => return Err(DbError::Other("SQLite 暂仅支持添加列操作。修改/删除列需要重构表，暂未实现。".into())),
             }
         }

@@ -59,6 +59,46 @@ impl MySqlDatabase {
             serde_json::Value::Array(_) | serde_json::Value::Object(_) => mysql_async::Value::from(value.to_string()),
         }
     }
+
+    fn build_column_type(column: &ColumnInfo) -> String {
+        if column.data_type.contains('(') {
+            return column.data_type.clone();
+        }
+
+        match column.data_type.to_uppercase().as_str() {
+            "CHAR" | "VARCHAR" => {
+                if let Some(length) = column.character_maximum_length {
+                    format!("{}({})", column.data_type, length)
+                } else {
+                    column.data_type.clone()
+                }
+            }
+            "DECIMAL" => {
+                match (column.numeric_precision, column.numeric_scale) {
+                    (Some(precision), Some(scale)) => format!("{}({},{})", column.data_type, precision, scale),
+                    _ => column.data_type.clone(),
+                }
+            }
+            _ => column.data_type.clone(),
+        }
+    }
+
+    fn build_column_definition(column: &ColumnInfo) -> String {
+        let mut part = format!("{} {}", escape_mysql_id(&column.name), Self::build_column_type(column));
+        if !column.nullable {
+            part.push_str(" NOT NULL");
+        }
+        if let Some(ref d) = column.default_value {
+            part.push_str(&format!(" DEFAULT '{}'", d.replace("'", "''")));
+        }
+        if column.is_auto_increment {
+            part.push_str(" AUTO_INCREMENT");
+        }
+        if let Some(ref c) = column.comment {
+            part.push_str(&format!(" COMMENT '{}'", c.replace("'", "''")));
+        }
+        part
+    }
 }
 
 #[async_trait]
@@ -219,7 +259,7 @@ impl DatabaseOperations for MySqlDatabase {
 
     async fn get_table_structure(&self, table: &str, _schema: Option<&str>, database: Option<&str>) -> DbResult<Vec<ColumnInfo>> {
         let schema = database.unwrap_or("");
-        let sql = format!("SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, EXTRA, COLUMN_COMMENT FROM information_schema.COLUMNS WHERE TABLE_NAME = {} AND TABLE_SCHEMA = {} ORDER BY ORDINAL_POSITION", escape_string_literal(table), escape_string_literal(schema));
+        let sql = format!("SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, EXTRA, COLUMN_COMMENT, CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE FROM information_schema.COLUMNS WHERE TABLE_NAME = {} AND TABLE_SCHEMA = {} ORDER BY ORDINAL_POSITION", escape_string_literal(table), escape_string_literal(schema));
         
         let results = self.execute_query(&sql, None).await?;
         if let Some(res) = results.first() {
@@ -233,9 +273,9 @@ impl DatabaseOperations for MySqlDatabase {
                     is_primary_key: key == "PRI",
                     is_auto_increment: r.get("EXTRA").and_then(|v| v.as_str()).unwrap_or("").contains("auto_increment"),
                     comment: r.get("COLUMN_COMMENT").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                    character_maximum_length: None,
-                    numeric_precision: None,
-                    numeric_scale: None,
+                    character_maximum_length: r.get("CHARACTER_MAXIMUM_LENGTH").and_then(|v| v.as_i64()),
+                    numeric_precision: r.get("NUMERIC_PRECISION").and_then(|v| v.as_i64()),
+                    numeric_scale: r.get("NUMERIC_SCALE").and_then(|v| v.as_i64()),
                 }
             }).collect())
         } else {
@@ -365,27 +405,22 @@ impl DatabaseOperations for MySqlDatabase {
         let db_name = database.unwrap_or("");
 
         let mut sql_parts = Vec::new();
+        let mut reorder_changes = Vec::new();
         for change in changes {
             match change {
                 TableChange::AddColumn(col) => {
-                    let mut part = format!("ADD COLUMN {} {}", escape_mysql_id(&col.name), col.data_type);
-                    if let Some(l) = col.character_maximum_length { part.push_str(&format!("({})", l)); }
-                    if !col.nullable { part.push_str(" NOT NULL"); }
-                    if let Some(ref d) = col.default_value { part.push_str(&format!(" DEFAULT '{}'", d.replace("'", "''"))); }
-                    if let Some(ref c) = col.comment { part.push_str(&format!(" COMMENT '{}'", c.replace("'", "''"))); }
-                    sql_parts.push(part);
+                    sql_parts.push(format!("ADD COLUMN {}", Self::build_column_definition(&col)));
                 },
                 TableChange::ModifyColumn { old_name, new_column } => {
-                    let mut part = if old_name != new_column.name {
-                        format!("CHANGE COLUMN {} {} {}", escape_mysql_id(&old_name), escape_mysql_id(&new_column.name), new_column.data_type)
+                    let part = if old_name != new_column.name {
+                        format!("CHANGE COLUMN {} {}", escape_mysql_id(&old_name), Self::build_column_definition(&new_column))
                     } else {
-                        format!("MODIFY COLUMN {} {}", escape_mysql_id(&new_column.name), new_column.data_type)
+                        format!("MODIFY COLUMN {}", Self::build_column_definition(&new_column))
                     };
-                    if let Some(l) = new_column.character_maximum_length { part.push_str(&format!("({})", l)); }
-                    if !new_column.nullable { part.push_str(" NOT NULL"); }
-                    if let Some(ref d) = new_column.default_value { part.push_str(&format!(" DEFAULT '{}'", d.replace("'", "''"))); }
-                    if let Some(ref c) = new_column.comment { part.push_str(&format!(" COMMENT '{}'", c.replace("'", "''"))); }
                     sql_parts.push(part);
+                },
+                TableChange::ReorderColumn { column, after_column } => {
+                    reorder_changes.push((column, after_column));
                 },
                 TableChange::DropColumn(name) => {
                     sql_parts.push(format!("DROP COLUMN {}", escape_mysql_id(&name)));
@@ -415,6 +450,22 @@ impl DatabaseOperations for MySqlDatabase {
         if !sql_parts.is_empty() {
             let sql = format!("ALTER TABLE {}.{} {}", escape_mysql_id(db_name), escape_mysql_id(table), sql_parts.join(", "));
             debug!(sql = %sql, "执行 MySQL ALTER TABLE");
+            conn.query_drop(&sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        }
+
+        for (column, after_column) in reorder_changes {
+            let position = match after_column {
+                Some(after_column) => format!(" AFTER {}", escape_mysql_id(&after_column)),
+                None => " FIRST".to_string(),
+            };
+            let sql = format!(
+                "ALTER TABLE {}.{} MODIFY COLUMN {}{}",
+                escape_mysql_id(db_name),
+                escape_mysql_id(table),
+                Self::build_column_definition(&column),
+                position
+            );
+            debug!(sql = %sql, "执行 MySQL 字段顺序调整");
             conn.query_drop(&sql).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         }
         

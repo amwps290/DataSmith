@@ -171,6 +171,8 @@ pub enum TableChange {
     AddColumn(ColumnInfo),
     #[serde(rename = "modify_column")]
     ModifyColumn { old_name: String, new_column: ColumnInfo },
+    #[serde(rename = "reorder_column")]
+    ReorderColumn { column: ColumnInfo, after_column: Option<String> },
     #[serde(rename = "drop_column")]
     DropColumn(String),
     #[serde(rename = "add_index")]

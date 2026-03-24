@@ -147,11 +147,28 @@
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <a-modal
+      v-model:open="showPreviewDialog"
+      :title="$t('designer.change_preview')"
+      :ok-text="$t('data.confirm_execute')"
+      :cancel-text="$t('common.cancel')"
+      :confirm-loading="saving"
+      width="760px"
+      @ok="confirmSaveChanges"
+      @cancel="resetPreviewState"
+    >
+      <div class="preview-summary">
+        <a-tag color="blue">{{ $t('designer.preview_change_count', { n: previewChanges.length }) }}</a-tag>
+      </div>
+      <div class="preview-hint">{{ $t('designer.preview_hint') }}</div>
+      <a-textarea :value="previewSql" :rows="18" readonly class="preview-sql" />
+    </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { h, reactive, ref, onMounted, watch, nextTick } from 'vue'
+import { h, reactive, ref, onMounted, watch, nextTick, computed } from 'vue'
 import {
   SaveOutlined,
   ReloadOutlined,
@@ -163,6 +180,7 @@ import { metadataApi, queryApi } from '@/api'
 import { useI18n } from 'vue-i18n'
 import { withErrorHandler } from '@/utils/errorHandler'
 import { useMonacoEditor } from '@/composables/useMonacoEditor'
+import { useConnectionStore } from '@/stores/connection'
 import TableDesignerColumns from './TableDesignerColumns.vue'
 import TableDesignerIndexes from './TableDesignerIndexes.vue'
 import TableDesignerForeignKeys from './TableDesignerForeignKeys.vue'
@@ -174,6 +192,7 @@ interface DesignerColumn extends ColumnInfo {
   _modified: boolean
   _isNew: boolean
   _originalName?: string
+  _createdOrder?: number
 }
 
 /** Extended index with designer metadata */
@@ -187,6 +206,7 @@ interface DesignerForeignKey extends ForeignKeyInfo {
 }
 
 const { t } = useI18n()
+const connectionStore = useConnectionStore()
 const props = defineProps<{
   connectionId: string
   database: string
@@ -202,6 +222,11 @@ const loadingDDL = ref(false)
 const ddlSql = ref('')
 const showAddIndexDialog = ref(false)
 const showAddForeignKeyDialog = ref(false)
+const showPreviewDialog = ref(false)
+const previewSql = ref('')
+const previewChanges = ref<any[]>([])
+const originalColumnOrder = ref<string[]>([])
+const nextCreatedColumnOrder = ref(0)
 
 const ddlEditorContainer = ref<HTMLElement>()
 const { editor: ddlEditor, setValue: setDdlValue, createEditor: createDdlEditor } = useMonacoEditor(ddlEditorContainer, {
@@ -239,10 +264,19 @@ const newForeignKey = reactive({
   onUpdate: 'CASCADE',
 })
 
+const dbType = computed(() => connectionStore.connections.find(connection => connection.id === props.connectionId)?.db_type || 'mysql')
+
+function resetPreviewState() {
+  showPreviewDialog.value = false
+  previewSql.value = ''
+  previewChanges.value = []
+}
+
 // 加载表结构
 async function loadStructure() {
   return withErrorHandler(async () => {
     loading.value = true
+    resetPreviewState()
     const params = {
       connectionId: props.connectionId,
       table: props.table,
@@ -258,10 +292,12 @@ async function loadStructure() {
 
     tableColumns.value = columns.map(col => ({
       ...col,
-      length: extractLength(col.data_type),
+      length: col.character_maximum_length ? Number(col.character_maximum_length) : extractLength(col.data_type),
       data_type: extractBaseType(col.data_type),
       _modified: false, _isNew: false, _originalName: col.name,
     }))
+    originalColumnOrder.value = columns.map(col => col.name)
+    nextCreatedColumnOrder.value = 0
 
     tableIndexes.value = indexes.map(idx => ({ ...idx, _isNew: false }))
     tableForeignKeys.value = foreignKeys.map(fk => ({ ...fk, _isNew: false }))
@@ -292,13 +328,243 @@ function extractBaseType(dataType: string): string {
   return dataType.replace(/\(.*\)/, '').toUpperCase()
 }
 
+function quoteIdentifier(name: string) {
+  return dbType.value === 'mysql' ? `\`${name}\`` : `"${name.replace(/"/g, '""')}"`
+}
+
+function tableIdentifier() {
+  if (dbType.value === 'postgresql') {
+    return `${quoteIdentifier(props.schema || 'public')}.${quoteIdentifier(props.table)}`
+  }
+  if (dbType.value === 'mysql' && props.database) {
+    return `${quoteIdentifier(props.database)}.${quoteIdentifier(props.table)}`
+  }
+  return quoteIdentifier(props.table)
+}
+
+function quoteLiteral(value: string | null | undefined) {
+  if (value === null || value === undefined || value === '') return 'NULL'
+  return `'${String(value).replace(/'/g, "''")}'`
+}
+
+function buildColumnDataType(column: DesignerColumn) {
+  if (['CHAR', 'VARCHAR'].includes(column.data_type)) {
+    return column.length ? `${column.data_type}(${column.length})` : column.data_type
+  }
+  if (column.data_type === 'DECIMAL') {
+    if (column.numeric_precision && column.numeric_scale !== undefined && column.numeric_scale !== null) {
+      return `${column.data_type}(${column.numeric_precision},${column.numeric_scale})`
+    }
+    if (column.length) {
+      return `${column.data_type}(${column.length})`
+    }
+  }
+  return column.data_type
+}
+
+function buildColumnDefinition(column: DesignerColumn) {
+  const parts = [`${quoteIdentifier(column.name)} ${buildColumnDataType(column)}`]
+  if (!column.nullable) parts.push('NOT NULL')
+  if (column.default_value !== undefined && column.default_value !== null && column.default_value !== '') {
+    parts.push(`DEFAULT ${quoteLiteral(column.default_value)}`)
+  }
+  if (dbType.value === 'mysql' && column.is_auto_increment) {
+    parts.push('AUTO_INCREMENT')
+  }
+  return parts.join(' ')
+}
+
+function buildColumnPayload(column: DesignerColumn) {
+  return {
+    name: column.name,
+    data_type: column.data_type,
+    length: column.length ? Number(column.length) : undefined,
+    nullable: column.nullable,
+    default_value: column.default_value || null,
+    is_primary_key: column.is_primary_key,
+    is_auto_increment: column.is_auto_increment,
+    comment: column.comment || null,
+    character_maximum_length: column.length ? Number(column.length) : null,
+    numeric_precision: column.numeric_precision ?? null,
+    numeric_scale: column.numeric_scale ?? null,
+  }
+}
+
+function getColumnIdentity(column: DesignerColumn) {
+  return column._isNew ? `new:${column._createdOrder ?? column.name}` : `old:${column._originalName || column.name}`
+}
+
+function collectReorderChanges() {
+  if (dbType.value !== 'mysql') return []
+
+  const currentColumns = tableColumns.value.slice()
+  const defaultColumns = [
+    ...currentColumns
+      .filter(column => !column._isNew)
+      .sort((left, right) => originalColumnOrder.value.indexOf(left._originalName || left.name) - originalColumnOrder.value.indexOf(right._originalName || right.name)),
+    ...currentColumns
+      .filter(column => column._isNew)
+      .sort((left, right) => (left._createdOrder ?? 0) - (right._createdOrder ?? 0)),
+  ]
+
+  const workingOrder = defaultColumns.slice()
+  const changes: Array<{ type: string, data: any }> = []
+
+  for (let targetIndex = 0; targetIndex < currentColumns.length; targetIndex += 1) {
+    const targetColumn = currentColumns[targetIndex]
+    const targetIdentity = getColumnIdentity(targetColumn)
+    const currentIndex = workingOrder.findIndex(column => getColumnIdentity(column) === targetIdentity)
+
+    if (currentIndex === -1 || currentIndex === targetIndex) continue
+
+    const [movedColumn] = workingOrder.splice(currentIndex, 1)
+    workingOrder.splice(targetIndex, 0, movedColumn)
+
+    changes.push({
+      type: 'reorder_column',
+      data: {
+        column: buildColumnPayload(targetColumn),
+        after_column: targetIndex === 0 ? null : currentColumns[targetIndex - 1].name
+      }
+    })
+  }
+
+  return changes
+}
+
+function collectChanges() {
+  const changes: any[] = []
+
+  for (const col of tableColumns.value) {
+    if (!col._modified && !col._isNew) continue
+    const columnInfo = buildColumnPayload(col)
+
+    if (col._isNew) {
+      changes.push({ type: 'add_column', data: columnInfo })
+    } else {
+      changes.push({ type: 'modify_column', data: { old_name: col._originalName || col.name, new_column: columnInfo } })
+    }
+  }
+
+  pendingDeletions.columns.forEach(name => changes.push({ type: 'drop_column', data: name }))
+  pendingDeletions.indexes.forEach(name => changes.push({ type: 'drop_index', data: name }))
+  pendingDeletions.foreignKeys.forEach(name => changes.push({ type: 'drop_foreign_key', data: name }))
+
+  for (const idx of tableIndexes.value) {
+    if (idx._isNew) {
+      changes.push({ type: 'add_index', data: { ...idx, _isNew: undefined } })
+    }
+  }
+
+  for (const fk of tableForeignKeys.value) {
+    if (fk._isNew) {
+      changes.push({ type: 'add_foreign_key', data: { ...fk, _isNew: undefined } })
+    }
+  }
+
+  changes.push(...collectReorderChanges())
+
+  return changes
+}
+
+function buildPreviewSql(changes: any[]) {
+  const statements: string[] = []
+  const targetTable = tableIdentifier()
+
+  for (const change of changes) {
+    switch (change.type) {
+      case 'add_column': {
+        const column = change.data
+        statements.push(`ALTER TABLE ${targetTable} ADD COLUMN ${buildColumnDefinition(column)};`)
+        break
+      }
+      case 'modify_column': {
+        const oldName = change.data.old_name
+        const column = change.data.new_column
+        if (dbType.value === 'sqlite') {
+          statements.push(`-- SQLite 暂不支持在线修改列: ${oldName} -> ${column.name}`)
+          break
+        }
+        if (dbType.value === 'postgresql') {
+          if (oldName !== column.name) {
+            statements.push(`ALTER TABLE ${targetTable} RENAME COLUMN ${quoteIdentifier(oldName)} TO ${quoteIdentifier(column.name)};`)
+          }
+          statements.push(`ALTER TABLE ${targetTable} ALTER COLUMN ${quoteIdentifier(column.name)} TYPE ${buildColumnDataType(column)};`)
+          statements.push(`ALTER TABLE ${targetTable} ALTER COLUMN ${quoteIdentifier(column.name)} ${column.nullable ? 'DROP' : 'SET'} NOT NULL;`)
+          break
+        }
+        const operation = oldName !== column.name ? `CHANGE COLUMN ${quoteIdentifier(oldName)} ${buildColumnDefinition(column)}` : `MODIFY COLUMN ${buildColumnDefinition(column)}`
+        statements.push(`ALTER TABLE ${targetTable} ${operation};`)
+        break
+      }
+      case 'drop_column':
+        statements.push(dbType.value === 'sqlite'
+          ? `-- SQLite 暂不支持在线删除列: ${change.data}`
+          : `ALTER TABLE ${targetTable} DROP COLUMN ${quoteIdentifier(change.data)};`)
+        break
+      case 'reorder_column': {
+        if (dbType.value !== 'mysql') {
+          statements.push(`-- ${dbType.value} 暂不支持调整字段顺序: ${change.data.column.name}`)
+          break
+        }
+        const column = change.data.column
+        const positionSql = change.data.after_column
+          ? `AFTER ${quoteIdentifier(change.data.after_column)}`
+          : 'FIRST'
+        statements.push(`ALTER TABLE ${targetTable} MODIFY COLUMN ${buildColumnDefinition(column)} ${positionSql};`)
+        break
+      }
+      case 'add_index': {
+        const idx = change.data
+        const columns = idx.columns.map((name: string) => quoteIdentifier(name)).join(', ')
+        if (dbType.value === 'postgresql') {
+          statements.push(`CREATE ${idx.is_unique ? 'UNIQUE ' : ''}INDEX ${quoteIdentifier(idx.name)} ON ${targetTable} (${columns});`)
+        } else {
+          statements.push(`ALTER TABLE ${targetTable} ADD ${idx.is_unique ? 'UNIQUE ' : ''}INDEX ${quoteIdentifier(idx.name)} (${columns});`)
+        }
+        break
+      }
+      case 'drop_index':
+        if (dbType.value === 'postgresql') {
+          statements.push(`DROP INDEX ${props.schema ? `${quoteIdentifier(props.schema)}.` : ''}${quoteIdentifier(change.data)};`)
+        } else if (dbType.value === 'sqlite') {
+          statements.push(`-- SQLite 暂不支持在线删除索引: ${change.data}`)
+        } else {
+          statements.push(`ALTER TABLE ${targetTable} DROP INDEX ${quoteIdentifier(change.data)};`)
+        }
+        break
+      case 'add_foreign_key': {
+        const fk = change.data
+        statements.push(
+          `ALTER TABLE ${targetTable} ADD CONSTRAINT ${quoteIdentifier(fk.name)} FOREIGN KEY (${quoteIdentifier(fk.column_name)}) REFERENCES ${quoteIdentifier(fk.referenced_table_name)} (${quoteIdentifier(fk.referenced_column_name)}) ON UPDATE ${fk.update_rule || 'NO ACTION'} ON DELETE ${fk.delete_rule || 'NO ACTION'};`
+        )
+        break
+      }
+      case 'drop_foreign_key':
+        if (dbType.value === 'postgresql') {
+          statements.push(`ALTER TABLE ${targetTable} DROP CONSTRAINT ${quoteIdentifier(change.data)};`)
+        } else if (dbType.value === 'sqlite') {
+          statements.push(`-- SQLite 暂不支持在线删除外键: ${change.data}`)
+        } else {
+          statements.push(`ALTER TABLE ${targetTable} DROP FOREIGN KEY ${quoteIdentifier(change.data)};`)
+        }
+        break
+      default:
+        statements.push(`-- Unsupported change: ${JSON.stringify(change)}`)
+        break
+    }
+  }
+
+  return statements.join('\n\n')
+}
+
 // 添加列
 function addColumn() {
   tableColumns.value.push({
     name: `column_${tableColumns.value.length + 1}`,
     data_type: 'VARCHAR', length: 255, nullable: true,
     is_primary_key: false, is_auto_increment: false,
-    default_value: undefined, comment: '', _modified: true, _isNew: true,
+    default_value: undefined, comment: '', _modified: true, _isNew: true, _createdOrder: nextCreatedColumnOrder.value++,
   })
 }
 
@@ -331,67 +597,38 @@ function moveColumn(index: number, direction: number) {
 
 // 保存更改
 async function saveChanges() {
-  Modal.confirm({
-    title: t('common.save'),
-    content: t('designer.confirm_save'),
-    async onOk() {
-      saving.value = true
-      try {
-        const changes: any[] = []
+  const changes = collectChanges()
+  if (changes.length === 0) {
+    message.info(t('common.no_data'))
+    return
+  }
 
-        // 1. 处理列变更 (Add/Modify)
-        for (const col of tableColumns.value) {
-          if (!col._modified && !col._isNew) continue
-          const columnInfo = {
-            name: col.name, data_type: col.data_type, nullable: col.nullable,
-            default_value: col.default_value || null, is_primary_key: col.is_primary_key,
-            is_auto_increment: col.is_auto_increment, comment: col.comment || null,
-            character_maximum_length: col.length ? Number(col.length) : null
-          }
-          if (col._isNew) {
-            changes.push({ type: 'add_column', data: columnInfo })
-          } else {
-            changes.push({ type: 'modify_column', data: { old_name: col._originalName || col.name, new_column: columnInfo } })
-          }
-        }
+  previewChanges.value = changes
+  previewSql.value = buildPreviewSql(changes)
+  showPreviewDialog.value = true
+}
 
-        // 2. 处理删除变更
-        pendingDeletions.columns.forEach(name => changes.push({ type: 'drop_column', data: name }))
-        pendingDeletions.indexes.forEach(name => changes.push({ type: 'drop_index', data: name }))
-        pendingDeletions.foreignKeys.forEach(name => changes.push({ type: 'drop_foreign_key', data: name }))
+async function confirmSaveChanges() {
+  if (previewChanges.value.length === 0) return
 
-        // 3. 处理新增索引
-        for (const idx of tableIndexes.value) {
-          if (idx._isNew) {
-            changes.push({ type: 'add_index', data: { ...idx, _isNew: undefined } })
-          }
-        }
+  saving.value = true
+  try {
+    await queryApi.alterTableStructure({
+      connectionId: props.connectionId,
+      database: props.database,
+      table: props.table,
+      schema: props.schema || null,
+      changes: previewChanges.value
+    })
 
-        // 4. 处理新增外键
-        for (const fk of tableForeignKeys.value) {
-          if (fk._isNew) {
-            changes.push({ type: 'add_foreign_key', data: { ...fk, _isNew: undefined } })
-          }
-        }
-
-        if (changes.length === 0) {
-          message.info(t('common.no_data')); saving.value = false; return
-        }
-
-        await queryApi.alterTableStructure({
-          connectionId: props.connectionId, database: props.database, table: props.table,
-          schema: props.schema || null, changes
-        })
-
-        message.success(t('designer.save_success'))
-        await loadStructure()
-      } catch (error: any) {
-        message.error(`${t('common.fail')}: ${error}`)
-      } finally {
-        saving.value = false
-      }
-    }
-  })
+    resetPreviewState()
+    message.success(t('designer.save_success'))
+    await loadStructure()
+  } catch (error: any) {
+    message.error(`${t('common.fail')}: ${error}`)
+  } finally {
+    saving.value = false
+  }
 }
 
 // 查看DDL
@@ -467,7 +704,7 @@ async function removeForeignKey(record: any) {
 // 初始加载
 onMounted(() => { loadStructure() })
 watch(activeTab, (tab) => { if (tab === 'ddl') loadDDL() })
-watch(() => props.table, () => { loadStructure() })
+watch(() => [props.connectionId, props.database, props.schema, props.table], () => { loadStructure() })
 </script>
 
 <style scoped>
@@ -480,4 +717,7 @@ watch(() => props.table, () => { loadStructure() })
 .ddl-container { height: calc(100vh - 300px); border: 1px solid #e8e8e8; margin: 16px; position: relative; }
 .dark-mode .ddl-container { border-color: #303030; }
 .ddl-actions { margin: 0 16px 16px 16px; }
+.preview-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.preview-hint { margin-bottom: 12px; color: #8c8c8c; font-size: 12px; }
+.preview-sql :deep(textarea) { font-family: monospace; }
 </style>
