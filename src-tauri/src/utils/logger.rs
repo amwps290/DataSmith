@@ -178,9 +178,9 @@ fn install_platform_crash_hook() {}
 
 #[cfg(target_os = "windows")]
 unsafe extern "system" fn unhandled_exception_filter(
-    exception_info: *mut windows_sys::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS,
+    exception_info: *const windows_sys::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS,
 ) -> i32 {
-    use windows_sys::Win32::Foundation::EXCEPTION_CONTINUE_SEARCH;
+    use windows_sys::Win32::System::Diagnostics::Debug::EXCEPTION_CONTINUE_SEARCH;
 
     let (code, address) = if exception_info.is_null() {
         (0u32, 0usize)
@@ -189,7 +189,7 @@ unsafe extern "system" fn unhandled_exception_filter(
         if record.is_null() {
             (0u32, 0usize)
         } else {
-            ((*record).ExceptionCode, (*record).ExceptionAddress as usize)
+            ((*record).ExceptionCode as u32, (*record).ExceptionAddress as usize)
         }
     };
 
