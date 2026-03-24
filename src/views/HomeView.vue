@@ -3,6 +3,7 @@
     <!-- 顶部标题栏 -->
     <AppHeader
       @new-connection="showConnectionDialog = true"
+      @open-data-compare="handleOpenDataCompare"
       @open-settings="openSettings"
       @open-search="showGlobalSearch = true"
     />
@@ -43,6 +44,7 @@
                 <FileTextOutlined v-if="tab.type === 'query'" />
                 <TableOutlined v-else-if="tab.type === 'data'" />
                 <EditOutlined v-else-if="tab.type === 'design'" />
+                <RetweetOutlined v-else-if="tab.type === 'compare'" />
                 <span class="title-text">{{ tab.title }}</span>
               </span>
             </template>
@@ -51,6 +53,7 @@
                 <SqlEditor v-if="tab.type === 'query'" :key="tab.key" :ref="(el) => setSqlEditorRef(el, tab.key)" :connection-id="tab.connectionId" :initial-database="tab.database" :initial-value="tab.content" :file-path="tab.filePath" @content-change="(val) => handleContentChange(tab.key, val)" @file-saved="(path, title) => handleFileSaved(tab.key, path, title)" @databases-loaded="(dbs) => availableDatabases = dbs" @database-change="(db) => handleEditorDatabaseChange(tab.key, String(db || ''))" />
                 <TableDataGrid v-else-if="tab.type === 'data'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" />
                 <TableDesigner v-else-if="tab.type === 'design'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" :read-only="tab.readOnly" />
+                <DataCompare v-else-if="tab.type === 'compare'" :key="tab.key" :connection-id="tab.connectionId || null" :initial-database="tab.database || null" />
                 <RedisEditor v-else-if="tab.type === 'redis'" :key="tab.key" :ref="redisEditorRef" />
               </KeepAlive>
             </div>
@@ -76,7 +79,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
   FileTextOutlined,
-  TableOutlined, EditOutlined,
+  TableOutlined, EditOutlined, RetweetOutlined,
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useConnectionStore } from '@/stores/connection'
@@ -99,6 +102,7 @@ const RedisEditor = defineAsyncComponent(() => import('@/components/editor/Redis
 const TableDataGrid = defineAsyncComponent(() => import('@/components/data/TableDataGrid.vue'))
 const TableDesigner = defineAsyncComponent(() => import('@/components/database/TableDesigner.vue'))
 const GlobalSearch = defineAsyncComponent(() => import('@/components/search/GlobalSearch.vue'))
+const DataCompare = defineAsyncComponent(() => import('@/components/tools/DataCompare.vue'))
 
 const { t } = useI18n()
 const router = useRouter()
@@ -216,6 +220,34 @@ async function handleNewQuery(d: QueryEventData) {
   }
   const key = `query-${Date.now()}`
   addTab({ key, title: title || `script-${new Date().getTime()}.sql`, type: TabType.Query, connectionId: connId || undefined, database: dbName, content: initialContent, filePath })
+}
+
+function handleOpenDataCompare() {
+  const activeConnection = connectionStore.getActiveConnection()
+
+  if (!activeConnection?.id) {
+    message.warning(t('tools.data_compare.require_connection'))
+    return
+  }
+
+  if (['redis', 'mongodb'].includes(activeConnection.db_type)) {
+    message.warning(t('tools.data_compare.unsupported_connection'))
+    return
+  }
+
+  const key = `compare-${activeConnection.id}`
+  if (tabExists(key)) {
+    mainTabKey.value = key
+    return
+  }
+
+  addTab({
+    key,
+    title: t('tools.data_compare.title'),
+    type: TabType.Compare,
+    connectionId: activeConnection.id,
+    database: activeTabType.value === 'query' ? activeTabDatabase.value : activeConnection.database,
+  })
 }
 
 function onTabEdit(key: string | number | MouseEvent | KeyboardEvent, action: string) { if (action === 'add') handleNewQuery({}); else closeTab(String(key)); }

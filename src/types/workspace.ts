@@ -2,7 +2,8 @@ export enum TabType {
   Data = 'data',
   Design = 'design',
   Query = 'query',
-  Redis = 'redis'
+  Redis = 'redis',
+  Compare = 'compare'
 }
 
 export interface TabState {

@@ -18,6 +18,9 @@
             <a-menu-item key="new-connection" @click="$emit('newConnection')">
               <PlusOutlined /> {{ $t('connection.new') }}
             </a-menu-item>
+            <a-menu-item key="data-compare" @click="$emit('openDataCompare')">
+              <RetweetOutlined /> {{ $t('tools.data_compare.title') }}
+            </a-menu-item>
             <a-menu-divider />
             <a-menu-item key="settings" @click="$emit('openSettings')">
               <SettingOutlined /> {{ $t('common.settings') }}
@@ -107,7 +110,7 @@ import { computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import {
   DatabaseOutlined, PlusOutlined, SettingOutlined,
-  MenuOutlined, SearchOutlined,
+  MenuOutlined, RetweetOutlined, SearchOutlined,
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useWindowControls } from '@/composables/useWindowControls'
@@ -122,6 +125,7 @@ withDefaults(defineProps<{
 
 defineEmits<{
   newConnection: []
+  openDataCompare: []
   openSettings: []
   openSearch: []
 }>()

@@ -29,10 +29,10 @@
                 >
                   <a-select-option
                     v-for="table in sourceTables"
-                    :key="table.name"
-                    :value="table.name"
+                    :key="buildTableKey(table)"
+                    :value="buildTableKey(table)"
                   >
-                    {{ table.name }}
+                    {{ formatTableLabel(table) }}
                   </a-select-option>
                 </a-select>
               </a-form-item>
@@ -62,10 +62,10 @@
                 >
                   <a-select-option
                     v-for="table in targetTables"
-                    :key="table.name"
-                    :value="table.name"
+                    :key="buildTableKey(table)"
+                    :value="buildTableKey(table)"
                   >
-                    {{ table.name }}
+                    {{ formatTableLabel(table) }}
                   </a-select-option>
                 </a-select>
               </a-form-item>
@@ -77,7 +77,7 @@
       <div class="compare-options" style="margin-top: 16px;">
         <a-space>
           <a-button type="primary" @click="handleCompare" :loading="comparing">
-            <CompareOutlined />
+            <RetweetOutlined />
             {{ $t('tools.data_compare.start_compare') }}
           </a-button>
           <a-checkbox v-model:checked="compareStructure">
@@ -150,12 +150,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-// import { CompressOutlined } from '@ant-design/icons-vue'
+import { computed, ref, watch } from 'vue'
+import { RetweetOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { useI18n } from 'vue-i18n'
 import { metadataApi, queryApi } from '@/api'
-import type { DatabaseInfo, TableInfo, ColumnInfo } from '@/types/database'
+import { useConnectionStore } from '@/stores/connection'
+import type { DatabaseInfo, TableInfo, ColumnInfo, DatabaseType } from '@/types/database'
 
 interface StructureDetail {
   type: string
@@ -171,9 +172,11 @@ interface ComparisonResultData {
 }
 
 const { t } = useI18n()
+const connectionStore = useConnectionStore()
 
 const props = defineProps<{
   connectionId: string | null
+  initialDatabase?: string | null
 }>()
 
 const databases = ref<DatabaseInfo[]>([])
@@ -188,6 +191,38 @@ const compareStructure = ref(true)
 const compareData = ref(true)
 const comparisonResult = ref<ComparisonResultData | null>(null)
 
+const currentConnection = computed(() =>
+  props.connectionId ? connectionStore.connections.find(item => item.id === props.connectionId) || null : null
+)
+const currentDbType = computed<DatabaseType | null>(() => currentConnection.value?.db_type || null)
+const selectedSourceTable = computed(() => sourceTables.value.find(table => buildTableKey(table) === sourceTable.value) || null)
+const selectedTargetTable = computed(() => targetTables.value.find(table => buildTableKey(table) === targetTable.value) || null)
+
+function buildTableKey(table: TableInfo) {
+  return `${table.schema || ''}:${table.name}`
+}
+
+function formatTableLabel(table: TableInfo) {
+  return table.schema ? `${table.schema}.${table.name}` : table.name
+}
+
+function quoteIdentifier(name: string) {
+  if (currentDbType.value === 'mysql') return `\`${name}\``
+  return `"${name.replace(/"/g, '""')}"`
+}
+
+function buildTableIdentifier(table: TableInfo) {
+  if (currentDbType.value === 'postgresql') {
+    return `${quoteIdentifier(table.schema || 'public')}.${quoteIdentifier(table.name)}`
+  }
+
+  return quoteIdentifier(table.name)
+}
+
+function resetComparison() {
+  comparisonResult.value = null
+}
+
 // 加载数据库列表
 async function loadDatabases() {
   if (!props.connectionId) return
@@ -195,6 +230,13 @@ async function loadDatabases() {
   try {
     const dbs = await metadataApi.getDatabases(props.connectionId!)
     databases.value = dbs
+    if (props.initialDatabase && dbs.some(db => db.name === props.initialDatabase)) {
+      sourceDatabase.value = props.initialDatabase
+      targetDatabase.value = props.initialDatabase
+    } else if (dbs.length === 1) {
+      sourceDatabase.value = dbs[0].name
+      targetDatabase.value = dbs[0].name
+    }
   } catch (error: unknown) {
     message.error(t('tools.data_compare.load_db_fail', { error: String(error) }))
   }
@@ -202,6 +244,9 @@ async function loadDatabases() {
 
 // 加载源表列表
 watch(sourceDatabase, async (db) => {
+  sourceTable.value = ''
+  sourceTables.value = []
+  resetComparison()
   if (!db || !props.connectionId) return
 
   try {
@@ -214,6 +259,9 @@ watch(sourceDatabase, async (db) => {
 
 // 加载目标表列表
 watch(targetDatabase, async (db) => {
+  targetTable.value = ''
+  targetTables.value = []
+  resetComparison()
   if (!db || !props.connectionId) return
 
   try {
@@ -226,7 +274,7 @@ watch(targetDatabase, async (db) => {
 
 // 执行比较
 async function handleCompare() {
-  if (!sourceDatabase.value || !sourceTable.value || !targetDatabase.value || !targetTable.value) {
+  if (!sourceDatabase.value || !targetDatabase.value || !selectedSourceTable.value || !selectedTargetTable.value) {
     message.warning(t('tools.data_compare.select_required'))
     return
   }
@@ -242,15 +290,15 @@ async function handleCompare() {
       // 比较结构
       const sourceStructure = await metadataApi.getTableStructure({
         connectionId: props.connectionId!,
-        table: sourceTable.value,
-        schema: sourceDatabase.value,
+        table: selectedSourceTable.value.name,
+        schema: selectedSourceTable.value.schema || null,
         database: sourceDatabase.value,
       })
 
       const targetStructure = await metadataApi.getTableStructure({
         connectionId: props.connectionId!,
-        table: targetTable.value,
-        schema: targetDatabase.value,
+        table: selectedTargetTable.value.name,
+        schema: selectedTargetTable.value.schema || null,
         database: targetDatabase.value,
       })
 
@@ -283,12 +331,14 @@ async function handleCompare() {
       // 比较数据行数
       const sourceData = await queryApi.executeQuery(
         props.connectionId!,
-        `SELECT COUNT(*) as count FROM \`${sourceDatabase.value}\`.\`${sourceTable.value}\``,
+        `SELECT COUNT(*) AS count FROM ${buildTableIdentifier(selectedSourceTable.value)}`,
+        sourceDatabase.value,
       )
 
       const targetData = await queryApi.executeQuery(
         props.connectionId!,
-        `SELECT COUNT(*) as count FROM \`${targetDatabase.value}\`.\`${targetTable.value}\``,
+        `SELECT COUNT(*) AS count FROM ${buildTableIdentifier(selectedTargetTable.value)}`,
+        targetDatabase.value,
       )
 
       const sourceCount = sourceData[0]?.rows?.[0]?.count || 0
@@ -320,15 +370,27 @@ function generateSyncScript() {
 
 // 初始化
 watch(() => props.connectionId, (id) => {
-  if (id) {
-    loadDatabases()
-  }
+  databases.value = []
+  sourceDatabase.value = ''
+  targetDatabase.value = ''
+  sourceTable.value = ''
+  targetTable.value = ''
+  sourceTables.value = []
+  targetTables.value = []
+  resetComparison()
+  if (id) loadDatabases()
 }, { immediate: true })
+
+watch([sourceTable, targetTable], () => {
+  resetComparison()
+})
 </script>
 
 <style scoped>
 .data-compare {
   padding: 24px;
+  height: 100%;
+  overflow: auto;
 }
 
 .compare-header {

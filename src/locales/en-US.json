@@ -547,6 +547,8 @@
       "generate_sync": "Generate Sync Script",
       "sync_developing": "Sync script generation is under development...",
       "select_required": "Please select source and target to compare",
+      "require_connection": "Select a database connection from the sidebar first",
+      "unsupported_connection": "The current connection type does not support data compare yet",
       "success": "Comparison completed",
       "fail": "Comparison failed: {error}",
       "load_db_fail": "Failed to load databases: {error}",

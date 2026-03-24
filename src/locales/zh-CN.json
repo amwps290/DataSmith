@@ -547,6 +547,8 @@
       "generate_sync": "生成同步脚本",
       "sync_developing": "同步脚本生成功能正在开发中...",
       "select_required": "请选择要比较的源和目标",
+      "require_connection": "请先在左侧选择一个数据库连接",
+      "unsupported_connection": "当前连接类型暂不支持数据比较",
       "success": "比较完成",
       "fail": "比较失败: {error}",
       "load_db_fail": "加载数据库列表失败: {error}",
