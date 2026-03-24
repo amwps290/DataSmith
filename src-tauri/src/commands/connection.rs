@@ -9,6 +9,12 @@ use tauri::{AppHandle, State};
 use tauri_plugin_store::{Store, StoreExt};
 use tracing::{info, instrument};
 
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ConnectionOverrides {
+    pub mysql_charset: Option<String>,
+    pub mysql_init_sql: Option<String>,
+}
+
 fn get_connection_store(app: &AppHandle) -> Result<Arc<Store<tauri::Wry>>, String> {
     app.store("connections.json").map_err(|e| format!("无法访问连接存储: {}", e))
 }
@@ -38,6 +44,8 @@ fn stored_to_config_with_password(stored: &StoredConnection, password: &str) -> 
         ssl: stored.ssl,
         connection_timeout: stored.connection_timeout,
         pool_size: stored.pool_size,
+        mysql_charset: stored.mysql_charset.clone(),
+        mysql_init_sql: stored.mysql_init_sql.clone(),
     })
 }
 
@@ -134,12 +142,23 @@ pub async fn delete_connection(app: AppHandle, id: String) -> Result<bool, Strin
 pub async fn create_connection(
     app: AppHandle,
     connection_id: String,
+    overrides: Option<ConnectionOverrides>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let store = get_connection_store(&app)?;
     let stored_value = store.get(connection_id.clone()).ok_or("连接配置不存在")?;
     let stored_conn: StoredConnection = serde_json::from_value(stored_value).map_err(|e| format!("解析连接配置失败: {}", e))?;
-    let config = stored_to_config(&stored_conn)?;
+    let mut config = stored_to_config(&stored_conn)?;
+    if let Some(overrides) = overrides {
+        if matches!(config.db_type, DatabaseType::MySQL) {
+            if let Some(mysql_charset) = overrides.mysql_charset {
+                config.mysql_charset = Some(mysql_charset);
+            }
+            if let Some(mysql_init_sql) = overrides.mysql_init_sql {
+                config.mysql_init_sql = Some(mysql_init_sql);
+            }
+        }
+    }
     let manager = &state.connection_manager;
     manager.create_connection(config).await.to_cmd_result()?;
     Ok(())

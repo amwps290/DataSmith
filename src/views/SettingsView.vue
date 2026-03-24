@@ -24,6 +24,10 @@
               <template #icon><CodeOutlined /></template>
               {{ $t('settings_page.editor_title') }}
             </a-menu-item>
+            <a-menu-item key="database">
+              <template #icon><DatabaseOutlined /></template>
+              {{ $t('settings_page.database_title') }}
+            </a-menu-item>
           </a-menu>
         </aside>
 
@@ -104,7 +108,7 @@
             </a-card>
           </template>
 
-          <template v-else>
+          <template v-else-if="currentSection === 'editor'">
             <a-card :title="$t('settings_page.editor_typography_group')" class="settings-card">
               <div class="setting-row">
                 <div class="setting-meta">
@@ -152,6 +156,41 @@
               </div>
             </a-card>
           </template>
+
+          <template v-else>
+            <a-card :title="$t('settings_page.database_connection_group')" class="settings-card">
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <div class="setting-label">{{ $t('settings_page.mysql_charset') }}</div>
+                  <div class="setting-help">{{ $t('settings_page.mysql_charset_help') }}</div>
+                </div>
+                <a-select v-model:value="mysqlCharsetModel" style="width: 220px">
+                  <a-select-option value="utf8mb4">utf8mb4</a-select-option>
+                  <a-select-option value="utf8">utf8</a-select-option>
+                  <a-select-option value="latin1">latin1</a-select-option>
+                  <a-select-option value="gbk">gbk</a-select-option>
+                </a-select>
+              </div>
+
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <div class="setting-label">{{ $t('settings_page.mysql_init_sql') }}</div>
+                  <div class="setting-help">{{ $t('settings_page.mysql_init_sql_help') }}</div>
+                </div>
+                <a-textarea v-model:value="mysqlInitSqlModel" :rows="4" style="width: 360px" :placeholder="$t('settings_page.mysql_init_sql_placeholder')" />
+              </div>
+            </a-card>
+
+            <a-card :title="$t('settings_page.database_preview_group')" class="settings-card secondary-card">
+              <div class="editor-preview">
+                <div class="editor-preview-header">
+                  <span>{{ $t('settings_page.database_preview_title') }}</span>
+                  <a-tag>{{ mysqlCharsetModel }}</a-tag>
+                </div>
+                <pre class="editor-preview-code" :style="{ fontFamily: editorFontModel }">{{ databasePreviewSql }}</pre>
+              </div>
+            </a-card>
+          </template>
         </main>
       </div>
     </a-layout-content>
@@ -161,7 +200,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { AppstoreOutlined, CodeOutlined } from '@ant-design/icons-vue'
+import { AppstoreOutlined, CodeOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
 import { useI18n } from 'vue-i18n'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import { useAppStore, type Language, type ThemeMode } from '@/stores/app'
@@ -185,10 +224,16 @@ const editorFontOptions = [
 ]
 
 const currentSection = computed(() => selectedKeys.value[0] || 'interface')
-const currentSectionTitle = computed(() => currentSection.value === 'interface' ? t('settings_page.interface_preferences') : t('settings_page.editor_preferences'))
-const currentSectionDescription = computed(() => currentSection.value === 'interface'
-  ? t('settings_page.interface_description')
-  : t('settings_page.editor_description'))
+const currentSectionTitle = computed(() => {
+  if (currentSection.value === 'interface') return t('settings_page.interface_preferences')
+  if (currentSection.value === 'database') return t('settings_page.database_preferences')
+  return t('settings_page.editor_preferences')
+})
+const currentSectionDescription = computed(() => {
+  if (currentSection.value === 'interface') return t('settings_page.interface_description')
+  if (currentSection.value === 'database') return t('settings_page.database_description')
+  return t('settings_page.editor_description')
+})
 const currentThemeModeLabel = computed(() => {
   if (appStore.themeMode === 'dark') return t('settings_page.theme_dark')
   if (appStore.themeMode === 'system') return t('settings_page.theme_system')
@@ -230,9 +275,20 @@ const lineNumbersEnabled = computed({
   set: (value: boolean) => appStore.setEditorLineNumbers(value ? 'on' : 'off'),
 })
 
+const mysqlCharsetModel = computed({
+  get: () => appStore.databaseSettings.mysqlCharset,
+  set: (value: string) => appStore.setMysqlCharset(value),
+})
+
+const mysqlInitSqlModel = computed({
+  get: () => appStore.databaseSettings.mysqlInitSql,
+  set: (value: string) => appStore.setMysqlInitSql(value),
+})
+
 const interfaceFontLabel = computed(() => interfaceFontOptions.find(option => option.value === interfaceFontModel.value)?.label || t('settings_page.custom_font'))
 const editorFontLabel = computed(() => editorFontOptions.find(option => option.value === editorFontModel.value)?.label || t('settings_page.custom_font'))
 const previewSql = computed(() => `SELECT id, name, status\nFROM users\nWHERE status = 'active'\nORDER BY created_at DESC\nLIMIT 50;`)
+const databasePreviewSql = computed(() => `SET NAMES ${mysqlCharsetModel.value};\n${mysqlInitSqlModel.value || t('settings_page.database_preview_fallback')}`)
 
 function goHome() {
   router.push({ name: 'Home' })

@@ -15,6 +15,8 @@ pub struct StoredConnection {
     pub ssl: bool,
     pub connection_timeout: u64,
     pub pool_size: u32,
+    pub mysql_charset: Option<String>,
+    pub mysql_init_sql: Option<String>,
     pub group: Option<String>,
     pub color: Option<String>,
     pub tags: Vec<String>,
@@ -30,6 +32,5 @@ pub struct ConnectionTestResult {
     pub version: Option<String>,
     pub ping_time_ms: u128,
 }
-
 
 

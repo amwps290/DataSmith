@@ -19,6 +19,8 @@ export interface ConnectionConfig {
   ssl: boolean
   connection_timeout: number
   pool_size: number
+  mysql_charset?: string
+  mysql_init_sql?: string
   group?: string
   color?: string
   tags: string[]
@@ -186,6 +188,8 @@ export interface StoredConnection {
   ssl: boolean
   connection_timeout: number
   pool_size: number
+  mysql_charset?: string
+  mysql_init_sql?: string
   group?: string
   color?: string
   tags: string[]

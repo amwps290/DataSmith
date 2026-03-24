@@ -5,6 +5,11 @@ import type {
   StoredConnection
 } from '@/types/database'
 
+export interface ConnectionOverrides {
+  mysql_charset?: string
+  mysql_init_sql?: string
+}
+
 export const connectionApi = {
   /**
    * 获取所有已保存的连接
@@ -44,8 +49,8 @@ export const connectionApi = {
   /**
    * 物理建立数据库连接
    */
-  async createConnection(connectionId: string): Promise<void> {
-    return invoke('create_connection', { connectionId })
+  async createConnection(connectionId: string, overrides?: ConnectionOverrides): Promise<void> {
+    return invoke('create_connection', { connectionId, overrides })
   },
 
   /**

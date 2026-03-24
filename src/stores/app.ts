@@ -19,6 +19,11 @@ export interface EditorSettings {
   fontFamily: string
 }
 
+export interface DatabaseSettings {
+  mysqlCharset: string
+  mysqlInitSql: string
+}
+
 export const useAppStore = defineStore('app', () => {
   const getSystemTheme = (): Theme => {
     if (typeof window === 'undefined') return 'light'
@@ -49,6 +54,12 @@ export const useAppStore = defineStore('app', () => {
     lineNumbers: 'on',
     fontFamily: `"JetBrains Mono", "Fira Code", "Cascadia Code", monospace`,
     ...(storage.get('editor_settings') || {}),
+  })
+
+  const databaseSettings = reactive<DatabaseSettings>({
+    mysqlCharset: 'utf8mb4',
+    mysqlInitSql: '',
+    ...(storage.get('database_settings') || {}),
   })
 
   if (typeof window !== 'undefined') {
@@ -87,6 +98,10 @@ export const useAppStore = defineStore('app', () => {
 
   watch(editorSettings, (newSettings) => {
     storage.set('editor_settings', { ...newSettings })
+  }, { deep: true })
+
+  watch(databaseSettings, (newSettings) => {
+    storage.set('database_settings', { ...newSettings })
   }, { deep: true })
 
   function cycleThemeMode() {
@@ -134,6 +149,14 @@ export const useAppStore = defineStore('app', () => {
     editorSettings.fontFamily = fontFamily
   }
 
+  function setMysqlCharset(charset: string) {
+    databaseSettings.mysqlCharset = charset
+  }
+
+  function setMysqlInitSql(sql: string) {
+    databaseSettings.mysqlInitSql = sql
+  }
+
   return {
     theme,
     themeMode,
@@ -142,6 +165,7 @@ export const useAppStore = defineStore('app', () => {
     sidebarCollapsed,
     interfaceSettings,
     editorSettings,
+    databaseSettings,
     cycleThemeMode,
     setThemeMode,
     toggleLanguage,
@@ -152,5 +176,7 @@ export const useAppStore = defineStore('app', () => {
     setEditorMinimap,
     setEditorLineNumbers,
     setEditorFontFamily,
+    setMysqlCharset,
+    setMysqlInitSql,
   }
 })

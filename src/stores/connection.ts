@@ -3,8 +3,10 @@ import { ref } from 'vue'
 import type { ConnectionConfig, ConnectionStatus, StoredConnection } from '@/types/database'
 import { connectionApi } from '@/api'
 import { withErrorHandler } from '@/utils/errorHandler'
+import { useAppStore } from './app'
 
 export const useConnectionStore = defineStore('connection', () => {
+  const appStore = useAppStore()
   // 状态
   const connections = ref<ConnectionConfig[]>([])
   const activeConnectionId = ref<string | null>(null)
@@ -32,6 +34,8 @@ export const useConnectionStore = defineStore('connection', () => {
       ssl: config.ssl,
       connection_timeout: config.connection_timeout,
       pool_size: config.pool_size,
+      mysql_charset: config.mysql_charset,
+      mysql_init_sql: config.mysql_init_sql,
       color: config.color,
       tags: config.tags || [],
       created_at: isNew ? Date.now() : config.created_at,
@@ -39,17 +43,42 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
 
+  function applyDatabaseDefaults(config: ConnectionConfig): ConnectionConfig {
+    if (config.db_type !== 'mysql') {
+      return config
+    }
+
+    return {
+      ...config,
+      mysql_charset: config.mysql_charset || appStore.databaseSettings.mysqlCharset || undefined,
+      mysql_init_sql: config.mysql_init_sql ?? appStore.databaseSettings.mysqlInitSql ?? '',
+    }
+  }
+
+  function getConnectionOverrides(config: ConnectionConfig) {
+    if (config.db_type !== 'mysql') {
+      return undefined
+    }
+
+    const normalizedConfig = applyDatabaseDefaults(config)
+    return {
+      mysql_charset: normalizedConfig.mysql_charset,
+      mysql_init_sql: normalizedConfig.mysql_init_sql,
+    }
+  }
+
   // 保存连接
   async function saveConnection(config: ConnectionConfig, password?: string) {
     return withErrorHandler(async () => {
-      const storedConnection = toStoredConnection(config, true)
+      const normalizedConfig = applyDatabaseDefaults(config)
+      const storedConnection = toStoredConnection(normalizedConfig, true)
       const saved = await connectionApi.saveConnection(storedConnection, password || null)
       
       const index = connections.value.findIndex(c => c.id === saved.id)
       if (index >= 0) {
-        connections.value[index] = { ...config, ...saved }
+        connections.value[index] = { ...normalizedConfig, ...saved }
       } else {
-        connections.value.push({ ...config, ...saved })
+        connections.value.push({ ...normalizedConfig, ...saved })
       }
       return saved
     }, { messagePrefix: '保存连接失败' })
@@ -58,12 +87,13 @@ export const useConnectionStore = defineStore('connection', () => {
   // 更新连接
   async function updateConnection(config: ConnectionConfig, password?: string) {
     return withErrorHandler(async () => {
-      const storedConnection = toStoredConnection(config, false)
+      const normalizedConfig = applyDatabaseDefaults(config)
+      const storedConnection = toStoredConnection(normalizedConfig, false)
       const updated = await connectionApi.updateConnection(storedConnection, password || null)
       
       const index = connections.value.findIndex(c => c.id === config.id)
       if (index >= 0) {
-        connections.value[index] = { ...config, ...updated }
+        connections.value[index] = { ...normalizedConfig, ...updated }
       }
       return updated
     }, { messagePrefix: '更新连接失败' })
@@ -84,7 +114,7 @@ export const useConnectionStore = defineStore('connection', () => {
   // 测试连接
   async function testConnection(config: ConnectionConfig) {
     return withErrorHandler(async () => {
-      const result = await connectionApi.testConnection(config)
+      const result = await connectionApi.testConnection(applyDatabaseDefaults(config))
       if (!result.success) {
         throw new Error(result.message || '连接失败')
       }
@@ -100,7 +130,7 @@ export const useConnectionStore = defineStore('connection', () => {
     }
 
     return withErrorHandler(async () => {
-      await connectionApi.createConnection(id)
+      await connectionApi.createConnection(id, getConnectionOverrides(conn))
       updateConnectionStatus(id, 'connected')
     }, { 
       messagePrefix: '连接数据库失败',

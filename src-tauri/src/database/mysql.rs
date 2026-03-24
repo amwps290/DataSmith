@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::time::Instant;
-use mysql_async::{prelude::*, Pool, Opts, Row, Value, OptsBuilder, Error as MySqlError};
+use mysql_async::{prelude::*, Conn, Pool, Opts, Row, Value, OptsBuilder, Error as MySqlError};
 use tokio::sync::Mutex;
 use tracing::{info, instrument, debug, error};
 
@@ -114,6 +114,51 @@ impl MySqlDatabase {
         }
     }
 
+    fn sanitize_mysql_charset(charset: &str) -> String {
+        let cleaned = charset
+            .chars()
+            .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+            .collect::<String>();
+
+        if cleaned.is_empty() {
+            "utf8mb4".to_string()
+        } else {
+            cleaned
+        }
+    }
+
+    async fn configure_connection(conn: &mut Conn, config: &ConnectionConfig) -> DbResult<()> {
+        if config.db_type != DatabaseType::MySQL {
+            return Ok(());
+        }
+
+        let charset = config
+            .mysql_charset
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(Self::sanitize_mysql_charset)
+            .unwrap_or_else(|| "utf8mb4".to_string());
+
+        conn.query_drop(format!("SET NAMES {}", charset))
+            .await
+            .map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
+
+        if let Some(init_sql) = config.mysql_init_sql.as_deref().map(str::trim).filter(|sql| !sql.is_empty()) {
+            conn.query_drop(init_sql)
+                .await
+                .map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
+        }
+
+        Ok(())
+    }
+
+    async fn get_pool_and_config(&self) -> DbResult<(Pool, ConnectionConfig)> {
+        let state = self.state.lock().await;
+        let pool = state.pool.as_ref().ok_or(DbError::not_connected())?.clone();
+        let config = state.config.clone().ok_or_else(|| DbError::ConfigError("未找到连接配置".into()))?;
+        Ok((pool, config))
+    }
+
     async fn resolve_database_name(&self, database: Option<&str>, schema: Option<&str>) -> DbResult<String> {
         if let Some(name) = schema.or(database) {
             return Ok(name.to_string());
@@ -135,6 +180,7 @@ impl DatabaseOperations for MySqlDatabase {
         let pool = Pool::new(opts);
         match pool.get_conn().await {
             Ok(mut conn) => {
+                Self::configure_connection(&mut conn, config).await?;
                 conn.query_drop("SELECT 1").await.map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
                 pool.disconnect().await.ok();
                 Ok(true)
@@ -151,7 +197,8 @@ impl DatabaseOperations for MySqlDatabase {
         let pool = Pool::new(opts);
         
         // 尝试获取一个连接以验证配置是否真的可用
-        pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(format!("无法建立初始连接: {}", e)))?;
+        let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(format!("无法建立初始连接: {}", e)))?;
+        Self::configure_connection(&mut conn, &config).await?;
         
         let mut state = self.state.lock().await;
         state.pool = Some(pool);
@@ -192,12 +239,9 @@ impl DatabaseOperations for MySqlDatabase {
     #[instrument(skip(self, sql))]
     async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<Vec<QueryResult>> {
         let _start_total = Instant::now();
-        // 克隆 Pool 后立即释放锁（mysql_async::Pool 内部是 Arc，clone 廉价）
-        let pool = {
-            let state = self.state.lock().await;
-            state.pool.as_ref().ok_or(DbError::not_connected())?.clone()
-        };
+        let (pool, config) = self.get_pool_and_config().await?;
         let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+        Self::configure_connection(&mut conn, &config).await?;
 
         debug!(sql = %sql.replace('\n', " "), "执行 MySQL 查询");
 
@@ -334,11 +378,9 @@ impl DatabaseOperations for MySqlDatabase {
     }
 
     async fn update_data(&self, table: &str, _schema: Option<&str>, column: &str, value: Option<String>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
-        let pool = {
-            let state = self.state.lock().await;
-            state.pool.as_ref().ok_or(DbError::not_connected())?.clone()
-        };
+        let (pool, config) = self.get_pool_and_config().await?;
         let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+        Self::configure_connection(&mut conn, &config).await?;
 
         let wc = build_where_clause(&where_conditions, escape_mysql_id, ParamStyle::QuestionMark);
 
@@ -360,11 +402,9 @@ impl DatabaseOperations for MySqlDatabase {
             return Err(DbError::ConfigError("插入数据不能为空".into()));
         }
 
-        let pool = {
-            let state = self.state.lock().await;
-            state.pool.as_ref().ok_or(DbError::not_connected())?.clone()
-        };
+        let (pool, config) = self.get_pool_and_config().await?;
         let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+        Self::configure_connection(&mut conn, &config).await?;
 
         let mut entries: Vec<(String, serde_json::Value)> = data.into_iter().collect();
         entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -383,11 +423,9 @@ impl DatabaseOperations for MySqlDatabase {
     }
 
     async fn delete_data(&self, table: &str, _schema: Option<&str>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
-        let pool = {
-            let state = self.state.lock().await;
-            state.pool.as_ref().ok_or(DbError::not_connected())?.clone()
-        };
+        let (pool, config) = self.get_pool_and_config().await?;
         let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+        Self::configure_connection(&mut conn, &config).await?;
 
         let wc = build_where_clause(&where_conditions, escape_mysql_id, ParamStyle::QuestionMark);
 
@@ -506,11 +544,9 @@ impl DatabaseOperations for MySqlDatabase {
     }
 
     async fn alter_table(&self, table: &str, _schema: Option<&str>, database: Option<&str>, changes: Vec<TableChange>) -> DbResult<()> {
-        let pool = {
-            let state = self.state.lock().await;
-            state.pool.as_ref().ok_or(DbError::not_connected())?.clone()
-        };
+        let (pool, config) = self.get_pool_and_config().await?;
         let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+        Self::configure_connection(&mut conn, &config).await?;
         let db_name = database.unwrap_or("");
 
         let mut sql_parts = Vec::new();
