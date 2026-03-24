@@ -9,18 +9,10 @@ use std::sync::Arc;
 use tauri::Manager;
 
 fn main() {
-    // 1. 初始化日志系统
-    let mut _log_guard: Option<utils::logger::WorkerGuard> = None;
-
-    // 2. 初始化加密系统
-    if let Err(e) = utils::crypto::initialize_master_key() {
-        eprintln!("警告: 密钥初始化失败: {}", e);
-    }
-
-    // 3. 直接初始化连接管理器 (Arc 即可)
+    // 直接初始化连接管理器 (Arc 即可)
     let connection_manager = Arc::new(ConnectionManager::new());
 
-    tauri::Builder::default()
+    let run_result = tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -75,17 +67,37 @@ fn main() {
             commands::redis::delete_redis_key,
         ])
         .setup(|app| {
-            let app_dir = app.path().app_data_dir().unwrap_or_else(|_| std::env::current_dir().unwrap());
+            let app_dir = app
+                .path()
+                .app_data_dir()
+                .ok()
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_else(std::env::temp_dir);
             let guard = utils::logger::init_logger(app_dir);
             Box::leak(Box::new(guard));
 
+            if let Err(error) = utils::crypto::initialize_master_key() {
+                tracing::warn!(error = %error, "密钥初始化失败");
+            }
+
             #[cfg(debug_assertions)]
             {
-                let window = app.get_webview_window("main").unwrap();
-                window.open_devtools();
+                if let Some(window) = app.get_webview_window("main") {
+                    window.open_devtools();
+                } else {
+                    tracing::warn!("未找到 main 窗口，无法自动打开 DevTools");
+                }
             }
+
+            tracing::info!("Tauri 应用启动完成");
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .run(tauri::generate_context!());
+
+    if let Err(error) = run_result {
+        let error_text = error.to_string();
+        let _ = utils::logger::write_fatal_report("tauri_run", &error_text);
+        eprintln!("error while running tauri application: {}", error_text);
+        std::process::exit(1);
+    }
 }

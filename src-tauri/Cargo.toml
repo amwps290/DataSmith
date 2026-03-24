@@ -68,3 +68,6 @@ sqlite = ["dep:rusqlite"]
 mongodb-support = ["mongodb"]
 redis-support = ["redis"]
 custom-protocol = ["tauri/custom-protocol"]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Diagnostics_Debug"] }
