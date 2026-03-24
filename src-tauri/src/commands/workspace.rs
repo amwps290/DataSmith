@@ -51,6 +51,57 @@ fn normalize_dir_name(name: &str) -> String {
         .collect()
 }
 
+fn parse_script_sequence(file_name: &str) -> Option<u32> {
+    let sequence = file_name
+        .strip_prefix("script-")?
+        .strip_suffix(".sql")?;
+
+    sequence.parse::<u32>().ok().filter(|value| *value > 0)
+}
+
+fn collect_script_sequences(dir: &PathBuf, used_sequences: &mut Vec<u32>) -> Result<(), String> {
+    if !dir.exists() {
+        return Ok(());
+    }
+
+    let entries = fs::read_dir(dir).to_cmd_result()?;
+    for entry in entries {
+        let entry = entry.to_cmd_result()?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            collect_script_sequences(&path, used_sequences)?;
+            continue;
+        }
+
+        if let Some(file_name) = path.file_name().and_then(|value| value.to_str()) {
+            if let Some(sequence) = parse_script_sequence(file_name) {
+                used_sequences.push(sequence);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn allocate_script_file_name(root: &PathBuf) -> Result<String, String> {
+    let mut used_sequences = Vec::new();
+    collect_script_sequences(root, &mut used_sequences)?;
+    used_sequences.sort_unstable();
+    used_sequences.dedup();
+
+    let mut expected = 1_u32;
+    for sequence in used_sequences {
+        if sequence == expected {
+            expected += 1;
+        } else if sequence > expected {
+            break;
+        }
+    }
+
+    Ok(format!("script-{}.sql", expected))
+}
+
 /// 获取特定数据库的脚本目录
 #[tauri::command]
 pub async fn get_db_scripts_dir(
@@ -139,9 +190,7 @@ pub async fn create_db_script(
         fs::create_dir_all(&db_dir).map_err(|e| format!("无法创建目录: {}", e))?;
     }
 
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
-    let file_name = format!("script-{}.sql", timestamp);
+    let file_name = allocate_script_file_name(&root)?;
     let path = db_dir.join(&file_name);
     
     let initial_content = content.unwrap_or_else(|| "-- 在此输入 SQL 查询\n".to_string());
@@ -150,11 +199,17 @@ pub async fn create_db_script(
     debug!("物理文件已创建: {}", path.to_string_lossy());
     
     let metadata = path.metadata().to_cmd_result()?;
+    let last_modified = metadata
+        .modified()
+        .to_cmd_result()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .to_cmd_result()?
+        .as_secs();
     
     Ok(ScriptInfo {
         name: file_name,
         path: path.to_string_lossy().to_string().replace("\\", "/"),
-        last_modified: timestamp as u64 / 1000,
+        last_modified,
         size: metadata.len(),
     })
 }

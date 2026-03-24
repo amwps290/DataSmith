@@ -71,6 +71,36 @@
       </div>
     </a-layout-content>
 
+    <div
+      v-if="contextMenuVisible"
+      class="context-menu-overlay"
+      @click="hideContextMenu()"
+    >
+      <div
+        class="context-menu"
+        :style="{ left: contextMenuX + 'px', top: contextMenuY + 'px' }"
+        @click.stop
+      >
+        <a-menu @click="handleTabMenuClick" size="small">
+          <a-menu-item key="close-current" :disabled="!currentContextTab.closable">
+            {{ $t('common.close') }}
+          </a-menu-item>
+          <a-menu-item key="close-left" :disabled="!hasClosableTabsOnLeft">
+            {{ $t('common.close_left') }}
+          </a-menu-item>
+          <a-menu-item key="close-right" :disabled="!hasClosableTabsOnRight">
+            {{ $t('common.close_right') }}
+          </a-menu-item>
+          <a-menu-item key="close-others" :disabled="!hasClosableOtherTabs">
+            {{ $t('common.close_others') }}
+          </a-menu-item>
+          <a-menu-item key="close-saved" :disabled="!hasClosableSavedTabs">
+            {{ $t('common.close_saved') }}
+          </a-menu-item>
+        </a-menu>
+      </div>
+    </div>
+
     <ConnectionDialog v-model:visible="showConnectionDialog" :editing-connection="editingConnection" @close="editingConnection = null" />
     <GlobalSearch v-model:visible="showGlobalSearch" :connection-id="connectionStore.activeConnectionId" @view-data="handleTableSelected" />
   </a-layout>
@@ -119,7 +149,7 @@ const { sidebarWidth, startResize } = useSidebarResize()
 const {
   dataTabs, mainTabKey,
   activeTabType, activeTabDatabase, activeEditorExecuting,
-  setSqlEditorRef, callActiveEditor, closeTab,
+  setSqlEditorRef, callActiveEditor, closeTab, closeTabsLeftOf, closeTabsRightOf, closeOtherTabs, closeSavedTabs,
   tabExists, addTab, handleContentChange, handleFileSaved,
 } = useTabManager()
 
@@ -187,9 +217,48 @@ function handleDesignTable(data: TableEventData) {
   addTab({ key, title: `${t('tree.design_table')}: ${data.table}`, type: TabType.Design, connectionId: data.connectionId, database: data.database, table: data.table, schema: data.schema, readOnly: false })
 }
 
-const { showContextMenu } = useContextMenu()
+const { contextMenuVisible, contextMenuX, contextMenuY, showContextMenu, hideContextMenu } = useContextMenu()
 const currentContextTab = reactive({ key: '', closable: false })
 function handleTabContextMenu(e: MouseEvent, key: string, closable: boolean) { currentContextTab.key = key; currentContextTab.closable = closable; showContextMenu(e); }
+
+const currentContextTabIndex = computed(() => dataTabs.value.findIndex(tab => tab.key === currentContextTab.key))
+const hasClosableTabsOnLeft = computed(() => currentContextTabIndex.value > 0 && dataTabs.value.slice(0, currentContextTabIndex.value).some(tab => tab.closable !== false))
+const hasClosableTabsOnRight = computed(() => currentContextTabIndex.value >= 0 && dataTabs.value.slice(currentContextTabIndex.value + 1).some(tab => tab.closable !== false))
+const hasClosableOtherTabs = computed(() => dataTabs.value.some(tab => tab.key !== currentContextTab.key && tab.closable !== false))
+const hasClosableSavedTabs = computed(() => dataTabs.value.some(tab => tab.closable !== false && Boolean(tab.filePath)))
+
+function generateNextScriptTitle() {
+  const used = new Set(
+    dataTabs.value
+      .map(tab => /^script-(\d+)\.sql$/i.exec(tab.title)?.[1])
+      .filter((value): value is string => Boolean(value))
+      .map(value => Number(value))
+      .filter(value => Number.isInteger(value) && value > 0)
+  )
+
+  let index = 1
+  while (used.has(index)) index += 1
+  return `script-${index}.sql`
+}
+
+function handleTabMenuClick({ key }: { key: string | number }) {
+  if (!currentContextTab.key) return
+  const action = String(key)
+
+  if (action === 'close-current' && currentContextTab.closable) {
+    closeTab(currentContextTab.key)
+  } else if (action === 'close-left') {
+    closeTabsLeftOf(currentContextTab.key)
+  } else if (action === 'close-right') {
+    closeTabsRightOf(currentContextTab.key)
+  } else if (action === 'close-others') {
+    closeOtherTabs(currentContextTab.key)
+  } else if (action === 'close-saved') {
+    closeSavedTabs(currentContextTab.key)
+  }
+
+  hideContextMenu()
+}
 
 function handleTableSelected(d: TableEventData) {
   const id = d.connectionId || connectionStore.activeConnectionId, key = `table-${id}-${d.database}-${d.table}`
@@ -215,6 +284,15 @@ async function handleNewQuery(d: QueryEventData) {
     const conn = connectionStore.connections.find(c => c.id === connId)
     if (conn?.db_type === 'sqlite') dbName = 'main'
   }
+
+  if (d.filePath) {
+    const existingTab = dataTabs.value.find(tab => tab.type === TabType.Query && tab.filePath === d.filePath)
+    if (existingTab) {
+      mainTabKey.value = existingTab.key
+      return
+    }
+  }
+
   let filePath = d.filePath, title = d.title, initialContent = d.content || t('editor.placeholder')
   if (connId && dbName && !filePath) {
     try {
@@ -223,7 +301,7 @@ async function handleNewQuery(d: QueryEventData) {
     } catch (_e) { message.error(t('common.fail')); return }
   }
   const key = `query-${Date.now()}`
-  addTab({ key, title: title || `script-${new Date().getTime()}.sql`, type: TabType.Query, connectionId: connId || undefined, database: dbName, content: initialContent, filePath })
+  addTab({ key, title: title || generateNextScriptTitle(), type: TabType.Query, connectionId: connId || undefined, database: dbName, content: initialContent, filePath })
 }
 
 function handleOpenQueryBuilder() {
@@ -322,4 +400,7 @@ function getConnectionColor(connectionId?: string) {
 .title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-content-wrapper { flex: 1; height: 100%; overflow: hidden; position: relative; }
 .empty-workspace { flex: 1; display: flex; align-items: center; justify-content: center; }
+.context-menu-overlay { position: fixed; inset: 0; z-index: 9999; }
+.context-menu { position: absolute; min-width: 140px; background: #fff; border: 1px solid #d9d9d9; border-radius: 8px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16); overflow: hidden; }
+.dark-mode .context-menu { background: #1f1f1f; border-color: #303030; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36); }
 </style>

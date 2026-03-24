@@ -52,7 +52,11 @@
     "sql_code": "SQL Code",
     "sql_preview": "SQL Preview",
     "copy_path": "Copy Path",
-    "type": "Type"
+    "type": "Type",
+    "close_left": "Close Left",
+    "close_right": "Close Right",
+    "close_others": "Close Others",
+    "close_saved": "Close Saved"
   },
   "settings_page": {
     "title": "Settings",

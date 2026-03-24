@@ -52,7 +52,11 @@
     "sql_code": "SQL代码",
     "sql_preview": "SQL预览",
     "copy_path": "复制路径",
-    "type": "类型"
+    "type": "类型",
+    "close_left": "关闭左侧",
+    "close_right": "关闭右侧",
+    "close_others": "关闭其他",
+    "close_saved": "关闭已保存的"
   },
   "settings_page": {
     "title": "设置",
