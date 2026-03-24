@@ -36,6 +36,30 @@ impl SqliteDatabase {
         }
         Ok(())
     }
+
+    fn json_to_sqlite_param(value: &serde_json::Value) -> Box<dyn rusqlite::ToSql> {
+        match value {
+            serde_json::Value::Null => Box::new(rusqlite::types::Null),
+            serde_json::Value::Bool(v) => Box::new(if *v { 1_i64 } else { 0_i64 }),
+            serde_json::Value::Number(n) => {
+                if let Some(v) = n.as_i64() {
+                    Box::new(v)
+                } else if let Some(v) = n.as_u64() {
+                    if let Ok(signed) = i64::try_from(v) {
+                        Box::new(signed)
+                    } else {
+                        Box::new(v.to_string())
+                    }
+                } else if let Some(v) = n.as_f64() {
+                    Box::new(v)
+                } else {
+                    Box::new(rusqlite::types::Null)
+                }
+            }
+            serde_json::Value::String(v) => Box::new(v.clone()),
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => Box::new(value.to_string()),
+        }
+    }
 }
 
 #[async_trait]
@@ -151,6 +175,28 @@ impl DatabaseOperations for SqliteDatabase {
         debug!(sql = %sql, "执行 SQLite 参数化更新");
 
         let p_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        conn.execute(&sql, p_refs.as_slice()).map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn insert_data(&self, table: &str, _schema: Option<&str>, data: HashMap<String, serde_json::Value>) -> DbResult<()> {
+        if data.is_empty() {
+            return Err(DbError::ConfigError("插入数据不能为空".into()));
+        }
+
+        let state = self.state.lock().await;
+        let conn = state.conn.as_ref().ok_or(DbError::not_connected())?;
+
+        let mut entries: Vec<(String, serde_json::Value)> = data.into_iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let columns = entries.iter().map(|(name, _)| escape_sqlite_id(name)).collect::<Vec<_>>().join(", ");
+        let placeholders = std::iter::repeat_n("?", entries.len()).collect::<Vec<_>>().join(", ");
+        let sql = format!("INSERT INTO {} ({}) VALUES ({})", escape_sqlite_id(table), columns, placeholders);
+        debug!(sql = %sql, "执行 SQLite 参数化插入");
+
+        let params = entries.iter().map(|(_, value)| Self::json_to_sqlite_param(value)).collect::<Vec<_>>();
+        let p_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|param| param.as_ref()).collect();
         conn.execute(&sql, p_refs.as_slice()).map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(())
     }

@@ -261,6 +261,11 @@ pub trait DatabaseOperations: Send + Sync {
         Err(DbError::Other("该数据库类型不支持此更新操作".into()))
     }
 
+    /// 插入数据
+    async fn insert_data(&self, _table: &str, _schema: Option<&str>, _data: HashMap<String, serde_json::Value>) -> DbResult<()> {
+        Err(DbError::Other("该数据库类型不支持此插入操作".into()))
+    }
+
     /// 删除数据
     async fn delete_data(&self, _table: &str, _schema: Option<&str>, _where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
         Err(DbError::Other("该数据库类型不支持此删除操作".into()))

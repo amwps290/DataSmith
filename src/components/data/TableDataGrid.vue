@@ -139,6 +139,14 @@ import { queryApi, metadataApi, dataApi } from '@/api'
 import { invoke } from '@tauri-apps/api/core'
 import { useConnectionStore } from '@/stores/connection'
 import type { VxeGridProps, VxeGridInstance, VxeGridEvents } from 'vxe-table'
+import type { ColumnInfo } from '@/types/database'
+
+interface GridRow extends Record<string, any> {
+  __rowIndex: number
+  _originalData: Record<string, any>
+  _isNew?: boolean
+  _newTouchedFields?: Record<string, boolean>
+}
 
 const { t } = useI18n()
 const props = defineProps<{ connectionId: string; database: string; table: string; schema?: string }>()
@@ -151,13 +159,17 @@ const selectedRowKeys = ref<any[]>([])
 const showFilterDialog = ref(false)
 const filterCondition = ref('')
 const primaryKeys = ref<string[]>([])
+const tableColumns = ref<ColumnInfo[]>([])
 const saving = ref(false)
+const nextRowIndex = ref(0)
 
 // 变更追踪状态
 const pendingEdits = reactive<Record<number, Record<string, { old: any, new: any }>>>({})
-const hasChanges = computed(() => Object.keys(pendingEdits).length > 0)
+const newRows = computed(() => ((gridOptions.data || []) as GridRow[]).filter(row => row._isNew))
+const hasChanges = computed(() => Object.keys(pendingEdits).length > 0 || newRows.value.length > 0)
 const changeCount = computed(() => {
-  return Object.values(pendingEdits).reduce((acc, row) => acc + Object.keys(row).length, 0)
+  const updatedCells = Object.values(pendingEdits).reduce((acc, row) => acc + Object.keys(row).length, 0)
+  return updatedCells + newRows.value.length
 })
 
 // 查看器状态
@@ -198,6 +210,9 @@ const handleScroll: VxeGridEvents.Scroll = ({ isY, scrollTop, bodyHeight, scroll
 }
 
 function getCellClassName({ row, column }: any) {
+  if (row._isNew) {
+    return 'cell-new-row'
+  }
   const rowIndex = row.__rowIndex
   if (pendingEdits[rowIndex] && pendingEdits[rowIndex][column.field]) {
     return 'cell-modified'
@@ -215,6 +230,12 @@ function handleEditClosed({ row, column }: any) {
 }
 
 function recordChange(row: any, field: string, newVal: any) {
+  if (row._isNew) {
+    if (!row._newTouchedFields) row._newTouchedFields = {}
+    row._newTouchedFields[field] = true
+    return
+  }
+
   const rowIndex = row.__rowIndex
   const existingEdit = pendingEdits[rowIndex]?.[field]
   const oldVal = existingEdit ? existingEdit.old : row._originalData?.[field]
@@ -268,16 +289,123 @@ function copyViewerContent() {
   message.success(t('common.copy'))
 }
 
+function clearPendingEdits() {
+  Object.keys(pendingEdits).forEach(k => delete pendingEdits[Number(k)])
+}
+
+function clearSelection() {
+  selectedRowKeys.value = []
+  ;(gridRef.value as any)?.clearCheckboxRow?.()
+}
+
+function clearViewerIfNeeded(rowIndexes?: Set<number>) {
+  if (!selectedCell.value) return
+  if (!rowIndexes || rowIndexes.has(selectedCell.value.row.__rowIndex)) {
+    selectedCell.value = null
+    viewerValue.value = ''
+    isViewerSetNull.value = false
+  }
+}
+
+function createGridRow(rowData: Record<string, any>, options: { isNew?: boolean } = {}): GridRow {
+  const row: GridRow = {
+    __rowIndex: nextRowIndex.value++,
+    ...rowData,
+    _originalData: { ...rowData },
+  }
+
+  if (options.isNew) {
+    row._isNew = true
+    row._newTouchedFields = {}
+  }
+
+  return row
+}
+
+function buildGridColumns(columnNames: string[]): NonNullable<VxeGridProps['columns']> {
+  return [
+    { type: 'checkbox', width: 50, fixed: 'left' },
+    ...columnNames.map(col => ({
+      field: col,
+      title: col,
+      minWidth: 120,
+      showOverflow: true,
+      slots: { default: 'cell_default' },
+      editRender: { name: 'input' }
+    }))
+  ] as NonNullable<VxeGridProps['columns']>
+}
+
+function buildInsertPayload(row: GridRow) {
+  const data: Record<string, any> = {}
+  const missingRequired: string[] = []
+
+  for (const column of tableColumns.value) {
+    const value = row[column.name]
+    const touched = Boolean(row._newTouchedFields?.[column.name])
+    const hasDefault = column.default_value !== undefined && column.default_value !== null && column.default_value !== ''
+
+    if (value === null || value === undefined) {
+      if (touched) {
+        if (column.nullable) {
+          data[column.name] = null
+        } else if (!column.is_auto_increment) {
+          missingRequired.push(column.name)
+        }
+      } else if (!column.nullable && !column.is_auto_increment && !hasDefault) {
+        missingRequired.push(column.name)
+      }
+      continue
+    }
+
+    data[column.name] = value
+  }
+
+  return { data, missingRequired }
+}
+
+function removeRows(rowIndexes: number[]) {
+  if (rowIndexes.length === 0) return
+
+  const rowIndexSet = new Set(rowIndexes)
+  gridOptions.data = ((gridOptions.data || []) as GridRow[]).filter(row => !rowIndexSet.has(row.__rowIndex))
+  rowIndexes.forEach(rowIndex => delete pendingEdits[rowIndex])
+  clearSelection()
+  clearViewerIfNeeded(rowIndexSet)
+}
+
 async function submitChanges() {
-  if (primaryKeys.value.length === 0) return message.error(t('data.no_pk_error'))
+  const hasPendingUpdates = Object.keys(pendingEdits).length > 0
+  if (hasPendingUpdates && primaryKeys.value.length === 0) return message.error(t('data.no_pk_error'))
+
   saving.value = true
+  let shouldRefresh = false
   try {
+    for (const row of newRows.value) {
+      const { data, missingRequired } = buildInsertPayload(row)
+
+      if (missingRequired.length > 0) {
+        throw new Error(t('data.required_fields_missing', { fields: missingRequired.join(', ') }))
+      }
+      if (Object.keys(data).length === 0) {
+        throw new Error(t('data.insert_empty_error'))
+      }
+
+      await dataApi.insertTableData({
+        connectionId: props.connectionId,
+        database: props.database,
+        table: props.table,
+        schema: props.schema || undefined,
+        data,
+      })
+      shouldRefresh = true
+    }
+
     for (const [rowIndexStr, fields] of Object.entries(pendingEdits)) {
       const rowIndex = Number(rowIndexStr)
-      const row = gridOptions.data?.find((r: any) => r.__rowIndex === rowIndex)
+      const row = (gridOptions.data || []).find((item: any) => item.__rowIndex === rowIndex) as GridRow | undefined
       if (!row) continue
 
-      // 构建结构化的 WHERE 条件
       const whereConditions: Record<string, any> = {}
       primaryKeys.value.forEach(pk => {
         whereConditions[pk] = row._originalData[pk]
@@ -291,10 +419,19 @@ async function submitChanges() {
         row._originalData[field] = change.new
       }
     }
-    Object.keys(pendingEdits).forEach(k => delete pendingEdits[Number(k)])
-    message.success(t('data.update_success'))
+
+    clearPendingEdits()
+
+    if (shouldRefresh) {
+      await doRefresh()
+    }
+
+    message.success(t('data.save_success'))
   } catch (e: any) {
-    message.error(`${t('data.update_fail')}: ${e}`)
+    if (shouldRefresh) {
+      await doRefresh()
+    }
+    message.error(t('data.save_fail', { error: String(e) }))
   } finally {
     saving.value = false
   }
@@ -309,11 +446,15 @@ function discardChanges() {
         const row = gridOptions.data?.find((r: any) => r.__rowIndex === rowIndex)
         if (row) { for (const [field, change] of Object.entries(fields)) { row[field] = change.old } }
       }
-      Object.keys(pendingEdits).forEach(k => delete pendingEdits[Number(k)])
-      if (selectedCell.value) {
+      gridOptions.data = ((gridOptions.data || []) as GridRow[]).filter(row => !row._isNew)
+      clearPendingEdits()
+      if (selectedCell.value?.row._isNew) {
+        clearViewerIfNeeded()
+      } else if (selectedCell.value) {
         viewerValue.value = selectedCell.value.row[selectedCell.value.column.field] === null ? '' : String(selectedCell.value.row[selectedCell.value.column.field])
         isViewerSetNull.value = selectedCell.value.row[selectedCell.value.column.field] === null
       }
+      clearSelection()
     }
   })
 }
@@ -326,8 +467,13 @@ async function refresh() {
 }
 
 async function doRefresh() {
-  pagination.current = 1; hasMore.value = true; gridOptions.data = []
-  Object.keys(pendingEdits).forEach(k => delete pendingEdits[Number(k)])
+  pagination.current = 1
+  hasMore.value = true
+  gridOptions.data = []
+  nextRowIndex.value = 0
+  clearPendingEdits()
+  clearSelection()
+  clearViewerIfNeeded()
   await loadData(false)
 }
 
@@ -340,9 +486,14 @@ async function loadData(isAppend: boolean) {
   if (!props.table) return
   loading.value = true; if (!isAppend) gridOptions.loading = true
   try {
-    if (primaryKeys.value.length === 0) {
-      const struct = await metadataApi.getTableStructure({ connectionId: props.connectionId, table: props.table, schema: props.schema || props.database, database: props.database })
-      primaryKeys.value = struct.filter(c => c.is_primary_key).map(c => c.name)
+    if (tableColumns.value.length === 0) {
+      tableColumns.value = await metadataApi.getTableStructure({
+        connectionId: props.connectionId,
+        table: props.table,
+        schema: props.schema || null,
+        database: props.database
+      })
+      primaryKeys.value = tableColumns.value.filter(c => c.is_primary_key).map(c => c.name)
     }
     const offset = (pagination.current - 1) * pagination.pageSize
     let sql = `SELECT * FROM ${tableRef()}`
@@ -350,20 +501,24 @@ async function loadData(isAppend: boolean) {
     sql += ` LIMIT ${pagination.pageSize} OFFSET ${offset}`
     const results = await queryApi.executeQuery(props.connectionId, sql, props.database)
     const result = results[0]
-    if (!result) { hasMore.value = false; if (!isAppend) { gridOptions.columns = []; gridOptions.data = [] }; return }
+    const fallbackColumns = tableColumns.value.map(column => column.name)
+    if (!result) {
+      hasMore.value = false
+      if (!isAppend) {
+        gridOptions.columns = buildGridColumns(fallbackColumns)
+        gridOptions.data = []
+      }
+      return
+    }
+
+    const visibleColumns = result.columns.length > 0 ? result.columns : fallbackColumns
     hasMore.value = result.rows.length === pagination.pageSize
     if (!isAppend) {
-      gridOptions.columns = [
-        { type: 'checkbox', width: 50, fixed: 'left' },
-        ...result.columns.map(col => ({ 
-          field: col, title: col, minWidth: 120, showOverflow: true, slots: { default: 'cell_default' }, editRender: { name: 'input' }
-        }))
-      ]
-      gridOptions.data = result.rows.map((row, i) => ({ __rowIndex: i, ...row, _originalData: { ...row } }))
+      gridOptions.columns = buildGridColumns(visibleColumns)
+      gridOptions.data = result.rows.map(row => createGridRow(row))
     } else {
-      const currentCount = gridOptions.data?.length || 0
-      const newRows = result.rows.map((row, i) => ({ __rowIndex: currentCount + i, ...row, _originalData: { ...row } }))
-      gridOptions.data = [...(gridOptions.data || []), ...newRows]
+      const appendedRows = result.rows.map(row => createGridRow(row))
+      gridOptions.data = [...(gridOptions.data || []), ...appendedRows]
     }
   } catch (e: any) { 
     message.error(e); pagination.current = Math.max(1, pagination.current - 1)
@@ -379,14 +534,30 @@ function handleCheckboxChange() {
 
 function applyFilter() { showFilterDialog.value = false; refresh() }
 
-function addRow() { message.info(t('data.new_row_not_implemented')) }
+function addRow() {
+  const rowData = tableColumns.value.reduce<Record<string, any>>((acc, column) => {
+    acc[column.name] = null
+    return acc
+  }, {})
+
+  const newRow = createGridRow(rowData, { isNew: true })
+  gridOptions.data = [newRow, ...((gridOptions.data || []) as GridRow[])]
+}
+
 async function deleteSelected() {
   Modal.confirm({
     title: t('common.delete'), content: t('data.delete_confirm_n', { n: selectedRowKeys.value.length }), okType: 'danger',
     async onOk() {
       try {
-        const records = gridRef.value?.getCheckboxRecords() || []
-        for (const record of records) {
+        const records = (gridRef.value?.getCheckboxRecords() || []) as GridRow[]
+        const existingRecords = records.filter(record => !record._isNew)
+
+        if (existingRecords.length > 0 && primaryKeys.value.length === 0) {
+          message.error(t('data.no_pk_error'))
+          return
+        }
+
+        for (const record of existingRecords) {
           const whereConditions: Record<string, any> = {}
           primaryKeys.value.forEach(pk => {
             whereConditions[pk] = record._originalData[pk]
@@ -397,7 +568,9 @@ async function deleteSelected() {
             schema: props.schema || null, whereConditions
           })
         }
-        message.success(t('data.delete_success')); refresh()
+
+        removeRows(records.map(record => record.__rowIndex))
+        message.success(t('data.delete_success'))
       } catch (e: any) { message.error(e) }
     }
   })
@@ -411,7 +584,15 @@ async function handleExport({ key }: any) {
   } catch (e: any) { message.error(e) }
 }
 
-watch(() => props.table, () => { refresh() }, { immediate: true })
+watch(
+  () => [props.connectionId, props.database, props.schema, props.table],
+  () => {
+    primaryKeys.value = []
+    tableColumns.value = []
+    refresh()
+  },
+  { immediate: true }
+)
 </script>
 
 <style scoped>
@@ -429,6 +610,8 @@ watch(() => props.table, () => { refresh() }, { immediate: true })
 :deep(.cell-modified) { background-color: #fff7e6 !important; position: relative; }
 :deep(.cell-modified)::after { content: ""; position: absolute; top: 0; left: 0; border: 4px solid transparent; border-left-color: #ffa940; border-top-color: #ffa940; }
 .dark-mode :deep(.cell-modified) { background-color: #3e2b1a !important; }
+:deep(.cell-new-row) { background-color: #e6f4ff !important; }
+.dark-mode :deep(.cell-new-row) { background-color: #11263c !important; }
 
 .viewer-container { padding: 12px; height: 100%; display: flex; flex-direction: column; }
 .viewer-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }

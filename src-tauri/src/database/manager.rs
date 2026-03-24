@@ -175,6 +175,12 @@ impl ConnectionManager {
         db.update_data(table, schema, column, value, where_conditions).await
     }
 
+    pub async fn insert_data(&self, composite_id: &str, table: &str, schema: Option<&str>, database: Option<&str>, data: HashMap<String, serde_json::Value>) -> DbResult<()> {
+        let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
+        db.insert_data(table, schema, data).await
+    }
+
     pub async fn delete_data(&self, composite_id: &str, table: &str, schema: Option<&str>, database: Option<&str>, where_conditions: HashMap<String, serde_json::Value>) -> DbResult<()> {
         let db = self.get_db_ref(composite_id).await?;
         self.ensure_db_context(db.clone(), database).await?;

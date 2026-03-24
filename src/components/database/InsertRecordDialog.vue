@@ -16,20 +16,20 @@
           :required="!col.nullable && !col.is_auto_increment"
         >
           <a-input
-            v-if="['VARCHAR', 'CHAR', 'TEXT'].includes(col.data_type)"
+            v-if="isTextType(col.data_type)"
             v-model:value="formData[col.name]"
             :placeholder="getPlaceholder(col)"
             :disabled="col.is_auto_increment"
           />
           <a-input-number
-            v-else-if="['INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'DECIMAL', 'FLOAT', 'DOUBLE'].includes(col.data_type)"
+            v-else-if="isNumericType(col.data_type)"
             v-model:value="formData[col.name]"
             style="width: 100%"
             :placeholder="getPlaceholder(col)"
             :disabled="col.is_auto_increment"
           />
           <a-date-picker
-            v-else-if="['DATE', 'DATETIME', 'TIMESTAMP'].includes(col.data_type)"
+            v-else-if="isDateType(col.data_type)"
             v-model:value="formData[col.name]"
             show-time
             style="width: 100%"
@@ -37,7 +37,7 @@
             :disabled="col.is_auto_increment"
           />
           <a-switch
-            v-else-if="['BOOLEAN', 'TINYINT(1)'].includes(col.data_type)"
+            v-else-if="isBooleanType(col.data_type)"
             v-model:checked="formData[col.name]"
             :disabled="col.is_auto_increment"
           />
@@ -92,6 +92,30 @@ const loadingColumns = ref(false)
 const columns = ref<InsertColumn[]>([])
 const formData = ref<Record<string, any>>({})
 
+function normalizeType(dataType: string): string {
+  return dataType.trim().toLowerCase()
+}
+
+function isTextType(dataType: string): boolean {
+  const normalized = normalizeType(dataType)
+  return ['varchar', 'char', 'text', 'character varying', 'character'].includes(normalized)
+}
+
+function isNumericType(dataType: string): boolean {
+  const normalized = normalizeType(dataType)
+  return ['int', 'integer', 'bigint', 'smallint', 'tinyint', 'decimal', 'numeric', 'float', 'double', 'real'].includes(normalized)
+}
+
+function isDateType(dataType: string): boolean {
+  const normalized = normalizeType(dataType)
+  return ['date', 'datetime', 'timestamp', 'timestamp without time zone', 'timestamp with time zone'].includes(normalized)
+}
+
+function isBooleanType(dataType: string): boolean {
+  const normalized = normalizeType(dataType)
+  return ['boolean', 'bool', 'tinyint(1)'].includes(normalized)
+}
+
 function getPlaceholder(col: InsertColumn): string {
   if (col.is_auto_increment) {
     return t('dialog.insert_record.auto_generated')
@@ -113,7 +137,7 @@ async function loadTableStructure() {
     const result = await metadataApi.getTableStructure({
       connectionId: props.connectionId,
       table: props.table,
-      schema: props.database,
+      schema: props.schema || null,
       database: props.database,
     }) as unknown as InsertColumn[]
 
@@ -129,7 +153,8 @@ async function loadTableStructure() {
 async function handleInsert() {
   // 验证必填字段
   for (const col of columns.value) {
-    if (!col.nullable && !col.is_auto_increment && !formData.value[col.name]) {
+    const currentValue = formData.value[col.name]
+    if (!col.nullable && !col.is_auto_increment && (currentValue === undefined || currentValue === null || currentValue === '')) {
       message.error(t('dialog.insert_record.field_required', { field: col.name }))
       return
     }

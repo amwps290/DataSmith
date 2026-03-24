@@ -10,7 +10,6 @@ use tokio::sync::Mutex;
 
 use super::traits::*;
 use super::constants::PG_DEFAULT_SCHEMA;
-use super::sql_helpers::{build_where_clause, ParamStyle};
 use crate::utils::sql_sanitize::{escape_pg_id, escape_string_literal};
 
 /// PostgreSQL 驱动状态容器 - 用于内部互斥
@@ -66,6 +65,52 @@ impl PostgreSqlDatabase {
             tokio::spawn(async move { if let Err(e) = connection.await { error!("PostgreSQL 连接异常: {}", e); } });
             Ok(client)
         }
+    }
+
+    fn json_to_pg_literal(value: &serde_json::Value) -> String {
+        match value {
+            serde_json::Value::Null => "NULL".to_string(),
+            serde_json::Value::Bool(v) => {
+                if *v { "TRUE".to_string() } else { "FALSE".to_string() }
+            }
+            serde_json::Value::Number(n) => {
+                if let Some(v) = n.as_i64() {
+                    v.to_string()
+                } else if let Some(v) = n.as_u64() {
+                    v.to_string()
+                } else if let Some(v) = n.as_f64() {
+                    v.to_string()
+                } else {
+                    "NULL".to_string()
+                }
+            }
+            serde_json::Value::String(v) => escape_string_literal(v),
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => escape_string_literal(&value.to_string()),
+        }
+    }
+
+    fn string_to_pg_literal(value: Option<String>) -> String {
+        match value {
+            Some(v) => escape_string_literal(&v),
+            None => "NULL".to_string(),
+        }
+    }
+
+    fn build_literal_where_clause(where_conditions: &HashMap<String, serde_json::Value>) -> String {
+        let mut entries = where_conditions.iter().collect::<Vec<_>>();
+        entries.sort_by(|a, b| a.0.cmp(b.0));
+
+        entries
+            .into_iter()
+            .map(|(column, value)| {
+                if value.is_null() {
+                    format!("{} IS NULL", escape_pg_id(column))
+                } else {
+                    format!("{} = {}", escape_pg_id(column), Self::json_to_pg_literal(value))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" AND ")
     }
 }
 
@@ -234,27 +279,43 @@ impl DatabaseOperations for PostgreSqlDatabase {
         let client = self.get_client_arc().await?;
 
         let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
-
-        // $1 是新值，WHERE 参数从 $2 开始
-        let wc = build_where_clause(&where_conditions, escape_pg_id, ParamStyle::DollarNumber(1));
-
-        let mut params: Vec<Option<String>> = Vec::new();
-        params.push(value); // $1
-        params.extend(wc.param_values);
+        let where_sql = Self::build_literal_where_clause(&where_conditions);
+        let value_sql = Self::string_to_pg_literal(value);
 
         let sql = format!(
-            "UPDATE {}.{} SET {} = $1 WHERE {}",
-            escape_pg_id(schema_name), escape_pg_id(table), escape_pg_id(column), wc.sql
+            "UPDATE {}.{} SET {} = {} WHERE {}",
+            escape_pg_id(schema_name), escape_pg_id(table), escape_pg_id(column), value_sql, where_sql
         );
 
-        debug!(sql = %sql, "执行 PostgreSQL 参数化更新");
+        debug!(sql = %sql, "执行 PostgreSQL 更新");
+        client.execute(&sql, &[]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
 
-        let mut query_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
-        for p in &params {
-            query_params.push(p);
+    async fn insert_data(&self, table: &str, schema: Option<&str>, data: HashMap<String, serde_json::Value>) -> DbResult<()> {
+        if data.is_empty() {
+            return Err(DbError::ConfigError("插入数据不能为空".into()));
         }
 
-        client.execute(&sql, &query_params).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        let client = self.get_client_arc().await?;
+        let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
+
+        let mut entries: Vec<(String, serde_json::Value)> = data.into_iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let columns = entries.iter().map(|(name, _)| escape_pg_id(name)).collect::<Vec<_>>().join(", ");
+        let values = entries.iter().map(|(_, value)| Self::json_to_pg_literal(value)).collect::<Vec<_>>().join(", ");
+
+        let sql = format!(
+            "INSERT INTO {}.{} ({}) VALUES ({})",
+            escape_pg_id(schema_name),
+            escape_pg_id(table),
+            columns,
+            values
+        );
+        debug!(sql = %sql, "执行 PostgreSQL 插入");
+
+        client.execute(&sql, &[]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(())
     }
 
@@ -262,24 +323,15 @@ impl DatabaseOperations for PostgreSqlDatabase {
         let client = self.get_client_arc().await?;
 
         let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
-
-        // DELETE 参数从 $1 开始
-        let wc = build_where_clause(&where_conditions, escape_pg_id, ParamStyle::DollarNumber(0));
+        let where_sql = Self::build_literal_where_clause(&where_conditions);
 
         let sql = format!(
             "DELETE FROM {}.{} WHERE {}",
-            escape_pg_id(schema_name), escape_pg_id(table), wc.sql
+            escape_pg_id(schema_name), escape_pg_id(table), where_sql
         );
 
-        debug!(sql = %sql, "执行 PostgreSQL 参数化删除");
-
-        let params = wc.param_values;
-        let mut query_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
-        for p in &params {
-            query_params.push(p);
-        }
-
-        client.execute(&sql, &query_params).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        debug!(sql = %sql, "执行 PostgreSQL 删除");
+        client.execute(&sql, &[]).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(())
     }
 

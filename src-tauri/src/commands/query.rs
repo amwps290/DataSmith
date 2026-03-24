@@ -129,11 +129,16 @@ pub async fn delete_table_data(
 
 #[tauri::command]
 pub async fn insert_table_data(
-    _connection_id: String,
-    _database: String,
-    _table: String,
-    _data: HashMap<String, serde_json::Value>,
-    _state: State<'_, AppState>,
+    connection_id: String,
+    database: String,
+    table: String,
+    schema: Option<String>,
+    data: HashMap<String, serde_json::Value>,
+    state: State<'_, AppState>,
 ) -> Result<(), String> {
-    Ok(())
+    let manager = &state.connection_manager;
+    manager
+        .insert_data(&connection_id, &table, schema.as_deref(), Some(&database), data)
+        .await
+        .to_cmd_result()
 }

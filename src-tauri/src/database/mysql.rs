@@ -39,6 +39,26 @@ impl MySqlDatabase {
         
         builder.into()
     }
+
+    fn json_to_mysql_value(value: &serde_json::Value) -> mysql_async::Value {
+        match value {
+            serde_json::Value::Null => mysql_async::Value::NULL,
+            serde_json::Value::Bool(v) => mysql_async::Value::from(if *v { 1_i8 } else { 0_i8 }),
+            serde_json::Value::Number(n) => {
+                if let Some(v) = n.as_i64() {
+                    mysql_async::Value::from(v)
+                } else if let Some(v) = n.as_u64() {
+                    mysql_async::Value::from(v)
+                } else if let Some(v) = n.as_f64() {
+                    mysql_async::Value::from(v)
+                } else {
+                    mysql_async::Value::NULL
+                }
+            }
+            serde_json::Value::String(v) => mysql_async::Value::from(v.clone()),
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => mysql_async::Value::from(value.to_string()),
+        }
+    }
 }
 
 #[async_trait]
@@ -240,6 +260,33 @@ impl DatabaseOperations for MySqlDatabase {
 
         let params = mysql_async::Params::Positional(p_vec);
         let sql = format!("UPDATE {} SET {} = ? WHERE {}", escape_mysql_id(table), escape_mysql_id(column), wc.sql);
+
+        conn.exec_drop(sql, params).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn insert_data(&self, table: &str, _schema: Option<&str>, data: HashMap<String, serde_json::Value>) -> DbResult<()> {
+        if data.is_empty() {
+            return Err(DbError::ConfigError("插入数据不能为空".into()));
+        }
+
+        let pool = {
+            let state = self.state.lock().await;
+            state.pool.as_ref().ok_or(DbError::not_connected())?.clone()
+        };
+        let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+
+        let mut entries: Vec<(String, serde_json::Value)> = data.into_iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let columns = entries.iter().map(|(name, _)| escape_mysql_id(name)).collect::<Vec<_>>().join(", ");
+        let placeholders = std::iter::repeat_n("?", entries.len()).collect::<Vec<_>>().join(", ");
+        let params = mysql_async::Params::Positional(
+            entries.iter().map(|(_, value)| Self::json_to_mysql_value(value)).collect(),
+        );
+
+        let sql = format!("INSERT INTO {} ({}) VALUES ({})", escape_mysql_id(table), columns, placeholders);
+        debug!(sql = %sql, "执行 MySQL 参数化插入");
 
         conn.exec_drop(sql, params).await.map_err(|e| DbError::QueryFailed(e.to_string()))?;
         Ok(())
