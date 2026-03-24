@@ -471,6 +471,9 @@
     "default_db": "Default",
     "no_connection": "Please select a Redis connection first",
     "input_command": "Please enter a Redis command",
+    "input_key_name": "Please enter a key name to view",
+    "key_name_placeholder": "Enter a key name and press Enter",
+    "close_key_viewer": "Close Key Details",
     "executing": "Executing command...",
     "exec_success": "Command executed successfully! Time: {time} ms",
     "exec_fail": "Command execution failed",
@@ -479,6 +482,7 @@
     "switch_fail": "Failed to switch database: {error}",
     "keepalive_fail": "Redis connection may have disconnected, please try reconnecting",
     "key_viewer": {
+      "panel_title": "Key Details",
       "key_label": "Key: {key}",
       "ttl_seconds": "TTL: {ttl}s",
       "never_expire": "Never Expire",

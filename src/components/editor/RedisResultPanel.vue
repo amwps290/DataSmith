@@ -1,12 +1,12 @@
 <template>
   <div class="result-tabs">
     <a-tabs style="margin-left: 12px;" v-model:activeKey="activeKey">
-      <a-tab-pane key="result" tab="结果">
+      <a-tab-pane key="result" :tab="$t('editor.result')">
         <div class="result-content">
           <div v-if="results.length > 0" class="result-info">
             <a-space>
               <a-tag color="success">
-                执行成功
+                {{ $t('common.success') }}
               </a-tag>
               <a-tag color="processing">
                 {{ results[results.length - 1]?.execution_time_ms || 0 }} ms
@@ -31,10 +31,10 @@
               <pre v-else class="result-json">{{ formatResult(lastResult.result) }}</pre>
             </div>
           </div>
-          <a-empty v-else description="暂无执行结果" />
+          <a-empty v-else :description="$t('editor.no_result')" />
         </div>
       </a-tab-pane>
-      <a-tab-pane key="messages" tab="消息">
+      <a-tab-pane key="messages" :tab="$t('editor.messages')">
         <div class="messages-content">
           <a-timeline>
             <a-timeline-item

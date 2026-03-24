@@ -52,10 +52,10 @@
             </template>
             <div class="tab-content-wrapper">
               <KeepAlive>
-                <SqlEditor v-if="tab.type === 'query'" :key="tab.key" :ref="(el) => setSqlEditorRef(el, tab.key)" :connection-id="tab.connectionId" :initial-database="tab.database" :initial-value="tab.content" :file-path="tab.filePath" @content-change="(val) => handleContentChange(tab.key, val)" @file-saved="(path, title) => handleFileSaved(tab.key, path, title)" @databases-loaded="(dbs) => availableDatabases = dbs" @database-change="(db) => handleEditorDatabaseChange(tab.key, String(db || ''))" />
+                <SqlEditor v-if="tab.type === 'query'" :key="tab.key" :ref="(el: unknown) => setSqlEditorRef(el, tab.key)" :connection-id="tab.connectionId" :initial-database="tab.database" :initial-value="tab.content" :file-path="tab.filePath" @content-change="(val: string) => handleContentChange(tab.key, val)" @file-saved="(path: string, title: string) => handleFileSaved(tab.key, path, title)" @databases-loaded="(dbs: DatabaseInfo[]) => availableDatabases = dbs" @database-change="(db: string) => handleEditorDatabaseChange(tab.key, String(db || ''))" />
                 <TableDataGrid v-else-if="tab.type === 'data'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" />
                 <TableDesigner v-else-if="tab.type === 'design'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" :read-only="tab.readOnly" />
-                <QueryBuilder v-else-if="tab.type === 'builder'" :key="tab.key" :connection-id="tab.connectionId || null" :initial-database="tab.database || null" @execute-query="(payload) => handleQueryBuilderExecute(tab, payload)" />
+                <QueryBuilder v-else-if="tab.type === 'builder'" :key="tab.key" :connection-id="tab.connectionId || null" :initial-database="tab.database || null" @execute-query="(payload: QueryBuilderExecutePayload | string) => handleQueryBuilderExecute(tab, payload)" />
                 <DataCompare v-else-if="tab.type === 'compare'" :key="tab.key" :connection-id="tab.connectionId || null" :initial-database="tab.database || null" />
                 <RedisEditor v-else-if="tab.type === 'redis'" :key="tab.key" :ref="redisEditorRef" />
               </KeepAlive>

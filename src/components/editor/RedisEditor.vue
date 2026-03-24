@@ -41,6 +41,26 @@
             db{{ i - 1 }}
           </a-select-option>
         </a-select>
+        <a-divider type="vertical" />
+        <a-input-search
+          v-model:value="keyInput"
+          :placeholder="$t('redis.key_name_placeholder')"
+          :disabled="!hasActiveConnection"
+          class="key-search"
+          @search="openKeyViewer"
+        />
+        <a-button
+          :disabled="!hasActiveConnection || !activeKeyName"
+          @click="refreshKeyViewer"
+        >
+          {{ $t('common.refresh') }}
+        </a-button>
+        <a-button
+          v-if="activeKeyName"
+          @click="clearKeyViewer"
+        >
+          {{ $t('redis.close_key_viewer') }}
+        </a-button>
       </a-space>
       <div class="editor-info">
         <a-tag v-if="connectionInfo" color="red">
@@ -60,12 +80,30 @@
       @cursor-change="handleCursorChange"
     />
 
-    <!-- 结果面板 -->
-    <RedisResultPanel
-      ref="resultPanelRef"
-      :results="commandResults"
-      :messages="messages"
-    />
+    <div class="redis-workspace">
+      <div class="redis-results-panel" :class="{ 'with-key-viewer': !!activeKeyName }">
+        <RedisResultPanel
+          ref="resultPanelRef"
+          :results="commandResults"
+          :messages="messages"
+        />
+      </div>
+      <div v-if="activeKeyName" class="redis-key-panel">
+        <div class="key-panel-header">
+          <div class="key-panel-title">
+            {{ $t('redis.key_viewer.panel_title') }}
+          </div>
+          <a-tag color="blue">{{ activeKeyName }}</a-tag>
+        </div>
+        <RedisKeyViewer
+          :key="`${selectedDatabase}-${viewerRefreshKey}-${activeKeyName}`"
+          :connection-id="connectionStore.activeConnectionId!"
+          :key-name="activeKeyName"
+          @deleted="handleKeyDeleted"
+          @updated="handleKeyUpdated"
+        />
+      </div>
+    </div>
 
     <!-- 历史记录对话框 -->
     <a-modal
@@ -118,6 +156,7 @@ import { redisApi } from '@/api'
 import { useConnectionStore } from '@/stores/connection'
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from '@/utils/storageService'
 import RedisCommandInput from './RedisCommandInput.vue'
+import RedisKeyViewer from './RedisKeyViewer.vue'
 import RedisResultPanel from './RedisResultPanel.vue'
 import type { RedisMessage } from './RedisResultPanel.vue'
 import RedisServerInfo from './RedisServerInfo.vue'
@@ -135,6 +174,9 @@ const showInfo = ref(false)
 const cursorLine = ref(1)
 const cursorColumn = ref(1)
 const selectedDatabase = ref('db0')
+const keyInput = ref('')
+const activeKeyName = ref('')
+const viewerRefreshKey = ref(0)
 let keepAliveTimer: number | null = null
 
 const messages = ref<RedisMessage[]>([])
@@ -161,6 +203,39 @@ function handleCursorChange(line: number, column: number) {
   cursorColumn.value = column
 }
 
+function openKeyViewer() {
+  const keyName = keyInput.value.trim()
+  if (!hasActiveConnection.value) {
+    message.warning(t('redis.no_connection'))
+    return
+  }
+  if (!keyName) {
+    message.warning(t('redis.input_key_name'))
+    return
+  }
+  activeKeyName.value = keyName
+  viewerRefreshKey.value++
+}
+
+function refreshKeyViewer() {
+  if (!activeKeyName.value) return
+  viewerRefreshKey.value++
+}
+
+function clearKeyViewer() {
+  activeKeyName.value = ''
+  keyInput.value = ''
+}
+
+function handleKeyDeleted() {
+  message.success(t('redis.key_viewer.delete_success'))
+  clearKeyViewer()
+}
+
+function handleKeyUpdated() {
+  viewerRefreshKey.value++
+}
+
 // 初始化
 onMounted(() => {
   loadHistory()
@@ -179,6 +254,9 @@ watch(
   (newId) => {
     commandResults.value = []
     messages.value = []
+    keyInput.value = ''
+    activeKeyName.value = ''
+    viewerRefreshKey.value = 0
     if (newId) {
       startKeepAlive()
     } else {
@@ -250,6 +328,7 @@ async function handleDatabaseChange(database: unknown) {
       [],
     )
     message.success(t('redis.switched_db', { db: dbStr }))
+    if (activeKeyName.value) viewerRefreshKey.value++
   } catch (error: unknown) {
     message.error(t('redis.switch_fail', { error: String(error) }))
   }
@@ -356,6 +435,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   height: 100%;
+  overflow: hidden;
 }
 
 .editor-toolbar {
@@ -381,5 +461,81 @@ defineExpose({
 .cursor-position {
   font-size: 12px;
   color: #8c8c8c;
+}
+
+.key-search {
+  width: 240px;
+}
+
+.redis-workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.redis-results-panel {
+  flex: 1;
+  min-width: 0;
+}
+
+.redis-key-panel {
+  width: 380px;
+  border-left: 1px solid #e8e8e8;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  min-width: 320px;
+}
+
+.dark-mode .redis-key-panel {
+  background: #1f1f1f;
+  border-left-color: #303030;
+}
+
+.key-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.dark-mode .key-panel-header {
+  border-bottom-color: #303030;
+}
+
+.key-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (max-width: 1080px) {
+  .editor-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .key-search {
+    width: 220px;
+  }
+
+  .redis-workspace {
+    flex-direction: column;
+  }
+
+  .redis-key-panel {
+    width: 100%;
+    min-width: 0;
+    min-height: 280px;
+    border-left: none;
+    border-top: 1px solid #e8e8e8;
+  }
+
+  .dark-mode .redis-key-panel {
+    border-top-color: #303030;
+  }
 }
 </style>

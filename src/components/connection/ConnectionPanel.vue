@@ -86,16 +86,16 @@
             <div class="root-tree-line"></div>
             
             <DatabaseTree
-              :ref="el => { if (el) databaseTreeRefs.set(conn.id, el) }"
+              :ref="(el: unknown) => { if (el) databaseTreeRefs.set(conn.id, el) }"
               :connection-id="conn.id"
               :db-type="conn.db_type"
               :search-value="searchText"
-              @table-selected="(data) => emit('table-selected', { ...data, connectionId: conn.id })"
-              @database-selected="(data) => emit('database-selected', { ...data, connectionId: conn.id })"
-              @new-query="(data) => emit('new-query', data)"
-              @design-table="(data) => emit('design-table', { ...data, connectionId: conn.id })"
-              @view-structure="(data) => emit('view-structure', { ...data, connectionId: conn.id })"
-              @open-scripts="(data) => emit('open-scripts', data)"
+              @table-selected="(data: TableTreeEventData) => emit('table-selected', { ...data, connectionId: conn.id })"
+              @database-selected="(data: DatabaseTreeEventData) => emit('database-selected', { ...data, connectionId: conn.id })"
+              @new-query="(data: QueryTreeEventData) => emit('new-query', data)"
+              @design-table="(data: TableTreeEventData) => emit('design-table', { ...data, connectionId: conn.id })"
+              @view-structure="(data: TableTreeEventData) => emit('view-structure', { ...data, connectionId: conn.id })"
+              @open-scripts="(data: QueryTreeEventData) => emit('open-scripts', data)"
             />
           </div>
         </div>
@@ -173,6 +173,27 @@ const expandedConnections = ref<Set<string>>(new Set())
 const { contextMenuVisible, contextMenuX, contextMenuY, showContextMenu, hideContextMenu } = useContextMenu()
 const selectedConnection = ref<ConnectionConfig | null>(null)
 const databaseTreeRefs = new Map<string, any>()
+
+interface TableTreeEventData {
+  connectionId?: string
+  database?: string
+  table?: string
+  schema?: string
+  metadata?: { schema?: string }
+}
+
+interface DatabaseTreeEventData {
+  connectionId?: string
+  name?: string
+}
+
+interface QueryTreeEventData {
+  connectionId?: string
+  database?: string
+  filePath?: string
+  title?: string
+  content?: string
+}
 
 /**
  * 获取专业品牌图标

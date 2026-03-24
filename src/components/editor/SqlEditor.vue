@@ -30,7 +30,7 @@
               </a-space>
               <a-dropdown>
                 <template #overlay>
-                  <a-menu @click="({ key }) => handleExportResult(index, String(key))">
+                  <a-menu @click="handleExportMenuClick(index, $event)">
                     <a-menu-item key="csv">{{ $t('data.export_csv') }}</a-menu-item>
                     <a-menu-item key="json">{{ $t('data.export_json') }}</a-menu-item>
                     <a-menu-item key="sql">{{ $t('data.export_sql') }}</a-menu-item>
@@ -299,6 +299,10 @@ async function handleExportResult(index: number, format: string) {
     message.error(errorMessage)
     addMessage('error', errorMessage)
   }
+}
+
+function handleExportMenuClick(index: number, { key }: { key: string | number }) {
+  return handleExportResult(index, String(key))
 }
 
 function getErrorMessage(error: unknown): string {

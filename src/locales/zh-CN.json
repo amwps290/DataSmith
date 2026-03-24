@@ -471,6 +471,9 @@
     "default_db": "默认",
     "no_connection": "请先选择一个 Redis 连接",
     "input_command": "请输入 Redis 命令",
+    "input_key_name": "请输入要查看的键名",
+    "key_name_placeholder": "输入键名并回车查看",
+    "close_key_viewer": "关闭键详情",
     "executing": "执行命令...",
     "exec_success": "命令执行成功！耗时 {time} ms",
     "exec_fail": "命令执行失败",
@@ -479,6 +482,7 @@
     "switch_fail": "切换数据库失败: {error}",
     "keepalive_fail": "Redis 连接可能已断开，请尝试重新连接",
     "key_viewer": {
+      "panel_title": "键详情",
       "key_label": "键: {key}",
       "ttl_seconds": "TTL: {ttl}秒",
       "never_expire": "永不过期",

@@ -53,7 +53,7 @@
           :placeholder="$t('common.database')"
           size="small"
           style="width: 160px"
-          @change="(val: any) => $emit('databaseChange', String(val ?? ''))"
+          @change="(val: unknown) => $emit('databaseChange', String(val ?? ''))"
         >
           <a-select-option value="">{{ appStore.language === 'zh-CN' ? '默认' : 'Default' }}</a-select-option>
           <a-select-option v-for="db in databases" :key="db.name" :value="db.name">{{ db.name }}</a-select-option>
