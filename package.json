@@ -16,6 +16,7 @@
     "@ant-design/icons-vue": "^7.0.1",
     "@iconify/vue": "^5.0.0",
     "@tauri-apps/api": "2.5.0",
+    "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "2.5.0",
     "@tauri-apps/plugin-fs": "~2.4.5",
     "@tauri-apps/plugin-store": "^2.0.0",

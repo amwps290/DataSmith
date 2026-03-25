@@ -107,6 +107,7 @@
 import { onMounted, onUnmounted, watch, ref, computed, onActivated, nextTick, reactive, h } from 'vue'
 import { useI18n } from 'vue-i18n'
 import * as monaco from 'monaco-editor'
+import { readText } from '@tauri-apps/plugin-clipboard-manager'
 import { getSqlAutocompleteManager } from '@/services/sqlAutocomplete'
 import { message } from 'ant-design-vue'
 import { ExportOutlined } from '@ant-design/icons-vue'
@@ -444,6 +445,20 @@ async function formatSql() { if (!editor) return; try { const formatted = await 
 function clearEditor() { editor?.setValue(''); queryResults.value = []; messages.value = []; }
 function handleQuerySaved() { message.success(t('common.save')) }
 function insertSnippet(sql: string) { if (!editor) return; const selection = editor.getSelection(); editor.executeEdits('insert-snippet', [{ range: selection || editor.getSelection()!, text: sql }]); showSnippets.value = false }
+async function pasteFromSystemClipboard() {
+  if (!editor) return
+
+  try {
+    const text = await readText()
+    const selections = editor.getSelections() || (editor.getSelection() ? [editor.getSelection()!] : [])
+    if (selections.length === 0) return
+
+    editor.executeEdits('system-clipboard-paste', selections.map((range) => ({ range, text })))
+    editor.focus()
+  } catch (e: any) {
+    message.error(getErrorMessage(e))
+  }
+}
 function openHistory() { showHistory.value = true }
 function openSnippets() { showSnippets.value = true }
 function useHistorySql(sql: string) { editor?.setValue(sql); showHistory.value = false; }
@@ -483,7 +498,7 @@ function handleDatabaseChange(dbName: string) {
 onMounted(() => {
   if (!editorContainer.value) return
   editor = monaco.editor.create(editorContainer.value, { value: props.initialValue || t('editor.placeholder'), language: 'sql', theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs', automaticLayout: true, readOnly: false, domReadOnly: false, fontSize: appStore.editorSettings.fontSize, fontFamily: appStore.editorSettings.fontFamily, minimap: { enabled: appStore.editorSettings.minimap }, scrollBeyondLastLine: false, lineNumbers: appStore.editorSettings.lineNumbers, renderLineHighlight: 'all', quickSuggestions: { other: true, comments: false, strings: false }, suggestOnTriggerCharacters: true, acceptSuggestionOnCommitCharacter: true, acceptSuggestionOnEnter: 'on', tabCompletion: 'on' })
-  updateAutocompleteContext(); editor.onDidChangeModelContent(() => { emit('contentChange', editor?.getValue() || ''); triggerAutoSave() }); editor.onKeyUp((event) => { if (event.keyCode === monaco.KeyCode.Space || event.keyCode === monaco.KeyCode.Period) editor?.trigger('keyboard', 'editor.action.triggerSuggest', {}) }); editor.addCommand(monaco.KeyCode.F5, () => executeQuery()); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => handleSave());
+  updateAutocompleteContext(); editor.onDidChangeModelContent(() => { emit('contentChange', editor?.getValue() || ''); triggerAutoSave() }); editor.onKeyUp((event) => { if (event.keyCode === monaco.KeyCode.Space || event.keyCode === monaco.KeyCode.Period) editor?.trigger('keyboard', 'editor.action.triggerSuggest', {}) }); editor.addCommand(monaco.KeyCode.F5, () => executeQuery()); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => handleSave()); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => { void pasteFromSystemClipboard() });
   sqlHistory.value = getStorageItem(STORAGE_KEYS.SQL_HISTORY, [])
   loadAvailableDatabases();
 })
