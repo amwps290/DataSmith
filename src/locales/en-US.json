@@ -79,6 +79,7 @@
     "current_theme": "Effective Theme",
     "current_theme_help": "When Follow System is selected, this shows the theme currently applied.",
     "language_help": "Switch the app language. Changes apply immediately.",
+    "diagnostics_group": "Diagnostics",
     "appearance_group": "Appearance",
     "preview_group": "Preview",
     "preview_title": "Workspace Preview",
@@ -106,7 +107,9 @@
     "minimap": "Show Minimap",
     "minimap_help": "Display the code overview minimap on the right side of editors.",
     "editor_preview": "Editor Preview",
-    "custom_font": "Custom Font"
+    "custom_font": "Custom Font",
+    "log_level": "Log Level",
+    "log_level_help": "Control how verbose console and file logs are. Crash reports are still written separately."
   },
   "connection": {
     "manager": "Connection Manager",

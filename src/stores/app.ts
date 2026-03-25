@@ -2,11 +2,13 @@ import { defineStore } from 'pinia'
 import { computed, reactive, ref, watch } from 'vue'
 import { setLocale } from '@/i18n'
 import { storage } from '@/utils/storage'
+import { utilsApi } from '@/api'
 
 export type Theme = 'light' | 'dark'
 export type ThemeMode = Theme | 'system'
 export type Language = 'zh-CN' | 'en-US'
 export type LineNumbersMode = 'on' | 'off'
+export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error'
 
 export interface InterfaceSettings {
   fontFamily: string
@@ -38,6 +40,7 @@ export const useAppStore = defineStore('app', () => {
   // 语言
   const language = ref<Language>(storage.get('language') || 
     (navigator.language.startsWith('zh') ? 'zh-CN' : 'en-US'))
+  const logLevel = ref<LogLevel>(storage.get('log_level') || 'info')
 
   // 侧边栏折叠状态
   const sidebarCollapsed = ref(storage.get('sidebar_collapsed') || false)
@@ -87,6 +90,16 @@ export const useAppStore = defineStore('app', () => {
     setLocale(newLang)
   }, { immediate: true })
 
+  watch(logLevel, async (newLevel) => {
+    storage.set('log_level', newLevel)
+    if (typeof window === 'undefined') return
+    try {
+      await utilsApi.setLogLevel(newLevel)
+    } catch (error) {
+      console.error('同步日志等级失败:', error)
+    }
+  }, { immediate: true })
+
   // 监听侧边栏状态
   watch(sidebarCollapsed, (newVal) => {
     storage.set('sidebar_collapsed', newVal)
@@ -122,6 +135,10 @@ export const useAppStore = defineStore('app', () => {
   // 设置语言
   function setLanguage(newLang: Language) {
     language.value = newLang
+  }
+
+  function setLogLevel(newLevel: LogLevel) {
+    logLevel.value = newLevel
   }
 
   // 切换侧边栏
@@ -162,6 +179,7 @@ export const useAppStore = defineStore('app', () => {
     themeMode,
     systemTheme,
     language,
+    logLevel,
     sidebarCollapsed,
     interfaceSettings,
     editorSettings,
@@ -170,6 +188,7 @@ export const useAppStore = defineStore('app', () => {
     setThemeMode,
     toggleLanguage,
     setLanguage,
+    setLogLevel,
     toggleSidebar,
     setInterfaceFontFamily,
     setEditorFontSize,

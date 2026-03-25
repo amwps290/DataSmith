@@ -10,11 +10,12 @@ use std::{
 use std::os::unix::ffi::OsStrExt;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 pub use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{fmt, prelude::*, reload, EnvFilter};
 
 static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
 static CRASH_DIR: OnceLock<PathBuf> = OnceLock::new();
 static PANIC_HOOK_INSTALLED: OnceLock<()> = OnceLock::new();
+static FILTER_RELOAD_HANDLE: OnceLock<reload::Handle<EnvFilter, tracing_subscriber::Registry>> = OnceLock::new();
 #[cfg(target_os = "windows")]
 static WINDOWS_EXCEPTION_HOOK_INSTALLED: OnceLock<()> = OnceLock::new();
 #[cfg(target_os = "linux")]
@@ -36,7 +37,10 @@ pub fn init_logger(app_dir: PathBuf) -> WorkerGuard {
     cache_signal_log_paths(&log_dir, &crash_dir);
 
     let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,datasmith=debug"));
+        .or_else(|_| build_env_filter("info"))
+        .unwrap_or_else(|_| EnvFilter::new("info,datasmith=info"));
+    let (filter_layer, reload_handle) = reload::Layer::new(env_filter);
+    let _ = FILTER_RELOAD_HANDLE.set(reload_handle);
 
     let formatting_layer = fmt::layer()
         .with_thread_ids(true)
@@ -60,7 +64,7 @@ pub fn init_logger(app_dir: PathBuf) -> WorkerGuard {
         .with_writer(non_blocking);
 
     let _ = tracing_subscriber::registry()
-        .with(env_filter)
+        .with(filter_layer)
         .with(formatting_layer)
         .with(file_layer)
         .try_init();
@@ -79,6 +83,40 @@ pub fn init_logger(app_dir: PathBuf) -> WorkerGuard {
     );
 
     guard
+}
+
+pub fn set_log_level(level: &str) -> Result<String, String> {
+    let normalized = normalize_log_level(level)?;
+    let env_filter = build_env_filter(&normalized)?;
+    let handle = FILTER_RELOAD_HANDLE
+        .get()
+        .ok_or_else(|| "日志系统尚未初始化".to_string())?;
+
+    handle
+        .reload(env_filter)
+        .map_err(|error| format!("更新日志等级失败: {}", error))?;
+
+    tracing::info!(level = %normalized, "日志等级已更新");
+    Ok(normalized)
+}
+
+fn normalize_log_level(level: &str) -> Result<String, String> {
+    let normalized = level.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "trace" | "debug" | "info" | "warn" | "error" => Ok(normalized),
+        _ => Err(format!("不支持的日志等级: {}", level)),
+    }
+}
+
+fn build_env_filter(level: &str) -> Result<EnvFilter, String> {
+    let normalized = normalize_log_level(level)?;
+    let directives = format!(
+        "{base},datasmith={base},tao=warn,wry=warn,hyper=warn,tower=warn",
+        base = normalized
+    );
+
+    EnvFilter::try_new(directives)
+        .map_err(|error| format!("构建日志过滤器失败: {}", error))
 }
 
 pub fn write_fatal_report(stage: &str, error: &str) -> Option<PathBuf> {
@@ -164,6 +202,25 @@ fn write_text_file(path: &Path, content: &str) -> std::io::Result<()> {
     file.write_all(content.as_bytes())?;
     file.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_log_level;
+
+    #[test]
+    fn accepts_supported_log_levels() {
+        for value in ["trace", "debug", "info", "warn", "error", " INFO "] {
+            assert!(normalize_log_level(value).is_ok(), "expected {value} to be valid");
+        }
+    }
+
+    #[test]
+    fn rejects_unsupported_log_levels() {
+        for value in ["off", "verbose", "", "fatal"] {
+            assert!(normalize_log_level(value).is_err(), "expected {value} to be rejected");
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]

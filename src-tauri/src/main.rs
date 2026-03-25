@@ -64,6 +64,7 @@ fn main() {
             commands::export::export_table_ddl,
             commands::utils::read_file,
             commands::utils::write_file,
+            commands::utils::set_log_level,
             commands::redis::execute_redis_command,
             commands::redis::get_redis_info,
             commands::redis::get_redis_key_value,

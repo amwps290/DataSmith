@@ -79,6 +79,7 @@
     "current_theme": "当前生效主题",
     "current_theme_help": "当选择“跟随系统”时，这里会显示当前实际生效的主题。",
     "language_help": "切换界面文案语言，设置会立即生效。",
+    "diagnostics_group": "诊断",
     "appearance_group": "外观",
     "preview_group": "预览",
     "preview_title": "工作区预览",
@@ -106,7 +107,9 @@
     "minimap": "显示 Minimap",
     "minimap_help": "在编辑器右侧显示代码缩略图。",
     "editor_preview": "编辑器预览",
-    "custom_font": "自定义字体"
+    "custom_font": "自定义字体",
+    "log_level": "日志等级",
+    "log_level_help": "控制控制台和日志文件的输出详细程度。崩溃日志仍会单独记录。"
   },
   "connection": {
     "manager": "连接管理器",

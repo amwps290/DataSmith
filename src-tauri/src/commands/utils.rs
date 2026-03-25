@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 use tauri::{AppHandle, Manager};
+use crate::utils::logger;
 
 /// 验证路径是否在允许的目录内（应用数据目录下的 scripts 子目录）
 fn validate_path(path: &str, app: &AppHandle) -> Result<(), String> {
@@ -52,4 +53,9 @@ pub async fn write_file(path: String, content: String, app: AppHandle) -> Result
     validate_path(&path, &app)?;
     fs::write(&path, content)
         .map_err(|e| format!("写入文件失败: {}", e))
+}
+
+#[tauri::command]
+pub async fn set_log_level(level: String) -> Result<String, String> {
+    logger::set_log_level(&level)
 }

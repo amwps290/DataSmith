@@ -88,6 +88,16 @@
               </div>
             </a-card>
 
+            <a-card :title="$t('settings_page.diagnostics_group')" class="settings-card secondary-card">
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <div class="setting-label">{{ $t('settings_page.log_level') }}</div>
+                  <div class="setting-help">{{ $t('settings_page.log_level_help') }}</div>
+                </div>
+                <a-select v-model:value="logLevelModel" style="width: 220px" :options="logLevelOptions" />
+              </div>
+            </a-card>
+
             <a-card :title="$t('settings_page.preview_group')" class="settings-card secondary-card">
               <div class="preview-surface">
                 <div class="preview-toolbar">
@@ -203,7 +213,7 @@ import { useRouter } from 'vue-router'
 import { AppstoreOutlined, CodeOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
 import { useI18n } from 'vue-i18n'
 import AppHeader from '@/components/layout/AppHeader.vue'
-import { useAppStore, type Language, type ThemeMode } from '@/stores/app'
+import { useAppStore, type Language, type LogLevel, type ThemeMode } from '@/stores/app'
 
 const router = useRouter()
 const appStore = useAppStore()
@@ -221,6 +231,14 @@ const editorFontOptions = [
   { label: 'Fira Code', value: `"Fira Code", "JetBrains Mono", "Cascadia Code", monospace` },
   { label: 'SF Mono', value: `"SFMono-Regular", "SF Mono", "Cascadia Code", monospace` },
   { label: 'Source Code Pro', value: `"Source Code Pro", "JetBrains Mono", monospace` },
+]
+
+const logLevelOptions = [
+  { label: 'Error', value: 'error' },
+  { label: 'Warn', value: 'warn' },
+  { label: 'Info', value: 'info' },
+  { label: 'Debug', value: 'debug' },
+  { label: 'Trace', value: 'trace' },
 ]
 
 const currentSection = computed(() => selectedKeys.value[0] || 'interface')
@@ -248,6 +266,11 @@ const themeModeModel = computed({
 const languageModel = computed({
   get: () => appStore.language,
   set: (value: Language) => appStore.setLanguage(value),
+})
+
+const logLevelModel = computed({
+  get: () => appStore.logLevel,
+  set: (value: LogLevel) => appStore.setLogLevel(value),
 })
 
 const fontSizeModel = computed({

@@ -13,5 +13,12 @@ export const utilsApi = {
    */
   async writeFile(path: string, content: string): Promise<void> {
     return invoke('write_file', { path, content })
+  },
+
+  /**
+   * 更新运行时日志等级
+   */
+  async setLogLevel(level: string): Promise<string> {
+    return invoke<string>('set_log_level', { level })
   }
 }
