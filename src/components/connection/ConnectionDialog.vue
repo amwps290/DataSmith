@@ -19,11 +19,11 @@
 
       <a-form-item :label="$t('connection.form.type')" name="db_type">
         <a-select v-model:value="formData.db_type" :placeholder="$t('connection.form.placeholders.type')">
-          <a-select-option value="mysql">MySQL</a-select-option>
-          <a-select-option value="postgresql">PostgreSQL</a-select-option>
-          <a-select-option value="sqlite">SQLite</a-select-option>
-          <a-select-option value="mongodb">MongoDB</a-select-option>
-          <a-select-option value="redis">Redis</a-select-option>
+          <a-select-option value="mysql">{{ getTypeOptionLabel('mysql', 'MySQL') }}</a-select-option>
+          <a-select-option value="postgresql">{{ getTypeOptionLabel('postgresql', 'PostgreSQL') }}</a-select-option>
+          <a-select-option value="sqlite">{{ getTypeOptionLabel('sqlite', 'SQLite') }}</a-select-option>
+          <a-select-option value="mongodb">{{ getTypeOptionLabel('mongodb', 'MongoDB') }}</a-select-option>
+          <a-select-option value="redis">{{ getTypeOptionLabel('redis', 'Redis') }}</a-select-option>
         </a-select>
       </a-form-item>
 
@@ -136,6 +136,7 @@ import { useConnectionStore } from '@/stores/connection'
 import type { ConnectionConfig, DatabaseType } from '@/types/database'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { connectionApi } from '@/api'
+import { getDatabaseSupportProfile } from '@/utils/databaseSupport'
 
 const { t } = useI18n()
 const props = defineProps<{
@@ -182,6 +183,11 @@ const formData = reactive<{
   pool_size: 10,
   color: '',
 })
+
+function getTypeOptionLabel(dbType: DatabaseType, displayName: string) {
+  const profile = getDatabaseSupportProfile(dbType)
+  return `${displayName} · ${t(`connection.support.levels.${profile.level}`)}`
+}
 
 // 表单验证规则
 const rules = computed(() => {

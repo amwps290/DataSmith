@@ -128,6 +128,21 @@
     "select_file": "选择",
     "create_file": "新建",
     "sqlite_created": "数据库文件已创建",
+    "support": {
+      "title": "支持级别",
+      "levels": {
+        "stable": "主线支持",
+        "limited": "有限支持",
+        "experimental": "实验性支持"
+      },
+      "notes": {
+        "mysql": "MySQL 是当前主线支持数据库，适合日常查询、数据编辑和结构维护。",
+        "postgresql": "PostgreSQL 是当前主线支持数据库，支持 Schema 导航、查询编辑和常见对象维护。",
+        "sqlite": "SQLite 是当前主线支持数据库，适合轻量数据管理，但部分在线结构变更会受限。",
+        "redis": "Redis 当前为有限支持，适合命令执行、基础 Key 查看和轻量运维，不作为 SQL 主工作流。",
+        "mongodb": "MongoDB 当前为实验性支持，适合连接和基础浏览，不建议按正式主线能力使用。"
+      }
+    },
     "form": {
       "name": "连接名称",
       "type": "数据库类型",
@@ -174,7 +189,6 @@
     "view_data": "查看数据",
     "view_ddl": "查看 DDL",
     "design_table": "设计表",
-    "drop_table": "删除表",
     "copy_name": "复制名称",
     "empty": "(无数据)"
   },

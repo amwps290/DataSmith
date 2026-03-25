@@ -128,6 +128,21 @@
     "select_file": "Select",
     "create_file": "New",
     "sqlite_created": "Database file created",
+    "support": {
+      "title": "Support Level",
+      "levels": {
+        "stable": "Stable Support",
+        "limited": "Limited Support",
+        "experimental": "Experimental Support"
+      },
+      "notes": {
+        "mysql": "MySQL is a primary supported database for daily querying, data editing, and schema maintenance.",
+        "postgresql": "PostgreSQL is a primary supported database with schema navigation, query workflows, and common object maintenance.",
+        "sqlite": "SQLite is a primary supported database for lightweight data management, with some online schema editing limitations.",
+        "redis": "Redis is currently limited support for command execution, basic key inspection, and lightweight maintenance, not a primary SQL workflow.",
+        "mongodb": "MongoDB is currently experimental support for connectivity and basic browsing only, and should not be treated as a primary workflow."
+      }
+    },
     "form": {
       "name": "Connection Name",
       "type": "Database Type",
@@ -174,7 +189,6 @@
     "view_data": "View Data",
     "view_ddl": "View DDL",
     "design_table": "Design Table",
-    "drop_table": "Drop Table",
     "copy_name": "Copy Name",
     "empty": "(No data)"
   },
