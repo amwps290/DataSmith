@@ -18,10 +18,10 @@
             <a-menu-item key="new-connection" @click="$emit('newConnection')">
               <PlusOutlined /> {{ $t('connection.new') }}
             </a-menu-item>
-            <a-menu-item key="query-builder" @click="$emit('openQueryBuilder')">
+            <a-menu-item v-if="showQueryBuilder" key="query-builder" @click="$emit('openQueryBuilder')">
               <BuildOutlined /> {{ $t('tools.query_builder.title') }}
             </a-menu-item>
-            <a-menu-item key="data-compare" @click="$emit('openDataCompare')">
+            <a-menu-item v-if="showDataCompare" key="data-compare" @click="$emit('openDataCompare')">
               <RetweetOutlined /> {{ $t('tools.data_compare.title') }}
             </a-menu-item>
             <a-menu-divider />
@@ -122,8 +122,12 @@ import { useI18n } from 'vue-i18n'
 
 withDefaults(defineProps<{
   showSearch?: boolean
+  showQueryBuilder?: boolean
+  showDataCompare?: boolean
 }>(), {
   showSearch: true,
+  showQueryBuilder: false,
+  showDataCompare: false,
 })
 
 defineEmits<{

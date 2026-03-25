@@ -2,6 +2,8 @@
   <a-layout class="main-layout" :class="{ 'dark-mode': appStore.theme === 'dark' }">
     <!-- 顶部标题栏 -->
     <AppHeader
+      :show-query-builder="showQueryBuilderEntry"
+      :show-data-compare="showDataCompareEntry"
       @new-connection="showConnectionDialog = true"
       @open-query-builder="handleOpenQueryBuilder"
       @open-data-compare="handleOpenDataCompare"
@@ -128,6 +130,7 @@ import { TabType } from '@/types/workspace'
 import { useSidebarResize } from '@/composables/useSidebarResize'
 import { useTabManager, type DataTab } from '@/composables/useTabManager'
 import { useContextMenu } from '@/composables/useContextMenu'
+import { getDatabaseSupportProfile, supportsDataCompare, supportsQueryBuilder, supportsSqlWorkspace } from '@/utils/databaseSupport'
 
 // Step 34: 重量级组件懒加载
 const SqlEditor = defineAsyncComponent(() => import('@/components/editor/SqlEditor.vue'))
@@ -163,9 +166,12 @@ function openSettings() {
   router.push({ name: 'Settings' })
 }
 
+const activeConnection = computed(() => connectionStore.getActiveConnection())
+const activeSupportProfile = computed(() => getDatabaseSupportProfile(activeConnection.value?.db_type || null))
+const showQueryBuilderEntry = computed(() => Boolean(activeConnection.value?.id) && activeSupportProfile.value.supportsQueryBuilder)
+const showDataCompareEntry = computed(() => Boolean(activeConnection.value?.id) && activeSupportProfile.value.supportsDataCompare)
 const isSqlSupported = computed(() => {
-  const activeConnection = connectionStore.getActiveConnection()
-  return activeConnection ? !['redis', 'mongodb', 'elasticsearch'].includes(activeConnection.db_type) : true
+  return !activeConnection.value || supportsSqlWorkspace(activeConnection.value.db_type)
 })
 
 watch([dataTabs, mainTabKey], () => { workspaceStore.saveSession(dataTabs.value, mainTabKey.value) }, { deep: true })
@@ -312,7 +318,7 @@ function handleOpenQueryBuilder() {
     return
   }
 
-  if (['redis', 'mongodb'].includes(activeConnection.db_type)) {
+  if (!supportsQueryBuilder(activeConnection.db_type)) {
     message.warning(t('tools.query_builder.unsupported_connection'))
     return
   }
@@ -351,7 +357,7 @@ function handleOpenDataCompare() {
     return
   }
 
-  if (['redis', 'mongodb'].includes(activeConnection.db_type)) {
+  if (!supportsDataCompare(activeConnection.db_type)) {
     message.warning(t('tools.data_compare.unsupported_connection'))
     return
   }
