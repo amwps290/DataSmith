@@ -312,7 +312,9 @@
     "confirm_save": "确定要保存对表结构的修改吗？",
     "change_preview": "结构变更预览",
     "preview_change_count": "共 {n} 项结构变更",
-    "preview_hint": "以下 SQL 为即将提交的结构变更预览，实际执行仍以后端结构变更接口为准。"
+    "preview_hint": "以下 SQL 为即将提交的结构变更预览，实际执行仍以后端结构变更接口为准。",
+    "read_only_mode": "只读模式",
+    "read_only_blocked": "当前连接处于只读模式，已阻止表结构修改操作"
   },
   "dialog": {
     "create_database": {

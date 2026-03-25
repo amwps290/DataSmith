@@ -2,7 +2,7 @@
   <div class="table-designer">
     <div class="designer-toolbar">
       <a-space>
-        <template v-if="!readOnly">
+        <template v-if="!effectiveReadOnly">
           <a-button :icon="h(SaveOutlined)" @click="saveChanges" type="primary" :loading="saving">
             {{ $t('common.save') }}
           </a-button>
@@ -14,6 +14,7 @@
           {{ $t('common.refresh') }}
         </a-button>
         <a-divider type="vertical" />
+        <a-tag v-if="effectiveReadOnly" color="gold">{{ $t('designer.read_only_mode') }}</a-tag>
         <a-tag color="blue">{{ database }}{{ schema ? '.' + schema : '' }}.{{ table }}</a-tag>
       </a-space>
     </div>
@@ -25,7 +26,7 @@
           <TableDesignerColumns
             :columns="tableColumns"
             :loading="loading"
-            :read-only="readOnly"
+            :read-only="effectiveReadOnly"
             @remove="removeColumn"
             @move="moveColumn"
           />
@@ -36,7 +37,7 @@
           <TableDesignerIndexes
             :indexes="tableIndexes"
             :loading="loading"
-            :read-only="readOnly"
+            :read-only="effectiveReadOnly"
             @add="addIndex"
             @remove="removeIndex"
           />
@@ -55,11 +56,11 @@
         </a-tab-pane>
 
         <!-- 外键 -->
-        <a-tab-pane key="foreign_keys" :tab="$t('designer.foreign_keys')" v-if="tableForeignKeys.length > 0 || !readOnly">
+        <a-tab-pane key="foreign_keys" :tab="$t('designer.foreign_keys')" v-if="tableForeignKeys.length > 0 || !effectiveReadOnly">
           <TableDesignerForeignKeys
             :foreign-keys="tableForeignKeys"
             :loading="loading"
-            :read-only="readOnly"
+            :read-only="effectiveReadOnly"
             @add="addForeignKey"
             @remove="removeForeignKey"
           />
@@ -264,7 +265,13 @@ const newForeignKey = reactive({
   onUpdate: 'CASCADE',
 })
 
-const dbType = computed(() => connectionStore.connections.find(connection => connection.id === props.connectionId)?.db_type || 'mysql')
+const currentConnection = computed(() => connectionStore.connections.find(connection => connection.id === props.connectionId) || null)
+const effectiveReadOnly = computed(() => Boolean(props.readOnly) || Boolean(currentConnection.value?.read_only))
+const dbType = computed(() => currentConnection.value?.db_type || 'mysql')
+
+function warnReadOnly() {
+  message.warning(t('designer.read_only_blocked'))
+}
 
 function resetPreviewState() {
   showPreviewDialog.value = false
@@ -560,6 +567,10 @@ function buildPreviewSql(changes: any[]) {
 
 // 添加列
 function addColumn() {
+  if (effectiveReadOnly.value) {
+    warnReadOnly()
+    return
+  }
   tableColumns.value.push({
     name: `column_${tableColumns.value.length + 1}`,
     data_type: 'VARCHAR', length: 255, nullable: true,
@@ -570,6 +581,10 @@ function addColumn() {
 
 // 移除列
 function removeColumn(index: number) {
+  if (effectiveReadOnly.value) {
+    warnReadOnly()
+    return
+  }
   const col = tableColumns.value[index]
   Modal.confirm({
     title: t('common.delete'),
@@ -586,6 +601,10 @@ function removeColumn(index: number) {
 
 // 移动列
 function moveColumn(index: number, direction: number) {
+  if (effectiveReadOnly.value) {
+    warnReadOnly()
+    return
+  }
   const newIdx = index + direction
   if (newIdx < 0 || newIdx >= tableColumns.value.length) return
   const temp = tableColumns.value[index]
@@ -597,6 +616,10 @@ function moveColumn(index: number, direction: number) {
 
 // 保存更改
 async function saveChanges() {
+  if (effectiveReadOnly.value) {
+    warnReadOnly()
+    return
+  }
   const changes = collectChanges()
   if (changes.length === 0) {
     message.info(t('common.no_data'))
@@ -609,6 +632,11 @@ async function saveChanges() {
 }
 
 async function confirmSaveChanges() {
+  if (effectiveReadOnly.value) {
+    warnReadOnly()
+    resetPreviewState()
+    return
+  }
   if (previewChanges.value.length === 0) return
 
   saving.value = true
@@ -658,10 +686,21 @@ async function loadDDL() {
 function copyDDL() { navigator.clipboard.writeText(ddlSql.value); message.success(t('common.copy') + ' ' + t('common.ok')) }
 
 // 添加索引
-function addIndex() { newIndex.name = ''; newIndex.type = 'INDEX'; newIndex.columns = []; showAddIndexDialog.value = true }
+function addIndex() {
+  if (effectiveReadOnly.value) {
+    warnReadOnly()
+    return
+  }
+  newIndex.name = ''; newIndex.type = 'INDEX'; newIndex.columns = []; showAddIndexDialog.value = true
+}
 
 // 处理添加索引
 async function handleAddIndex() {
+  if (effectiveReadOnly.value) {
+    warnReadOnly()
+    showAddIndexDialog.value = false
+    return
+  }
   if (!newIndex.name || newIndex.columns.length === 0) return
   tableIndexes.value.push({
     name: newIndex.name, columns: [...newIndex.columns],
@@ -673,12 +712,20 @@ async function handleAddIndex() {
 
 // 删除索引
 async function removeIndex(record: any) {
+  if (effectiveReadOnly.value) {
+    warnReadOnly()
+    return
+  }
   if (!record._isNew) pendingDeletions.indexes.push(record.name)
   tableIndexes.value = tableIndexes.value.filter(i => i.name !== record.name)
 }
 
 // 添加外键
 function addForeignKey() {
+  if (effectiveReadOnly.value) {
+    warnReadOnly()
+    return
+  }
   newForeignKey.name = ''; newForeignKey.column = ''; newForeignKey.refTable = '';
   newForeignKey.refColumn = ''; newForeignKey.onDelete = 'CASCADE'; newForeignKey.onUpdate = 'CASCADE';
   showAddForeignKeyDialog.value = true
@@ -686,6 +733,11 @@ function addForeignKey() {
 
 // 处理添加外键
 async function handleAddForeignKey() {
+  if (effectiveReadOnly.value) {
+    warnReadOnly()
+    showAddForeignKeyDialog.value = false
+    return
+  }
   if (!newForeignKey.name || !newForeignKey.column || !newForeignKey.refTable || !newForeignKey.refColumn) return
   tableForeignKeys.value.push({
     name: newForeignKey.name, column_name: newForeignKey.column,
@@ -697,6 +749,10 @@ async function handleAddForeignKey() {
 
 // 删除外键
 async function removeForeignKey(record: any) {
+  if (effectiveReadOnly.value) {
+    warnReadOnly()
+    return
+  }
   if (!record._isNew) pendingDeletions.foreignKeys.push(record.name)
   tableForeignKeys.value = tableForeignKeys.value.filter(f => f.name !== record.name)
 }

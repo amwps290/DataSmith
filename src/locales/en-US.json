@@ -312,7 +312,9 @@
     "confirm_save": "Are you sure you want to save changes to the table structure?",
     "change_preview": "Structure Change Preview",
     "preview_change_count": "{n} structure change(s)",
-    "preview_hint": "The SQL below previews the structure changes that will be submitted. Actual execution still relies on the backend alter-table API."
+    "preview_hint": "The SQL below previews the structure changes that will be submitted. Actual execution still relies on the backend alter-table API.",
+    "read_only_mode": "Read Only",
+    "read_only_blocked": "This connection is read-only. Schema modification actions are blocked."
   },
   "dialog": {
     "create_database": {
