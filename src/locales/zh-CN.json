@@ -268,6 +268,8 @@
     "preview_delete_count": "删除 {n} 行",
     "pending_delete_count": "待提交删除 {n} 行",
     "preview_hint": "以下 SQL 仅用于预览，实际提交仍通过安全接口逐条执行。",
+    "read_only_mode": "只读模式",
+    "read_only_blocked": "当前连接处于只读模式，已阻止数据编辑操作",
     "delete_staged": "已加入待提交删除列表",
     "update_fail": "更新失败",
     "cell_modified": "已修改",

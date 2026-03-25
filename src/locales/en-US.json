@@ -268,6 +268,8 @@
     "preview_delete_count": "Delete {n} row(s)",
     "pending_delete_count": "Pending delete {n} row(s)",
     "preview_hint": "The SQL below is for preview only. Actual submission still uses the safe structured APIs.",
+    "read_only_mode": "Read Only",
+    "read_only_blocked": "This connection is read-only. Data editing actions are blocked.",
     "delete_staged": "Added to the pending delete list",
     "update_fail": "Update failed",
     "cell_modified": "Modified",

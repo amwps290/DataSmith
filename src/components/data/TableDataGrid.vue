@@ -6,16 +6,16 @@
           <a-button :icon="h(ReloadOutlined)" @click="refresh" :loading="loading">
             {{ $t('common.refresh') }}
           </a-button>
-          <a-button :icon="h(PlusOutlined)" @click="addRow">
+          <a-button :icon="h(PlusOutlined)" @click="addRow" :disabled="isReadOnly">
             {{ $t('data.add_inline') }}
           </a-button>
-          <a-button :icon="h(FormOutlined)" @click="showInsertDialog = true">
+          <a-button :icon="h(FormOutlined)" @click="showInsertDialog = true" :disabled="isReadOnly">
             {{ $t('data.add_form') }}
           </a-button>
           <a-button 
             :icon="h(DeleteOutlined)" 
             danger 
-            :disabled="selectedRowKeys.length === 0"
+            :disabled="isReadOnly || selectedRowKeys.length === 0"
             @click="deleteSelected"
           >
             {{ $t('common.delete') }}
@@ -26,7 +26,7 @@
 
         <!-- 提交变更按钮 -->
         <a-button-group v-if="hasChanges">
-          <a-button type="primary" @click="submitChanges" :loading="saving">
+          <a-button type="primary" @click="submitChanges" :loading="saving" :disabled="isReadOnly">
             {{ $t('data.save_changes', { n: changeCount }) }}
           </a-button>
           <a-button @click="discardChanges">
@@ -39,7 +39,7 @@
         <a-button :icon="h(FilterOutlined)" @click="showFilterDialog = true">
           {{ $t('data.filter') }}
         </a-button>
-        <a-button :icon="h(UploadOutlined)" @click="showImportDialog = true">
+        <a-button :icon="h(UploadOutlined)" @click="showImportDialog = true" :disabled="isReadOnly">
           {{ $t('data.import') }}
         </a-button>
         <a-dropdown>
@@ -61,6 +61,9 @@
       </a-space>
       
       <div class="toolbar-right">
+        <a-tag v-if="isReadOnly" color="gold">
+          {{ $t('data.read_only_mode') }}
+        </a-tag>
         <a-tag v-if="deletedRows.length > 0" color="red">
           {{ $t('data.pending_delete_count', { n: deletedRows.length }) }}
         </a-tag>
@@ -112,12 +115,12 @@
       <div v-if="selectedCell" class="viewer-container">
         <div class="viewer-header">
           <a-tag color="blue">{{ selectedCell.column.title }}</a-tag>
-          <a-checkbox v-model:checked="isViewerSetNull" @change="handleViewerNullChange">{{ $t('data.set_null') }}</a-checkbox>
+          <a-checkbox v-model:checked="isViewerSetNull" @change="handleViewerNullChange" :disabled="isReadOnly">{{ $t('data.set_null') }}</a-checkbox>
         </div>
         <a-textarea
           v-model:value="viewerValue"
           :rows="20"
-          :disabled="isViewerSetNull"
+          :disabled="isReadOnly || isViewerSetNull"
           class="viewer-textarea"
           @change="handleViewerValueChange"
         />
@@ -261,11 +264,17 @@ const isViewerSetNull = ref(false)
 
 const pagination = reactive({ current: 1, pageSize: 100 })
 
-const dbType = computed(() => connectionStore.connections.find(c => c.id === props.connectionId)?.db_type || 'mysql')
+const currentConnection = computed(() => connectionStore.connections.find(c => c.id === props.connectionId) || null)
+const isReadOnly = computed(() => Boolean(currentConnection.value?.read_only))
+const dbType = computed(() => currentConnection.value?.db_type || 'mysql')
 const quote = (n: string) => dbType.value === 'sqlite' || dbType.value === 'postgresql' ? `"${n}"` : `\`${n}\``
 const tableRef = () => {
   if (dbType.value === 'postgresql') return `${quote(props.schema || 'public')}.${quote(props.table)}`
   return quote(props.table)
+}
+
+function warnReadOnly() {
+  message.warning(t('data.read_only_blocked'))
 }
 
 const gridOptions = reactive<VxeGridProps>({
@@ -305,6 +314,7 @@ function getCellClassName({ row, column }: any) {
 }
 
 function handleEditClosed({ row, column }: any) {
+  if (isReadOnly.value) return
   if (row._isDeletedPending) return
   recordChange(row, column.field, row[column.field])
   // 如果当前查看器正在显示这个单元格，同步它
@@ -344,6 +354,7 @@ function handleCellClick({ row, column }: any) {
 }
 
 function handleViewerValueChange() {
+  if (isReadOnly.value) return
   if (!selectedCell.value) return
   const { row, column } = selectedCell.value
   if (row._isDeletedPending) return
@@ -352,6 +363,7 @@ function handleViewerValueChange() {
 }
 
 function handleViewerNullChange() {
+  if (isReadOnly.value) return
   if (!selectedCell.value) return
   const { row, column } = selectedCell.value
   if (row._isDeletedPending) return
@@ -430,7 +442,7 @@ function buildGridColumns(columnNames: string[]): NonNullable<VxeGridProps['colu
       minWidth: 120,
       showOverflow: true,
       slots: { default: 'cell_default' },
-      editRender: { name: 'input' }
+      editRender: isReadOnly.value ? undefined : { name: 'input' }
     }))
   ] as NonNullable<VxeGridProps['columns']>
 }
@@ -548,6 +560,10 @@ function removeRows(rowIndexes: number[]) {
 }
 
 async function submitChanges() {
+  if (isReadOnly.value) {
+    warnReadOnly()
+    return
+  }
   try {
     const plan = createPreviewPlan()
     if (plan.inserts.length === 0 && plan.updates.length === 0 && plan.deletes.length === 0) {
@@ -563,6 +579,11 @@ async function submitChanges() {
 }
 
 async function confirmSubmitChanges() {
+  if (isReadOnly.value) {
+    warnReadOnly()
+    resetPreviewState()
+    return
+  }
   if (!previewPlan.value) return
 
   saving.value = true
@@ -734,6 +755,10 @@ function handleCheckboxChange() {
 function applyFilter() { showFilterDialog.value = false; refresh() }
 
 function addRow() {
+  if (isReadOnly.value) {
+    warnReadOnly()
+    return
+  }
   const rowData = tableColumns.value.reduce<Record<string, any>>((acc, column) => {
     acc[column.name] = null
     return acc
@@ -754,6 +779,10 @@ async function handleDataImported() {
 }
 
 async function deleteSelected() {
+  if (isReadOnly.value) {
+    warnReadOnly()
+    return
+  }
   Modal.confirm({
     title: t('common.delete'), content: t('data.delete_confirm_n', { n: selectedRowKeys.value.length }), okType: 'danger',
     async onOk() {
@@ -811,7 +840,7 @@ async function handleExport({ key }: any) {
 }
 
 watch(
-  () => [props.connectionId, props.database, props.schema, props.table],
+  () => [props.connectionId, props.database, props.schema, props.table, isReadOnly.value],
   () => {
     primaryKeys.value = []
     tableColumns.value = []
