@@ -217,7 +217,19 @@
     "export_default_name": "查询结果",
     "manual_stop": "已手动停止",
     "format_success": "格式化完成",
-    "refresh_cache_success": "已刷新提示缓存"
+    "refresh_cache_success": "已刷新提示缓存",
+    "danger": {
+      "confirm_title": "检测到高风险 SQL",
+      "confirm_intro": "以下 SQL 可能导致大范围数据变更或结构删除，请确认是否继续执行：",
+      "confirm_ok": "继续执行",
+      "confirmed": "已确认执行高风险 SQL",
+      "cancelled": "已取消高风险 SQL 执行",
+      "update_without_where": "UPDATE 语句未检测到 WHERE 条件",
+      "delete_without_where": "DELETE 语句未检测到 WHERE 条件",
+      "truncate": "包含 TRUNCATE 语句",
+      "drop": "包含 DROP 语句",
+      "batch_write": "检测到多条写入或结构变更语句批量执行"
+    }
   },
   "data": {
     "filter": "筛选",

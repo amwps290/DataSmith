@@ -217,7 +217,19 @@
     "export_default_name": "query_result",
     "manual_stop": "Manually stopped",
     "format_success": "Format complete",
-    "refresh_cache_success": "Autocomplete cache refreshed"
+    "refresh_cache_success": "Autocomplete cache refreshed",
+    "danger": {
+      "confirm_title": "High-risk SQL detected",
+      "confirm_intro": "The following SQL may cause broad data changes or destructive schema operations. Confirm before execution:",
+      "confirm_ok": "Execute Anyway",
+      "confirmed": "High-risk SQL execution confirmed",
+      "cancelled": "High-risk SQL execution cancelled",
+      "update_without_where": "UPDATE statement without a WHERE clause detected",
+      "delete_without_where": "DELETE statement without a WHERE clause detected",
+      "truncate": "TRUNCATE statement detected",
+      "drop": "DROP statement detected",
+      "batch_write": "Multiple write or schema-changing statements will be executed in one batch"
+    }
   },
   "data": {
     "filter": "Filter",

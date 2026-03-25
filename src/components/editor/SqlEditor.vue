@@ -109,7 +109,7 @@ import { useI18n } from 'vue-i18n'
 import * as monaco from 'monaco-editor'
 import { readText } from '@tauri-apps/plugin-clipboard-manager'
 import { getSqlAutocompleteManager } from '@/services/sqlAutocomplete'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { ExportOutlined } from '@ant-design/icons-vue'
 import { save } from '@tauri-apps/plugin-dialog'
 import { exportApi, queryApi, metadataApi, utilsApi } from '@/api'
@@ -118,6 +118,7 @@ import type { PreparedSqlStatement } from '@/api/query'
 import { useConnectionStore } from '@/stores/connection'
 import { useAppStore } from '@/stores/app'
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from '@/utils/storageService'
+import { analyzeSqlSafety, type SqlDangerIssue } from '@/utils/sqlSafety'
 import SaveQueryDialog from './SaveQueryDialog.vue'
 import SqlSnippetsManager from './SqlSnippetsManager.vue'
 import type { VxeGridProps } from 'vxe-table'
@@ -339,6 +340,45 @@ function getErrorMessage(error: unknown): string {
   return String(error)
 }
 
+function getDangerIssueLabel(issue: SqlDangerIssue) {
+  return t(`editor.danger.${issue.type}`)
+}
+
+function formatDangerSqlPreview(sql: string) {
+  return sql.replace(/\s+/g, ' ').trim().slice(0, 160)
+}
+
+async function confirmDangerousExecution(issues: SqlDangerIssue[]) {
+  if (issues.length === 0) return true
+
+  return new Promise<boolean>((resolve) => {
+    const content = h('div', { class: 'danger-confirm-content' }, [
+      h('p', { class: 'danger-confirm-intro' }, t('editor.danger.confirm_intro')),
+      h('ul', { class: 'danger-confirm-list' }, issues.map((issue, index) =>
+        h('li', { key: `${issue.type}-${index}` }, `${getDangerIssueLabel(issue)}: ${formatDangerSqlPreview(issue.statement)}`)
+      )),
+    ])
+
+    Modal.confirm({
+      title: t('editor.danger.confirm_title'),
+      content,
+      okText: t('editor.danger.confirm_ok'),
+      cancelText: t('common.cancel'),
+      okType: 'danger',
+      width: 720,
+      onOk: () => {
+        addMessage('warning', t('editor.danger.confirmed'))
+        resolve(true)
+      },
+      onCancel: () => {
+        addMessage('info', t('editor.danger.cancelled'))
+        resultTabKey.value = 'messages'
+        resolve(false)
+      },
+    })
+  })
+}
+
 async function executeQuery() {
   const connId = sessionConnectionId.value
   if (!connId) return
@@ -355,24 +395,29 @@ async function executeQuery() {
 
   if (!fullSql) return message.warning(t('editor.input_sql_warn'))
 
-  executing.value = true
-  queryResults.value = []
-  Object.keys(queryResultStates).forEach(k => delete queryResultStates[Number(k)])
-  
-  if (isSelection) addMessage('info', t('editor.executing_selection'))
-  addMessage('info', t('editor.exec_context', { database: currentDatabaseLabel.value }))
-  console.info('[SQL] execute', {
-    connectionId: connId,
-    database: selectedDatabase.value || null,
-    displayDatabase: currentDatabaseLabel.value,
-  })
-
   try {
     const preparedStatements = await queryApi.prepareSqlScript(connId, fullSql)
     if (preparedStatements.length === 0) {
-      executing.value = false
       return
     }
+
+    const safetyAnalysis = analyzeSqlSafety(preparedStatements.map(statement => statement.sql))
+    const confirmed = await confirmDangerousExecution(safetyAnalysis.issues)
+    if (!confirmed) {
+      return
+    }
+
+    executing.value = true
+    queryResults.value = []
+    Object.keys(queryResultStates).forEach(k => delete queryResultStates[Number(k)])
+
+    if (isSelection) addMessage('info', t('editor.executing_selection'))
+    addMessage('info', t('editor.exec_context', { database: currentDatabaseLabel.value }))
+    console.info('[SQL] execute', {
+      connectionId: connId,
+      database: selectedDatabase.value || null,
+      displayDatabase: currentDatabaseLabel.value,
+    })
 
     const processedStatements = preparedStatements.map((statement: PreparedSqlStatement) =>
       statement.can_page ? `${statement.sql} LIMIT 100` : statement.sql
@@ -551,6 +596,10 @@ defineExpose({ setSelectedDatabase, executing, executeQuery, explainQuery, handl
 .dark-mode .history-item:hover { background: #262626; }
 .history-sql { font-family: monospace; background: transparent; padding: 0; }
 .null-text { color: #bfbfbf; font-style: italic; }
+:deep(.danger-confirm-content) { display: flex; flex-direction: column; gap: 12px; }
+:deep(.danger-confirm-intro) { margin: 0; color: #595959; }
+:deep(.danger-confirm-list) { margin: 0; padding-left: 18px; color: #262626; }
+:deep(.danger-confirm-list li) { margin-bottom: 8px; line-height: 1.5; word-break: break-word; }
 
 @media (max-width: 768px) {
   .result-info {
