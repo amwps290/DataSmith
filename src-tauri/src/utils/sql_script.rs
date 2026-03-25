@@ -367,14 +367,16 @@ fn starts_with_keyword(input: &str, keyword: &str) -> bool {
         return false;
     }
 
-    let head = &input[..keyword.len()];
+    let Some(head) = input.get(..keyword.len()) else {
+        return false;
+    };
     if !head.eq_ignore_ascii_case(keyword) {
         return false;
     }
 
-    input[keyword.len()..]
-        .chars()
-        .next()
+    input
+        .get(keyword.len()..)
+        .and_then(|tail| tail.chars().next())
         .map(|ch| ch.is_whitespace())
         .unwrap_or(true)
 }
@@ -673,5 +675,43 @@ mod tests {
     #[test]
     fn paginate_detection_ignores_comments_and_strings() {
         assert!(can_paginate_select_statement("/* head */ SELECT ';' AS value", &DatabaseType::PostgreSQL));
+    }
+
+    #[test]
+    fn handles_multibyte_comment_before_mysql_ddl_without_panicking() {
+        let sql = r#"
+-- 销售记录表
+CREATE TABLE `sales` (
+  `sale_id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `product_id` INT UNSIGNED NOT NULL,
+  `region` VARCHAR(50) NOT NULL,
+  `amount` DECIMAL(10, 2) NOT NULL,
+  `sale_date` DATE NOT NULL,
+  PRIMARY KEY (`sale_id`),
+  INDEX `idx_region_product` (`region`, `product_id`), -- 用于查询提示
+  INDEX `idx_sale_date` (`sale_date`)
+) ENGINE=InnoDB;
+"#;
+
+        let statements = split_sql_script(sql, &DatabaseType::MySQL);
+        assert_eq!(statements.len(), 1);
+        assert!(statements[0].sql.starts_with("CREATE TABLE `sales`"));
+        assert!(statements[0].sql.contains("用于查询提示"));
+    }
+
+    #[test]
+    fn handles_various_utf8_comments_in_mysql_parser() {
+        let cases = [
+            "-- 日本語コメント\nSELECT 1;",
+            "-- 한글 주석\nSELECT 1;",
+            "-- تعليق عربي\nSELECT 1;",
+            "-- emoji 😀 comment\nSELECT 1;",
+        ];
+
+        for sql in cases {
+            let statements = split_sql_script(sql, &DatabaseType::MySQL);
+            assert_eq!(statements.len(), 1, "failed sql: {sql}");
+            assert_eq!(statements[0].sql, "SELECT 1", "failed sql: {sql}");
+        }
     }
 }
