@@ -24,12 +24,14 @@
       <div class="context-menu" :style="{ left: contextMenuX + 'px', top: contextMenuY + 'px' }" @click.stop>
         <a-menu @click="handleMenuClick" size="small">
           <template v-if="selectedNode?.type === 'database'">
-            <a-menu-item key="new-query"><template #icon><FileTextOutlined /></template>{{ $t('tree.new_query') }}</a-menu-item>
-            <a-menu-item key="open-scripts"><template #icon><FolderOpenOutlined /></template>{{ $t('tree.open_scripts') }}</a-menu-item>
-            <a-menu-divider />
-            <a-menu-item key="backup-database"><template #icon><DownloadOutlined /></template>{{ $t('tree.backup_database') }}</a-menu-item>
-            <a-menu-item key="restore-database"><template #icon><UploadOutlined /></template>{{ $t('tree.restore_database') }}</a-menu-item>
-            <a-menu-divider />
+            <template v-if="supportProfile.supportsConnectionScripts">
+              <a-menu-item key="new-query"><template #icon><FileTextOutlined /></template>{{ $t('tree.new_query') }}</a-menu-item>
+              <a-menu-item key="open-scripts"><template #icon><FolderOpenOutlined /></template>{{ $t('tree.open_scripts') }}</a-menu-item>
+              <a-menu-divider />
+              <a-menu-item v-if="supportProfile.supportsBackupRestore" key="backup-database"><template #icon><DownloadOutlined /></template>{{ $t('tree.backup_database') }}</a-menu-item>
+              <a-menu-item v-if="supportProfile.supportsBackupRestore" key="restore-database"><template #icon><UploadOutlined /></template>{{ $t('tree.restore_database') }}</a-menu-item>
+              <a-menu-divider v-if="supportProfile.supportsBackupRestore" />
+            </template>
             <a-menu-item key="refresh"><template #icon><ReloadOutlined /></template>{{ $t('tree.refresh_db') }}</a-menu-item>
           </template>
           
@@ -38,12 +40,11 @@
           </template>
           
           <template v-if="selectedNode?.type === 'table'">
-            <a-menu-item key="view-data"><template #icon><TableOutlined /></template>{{ $t('tree.view_data') }}</a-menu-item>
+            <a-menu-item v-if="supportProfile.supportsTableDataView" key="view-data"><template #icon><TableOutlined /></template>{{ $t('tree.view_data') }}</a-menu-item>
             <a-menu-item key="view-ddl"><template #icon><CodeOutlined /></template>{{ $t('tree.view_ddl') }}</a-menu-item>
-            <a-menu-item key="design-table"><template #icon><EditOutlined /></template>{{ $t('tree.design_table') }}</a-menu-item>
+            <a-menu-item v-if="supportProfile.supportsTableDesign" key="design-table"><template #icon><EditOutlined /></template>{{ $t('tree.design_table') }}</a-menu-item>
             <a-menu-divider />
             <a-menu-item key="refresh"><template #icon><ReloadOutlined /></template>{{ $t('common.refresh') }}</a-menu-item>
-            <a-menu-item key="drop-table" danger><template #icon><DeleteOutlined /></template>{{ $t('tree.drop_table') }}</a-menu-item>
           </template>
 
           <a-menu-item key="copy-name"><template #icon><CopyOutlined /></template>{{ $t('tree.copy_name') }}</a-menu-item>
@@ -90,7 +91,7 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   TableOutlined, ReloadOutlined, CopyOutlined,
-  FolderOpenOutlined, DeleteOutlined, EditOutlined,
+  FolderOpenOutlined, EditOutlined,
   FileTextOutlined, CodeOutlined, DownloadOutlined, UploadOutlined
 } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
@@ -101,6 +102,7 @@ import BackupDatabaseDialog from './BackupDatabaseDialog.vue'
 import RestoreDatabaseDialog from './RestoreDatabaseDialog.vue'
 import { useMonacoEditor } from '@/composables/useMonacoEditor'
 import { useContextMenu } from '@/composables/useContextMenu'
+import { getDatabaseSupportProfile } from '@/utils/databaseSupport'
 
 interface TreeNode {
   key: string; title: string; type: string; children?: TreeNode[];
@@ -111,6 +113,7 @@ const { t } = useI18n()
 const props = defineProps<{ connectionId: string | null; dbType?: string; searchValue?: string; }>()
 const emit = defineEmits(['table-selected', 'database-selected', 'new-query', 'design-table', 'view-structure', 'open-scripts'])
 const connectionStore = useConnectionStore()
+const supportProfile = computed(() => getDatabaseSupportProfile(props.dbType || null))
 
 const loading = ref(false), treeData = ref<TreeNode[]>([]), expandedKeys = ref<string[]>([]), selectedKeys = ref<string[]>([]), loadingNodes = ref<Set<string>>(new Set())
 const { contextMenuVisible, contextMenuX, contextMenuY, showContextMenu, hideContextMenu } = useContextMenu()
@@ -145,7 +148,14 @@ async function loadDatabases() {
       treeData.value = [{ key: 'db-main', title: 'main', type: 'database', isLeaf: false, metadata: { name: 'main', database: 'main' } }]
     } else {
       const dbs = await metadataApi.getDatabases(props.connectionId)
-      treeData.value = dbs.map(db => ({ key: `db-${db.name}`, title: db.name, type: 'database', isLeaf: false, metadata: db }))
+      const isLeafDatabase = !supportProfile.value.supportsDatabaseTreeChildren
+      treeData.value = dbs.map(db => ({
+        key: `db-${db.name}`,
+        title: db.name,
+        type: 'database',
+        isLeaf: isLeafDatabase,
+        metadata: { ...db, database: db.name }
+      }))
     }
   } catch (e: any) { message.error(e) } finally { loading.value = false }
 }
@@ -171,6 +181,8 @@ async function onLoadData(treeNode: TreeNode) {
   if (!connId) return
 
   if (treeNode.type === 'database') {
+    if (!supportProfile.value.supportsDatabaseTreeChildren) return
+
     const dbName = treeNode.metadata.name
     let children: TreeNode[] = []
     if (props.dbType === 'postgresql') {
@@ -296,8 +308,9 @@ async function handleToggle(node: TreeNode) {
 
 function handleSelect(node: TreeNode) { selectedKeys.value = [node.key]; if (node.type === 'database') emit('database-selected', node.metadata); }
 async function handleDoubleClick(node: TreeNode) {
+  if (node.type === 'database' && !supportProfile.value.supportsDatabaseTreeChildren) return
   if (['database', 'schema', 'schemas', 'tables', 'views', 'schema-tables', 'schema-views', 'schema-indexes'].includes(node.type)) handleToggle(node)
-  else if (['table', 'view'].includes(node.type)) { emit('table-selected', { database: node.metadata.database, table: node.metadata.name || node.title, schema: node.metadata.schema, metadata: node.metadata }) }
+  else if (['table', 'view'].includes(node.type) && supportProfile.value.supportsTableDataView) { emit('table-selected', { database: node.metadata.database, table: node.metadata.name || node.title, schema: node.metadata.schema, metadata: node.metadata }) }
 }
 
 function onRightClick({ event, node }: any) {
