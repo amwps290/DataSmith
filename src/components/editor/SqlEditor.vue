@@ -146,6 +146,8 @@ const isSplitResizing = ref(false)
 const availableDatabases = ref<any[]>([])
 const selectedDatabase = ref(props.initialDatabase || '')
 const executing = ref(false)
+const executionSeq = ref(0)
+const activeExecutionId = ref(0)
 const queryResults = ref<QueryResult[]>([])
 const resultTabKey = ref('result-0')
 const messages = ref<any[]>([])
@@ -344,6 +346,18 @@ function getErrorMessage(error: unknown): string {
   return String(error)
 }
 
+function beginExecution() {
+  const executionId = executionSeq.value + 1
+  executionSeq.value = executionId
+  activeExecutionId.value = executionId
+  executing.value = true
+  return executionId
+}
+
+function isExecutionStale(executionId: number) {
+  return executionId !== activeExecutionId.value
+}
+
 function getDangerIssueLabel(issue: SqlDangerIssue) {
   return t(`editor.danger.${issue.type}`)
 }
@@ -391,6 +405,7 @@ async function executeQuery() {
   const model = editor?.getModel()
   let fullSql = editor?.getValue().trim() || ''
   let isSelection = false
+  let executionId: number | null = null
 
   if (selection && model && !selection.isEmpty()) {
     const selectedText = model.getValueInRange(selection).trim()
@@ -420,7 +435,7 @@ async function executeQuery() {
       return
     }
 
-    executing.value = true
+    executionId = beginExecution()
     queryResults.value = []
     Object.keys(queryResultStates).forEach(k => delete queryResultStates[Number(k)])
 
@@ -441,6 +456,10 @@ async function executeQuery() {
       processedStatements,
       selectedDatabase.value || null,
     )
+
+    if (isExecutionStale(executionId)) {
+      return
+    }
     
     queryResults.value = results
     
@@ -466,11 +485,18 @@ async function executeQuery() {
     }
     saveToHistory(fullSql)
   } catch (e: any) {
+    if (executionId !== null && isExecutionStale(executionId)) {
+      return
+    }
     const errorMessage = getErrorMessage(e)
     message.error(errorMessage)
     addMessage('error', errorMessage)
     resultTabKey.value = 'messages'
-  } finally { executing.value = false }
+  } finally {
+    if (executionId !== null && !isExecutionStale(executionId)) {
+      executing.value = false
+    }
+  }
 }
 
 async function explainQuery() {
@@ -479,7 +505,7 @@ async function explainQuery() {
   const sql = editor.getValue().trim()
   if (!sql) return message.warning(t('editor.input_sql_warn'))
 
-  executing.value = true
+  const executionId = beginExecution()
   try {
     addMessage('info', t('editor.exec_context', { database: currentDatabaseLabel.value }))
     console.info('[SQL] explain', {
@@ -488,17 +514,33 @@ async function explainQuery() {
       displayDatabase: currentDatabaseLabel.value,
     })
     const results = await queryApi.explainQuery(connId, sql, selectedDatabase.value || null)
+    if (isExecutionStale(executionId)) {
+      return
+    }
     queryResults.value = results
     resultTabKey.value = 'result-0'
     addMessage('success', t('editor.explain_success'))
   } catch (e: any) {
+    if (isExecutionStale(executionId)) {
+      return
+    }
     const errorMessage = getErrorMessage(e)
     message.error(errorMessage)
     addMessage('error', errorMessage)
-  } finally { executing.value = false }
+  } finally {
+    if (!isExecutionStale(executionId)) {
+      executing.value = false
+    }
+  }
 }
 
-function stopExecution() { executing.value = false; addMessage('info', t('editor.manual_stop')) }
+function stopExecution() {
+  if (!executing.value) return
+  activeExecutionId.value = executionSeq.value + 1
+  executing.value = false
+  resultTabKey.value = 'messages'
+  addMessage('info', t('editor.manual_stop'))
+}
 async function formatSql() { if (!editor) return; try { const formatted = await queryApi.beautifySql(sessionConnectionId.value, editor.getValue()); editor.setValue(formatted); message.success(t('editor.format_success')) } catch (e: any) { message.error(getErrorMessage(e)) } }
 function clearEditor() { editor?.setValue(''); queryResults.value = []; messages.value = []; }
 function handleQuerySaved() { message.success(t('common.save')) }
