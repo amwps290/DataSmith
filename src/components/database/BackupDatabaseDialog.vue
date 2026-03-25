@@ -43,17 +43,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch} from 'vue'
+import { computed, ref, watch } from 'vue'
 import { FolderOpenOutlined } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
 import { useI18n } from 'vue-i18n'
 import { metadataApi, queryApi, exportApi, utilsApi } from '@/api'
-import { invoke } from '@tauri-apps/api/core'
 import { save } from '@tauri-apps/plugin-dialog'
 import { downloadDir } from '@tauri-apps/api/path'
 import { useDialogModel } from '@/composables/useDialogModel'
+import { useConnectionStore } from '@/stores/connection'
+import type { DatabaseType } from '@/types/database'
 
 const { t } = useI18n()
+const connectionStore = useConnectionStore()
 
 const props = defineProps<{
   modelValue: boolean
@@ -69,6 +71,41 @@ const backing = ref(false)
 const backupOptions = ref(['structure', 'data'])
 const savePath = ref('')
 const compress = ref(false)
+const currentDbType = computed<DatabaseType>(() => {
+  return connectionStore.connections.find(connection => connection.id === props.connectionId)?.db_type || 'mysql'
+})
+
+function quoteIdentifier(name: string) {
+  if (currentDbType.value === 'mysql') {
+    return `\`${name.replace(/`/g, '``')}\``
+  }
+  return `"${name.replace(/"/g, '""')}"`
+}
+
+function qualifyObjectName(name: string, schema?: string) {
+  if (currentDbType.value === 'postgresql' && schema) {
+    return `${quoteIdentifier(schema)}.${quoteIdentifier(name)}`
+  }
+  return quoteIdentifier(name)
+}
+
+function stringifySqlValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return 'NULL'
+  }
+  if (typeof value === 'number' || typeof value === 'bigint') {
+    return String(value)
+  }
+  if (typeof value === 'boolean') {
+    return currentDbType.value === 'mysql'
+      ? (value ? '1' : '0')
+      : (value ? 'TRUE' : 'FALSE')
+  }
+  if (typeof value === 'string') {
+    return `'${value.replace(/'/g, "''")}'`
+  }
+  return `'${JSON.stringify(value).replace(/'/g, "''")}'`
+}
 
 // 生成默认文件名
 function getDefaultFileName(): string {
@@ -145,17 +182,19 @@ async function handleBackup() {
             props.connectionId,
             props.database,
             table.name,
+            table.schema,
           )
           backupSql += `\n-- ${t('dialog.backup_database.comment_structure')}: ${table.name}\n`
-          backupSql += `DROP TABLE IF EXISTS \`${table.name}\`;\n`
+          backupSql += `DROP TABLE IF EXISTS ${qualifyObjectName(table.name, table.schema)};\n`
           backupSql += `${ddl};\n\n`
         }
 
         // 导出表数据
         if (backupOptions.value.includes('data')) {
+          const qualifiedTableName = qualifyObjectName(table.name, table.schema)
           const result = await queryApi.executeQuery(
             props.connectionId,
-            `SELECT * FROM \`${table.name}\``,
+            `SELECT * FROM ${qualifiedTableName}`,
             props.database,
           )
 
@@ -165,14 +204,10 @@ async function handleBackup() {
 
             for (const row of resultData.rows) {
               const columns = Object.keys(row)
-              const values = columns.map(col => {
-                const val = row[col]
-                if (val === null) return 'NULL'
-                if (typeof val === 'string') return `'${val.replace(/'/g, "''")}'`
-                return val
-              })
+              const values = columns.map(col => stringifySqlValue(row[col]))
+              const quotedColumns = columns.map(col => quoteIdentifier(col)).join(', ')
 
-              backupSql += `INSERT INTO \`${table.name}\` (\`${columns.join('`, `')}\`) VALUES (${values.join(', ')});\n`
+              backupSql += `INSERT INTO ${qualifiedTableName} (${quotedColumns}) VALUES (${values.join(', ')});\n`
             }
             backupSql += '\n'
           }
@@ -185,13 +220,14 @@ async function handleBackup() {
       const views = await metadataApi.getViews(props.connectionId, props.database)
 
       for (const view of views) {
-        const definition = await invoke<string>('get_view_definition', {
+        const definition = await metadataApi.getViewDefinition({
           connectionId: props.connectionId,
           database: props.database,
           view: view.name,
+          schema: view.schema,
         })
         backupSql += `\n-- ${t('dialog.backup_database.comment_view')}: ${view.name}\n`
-        backupSql += `DROP VIEW IF EXISTS \`${view.name}\`;\n`
+        backupSql += `DROP VIEW IF EXISTS ${qualifyObjectName(view.name, view.schema)};\n`
         backupSql += `${definition};\n\n`
       }
     }

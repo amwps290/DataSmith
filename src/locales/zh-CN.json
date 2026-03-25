@@ -169,6 +169,8 @@
     "new_query": "新建查询脚本",
     "open_scripts": "打开已有脚本...",
     "refresh_db": "刷新数据库内容",
+    "backup_database": "备份数据库",
+    "restore_database": "还原数据库",
     "view_data": "查看数据",
     "view_ddl": "查看 DDL",
     "design_table": "设计表",
@@ -202,6 +204,7 @@
   },
   "data": {
     "filter": "筛选",
+    "import": "导入",
     "export": "导出",
     "export_csv": "导出为 CSV",
     "export_json": "导出为 JSON",

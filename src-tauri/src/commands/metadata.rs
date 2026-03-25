@@ -95,6 +95,21 @@ pub async fn get_create_table_ddl(connection_id: String, table: String, database
     state.connection_manager.get_table_ddl(&connection_id, &table, schema.as_deref(), database.as_deref()).await.to_cmd_result()
 }
 
+#[tauri::command]
+pub async fn get_view_definition(
+    connection_id: String,
+    database: String,
+    view: String,
+    schema: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    state
+        .connection_manager
+        .get_view_definition(&connection_id, &view, schema.as_deref(), Some(&database))
+        .await
+        .to_cmd_result()
+}
+
 #[derive(Serialize)]
 struct AutocompleteColumn {
     name: String,

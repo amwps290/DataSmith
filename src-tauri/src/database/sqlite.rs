@@ -220,6 +220,15 @@ impl DatabaseOperations for SqliteDatabase {
         Ok(())
     }
 
+    async fn truncate_table(&self, table: &str, _schema: Option<&str>) -> DbResult<()> {
+        let state = self.state.lock().await;
+        let conn = state.conn.as_ref().ok_or(DbError::not_connected())?;
+        let sql = format!("DELETE FROM {}", escape_sqlite_id(table));
+        debug!(sql = %sql, "执行 SQLite 清空表");
+        conn.execute(&sql, []).map_err(|e| DbError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
+
     async fn get_indexes(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
         let res_vec = self.execute_query(&format!("PRAGMA index_list('{}')", table.replace("'", "''")), None).await?;
         let mut indexes = Vec::new();
@@ -292,6 +301,20 @@ impl DatabaseOperations for SqliteDatabase {
             }
         }
         Err(DbError::Other("无法获取 DDL".into()))
+    }
+
+    async fn get_view_definition(&self, view: &str, _schema: Option<&str>) -> DbResult<String> {
+        let sql = format!(
+            "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = '{}'",
+            view.replace('\'', "''")
+        );
+        let results = self.execute_query(&sql, None).await?;
+        if let Some(res) = results.first() {
+            if let Some(row) = res.rows.first() {
+                return Ok(row.get("sql").and_then(|v| v.as_str()).unwrap_or("").to_string());
+            }
+        }
+        Err(DbError::Other("无法获取视图定义".into()))
     }
 
     async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {

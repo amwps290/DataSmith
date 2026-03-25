@@ -184,3 +184,18 @@ pub async fn insert_table_data(
         .await
         .to_cmd_result()
 }
+
+#[tauri::command]
+pub async fn truncate_table(
+    connection_id: String,
+    database: String,
+    table: String,
+    schema: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let manager = &state.connection_manager;
+    manager
+        .truncate_table(&connection_id, &table, schema.as_deref(), Some(&database))
+        .await
+        .to_cmd_result()
+}

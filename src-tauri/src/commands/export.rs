@@ -99,12 +99,13 @@ pub async fn export_table_ddl(
     connection_id: String,
     database: String,
     table: String,
+    schema: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let manager = &state.connection_manager;
 
     let ddl = manager
-        .get_table_ddl(&connection_id, &table, None, Some(&database))
+        .get_table_ddl(&connection_id, &table, schema.as_deref(), Some(&database))
         .await
         .map_err(|e| format!("获取表结构失败: {}", e))?;
 

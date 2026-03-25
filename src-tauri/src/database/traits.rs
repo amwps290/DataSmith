@@ -275,6 +275,11 @@ pub trait DatabaseOperations: Send + Sync {
         Err(DbError::Other("该数据库类型不支持此删除操作".into()))
     }
 
+    /// 清空表数据
+    async fn truncate_table(&self, _table: &str, _schema: Option<&str>) -> DbResult<()> {
+        Err(DbError::Other("该数据库类型不支持清空表".into()))
+    }
+
     /// 获取索引信息
     async fn get_indexes(&self, table: &str, schema: Option<&str>) -> DbResult<Vec<IndexInfo>>;
 
@@ -286,6 +291,11 @@ pub trait DatabaseOperations: Send + Sync {
     /// 获取表/视图的 DDL (CREATE 语句)
     async fn get_table_ddl(&self, _table: &str, _schema: Option<&str>) -> DbResult<String> {
         Err(DbError::Other("该数据库类型不支持 DDL 生成".into()))
+    }
+
+    /// 获取视图定义
+    async fn get_view_definition(&self, _view: &str, _schema: Option<&str>) -> DbResult<String> {
+        Err(DbError::Other("该数据库类型不支持视图定义".into()))
     }
     
     async fn get_views(&self, _database: Option<&str>) -> DbResult<Vec<TableInfo>> {

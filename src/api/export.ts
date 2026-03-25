@@ -11,7 +11,7 @@ export const exportApi = {
   toSql(data: QueryResult, tableName: string, filePath: string) {
     return invoke<boolean>('export_to_sql', { data, tableName, filePath })
   },
-  tableDdl(connectionId: string, database: string, table: string) {
-    return invoke<string>('export_table_ddl', { connectionId, database, table })
+  tableDdl(connectionId: string, database: string, table: string, schema?: string | null) {
+    return invoke<string>('export_table_ddl', { connectionId, database, table, schema })
   },
 }

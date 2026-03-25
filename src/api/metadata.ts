@@ -125,5 +125,17 @@ export const metadataApi = {
     schema?: string | null
   }): Promise<string> {
     return invoke<string>('get_create_table_ddl', params)
+  },
+
+  /**
+   * 获取视图定义
+   */
+  async getViewDefinition(params: {
+    connectionId: string,
+    database: string,
+    view: string,
+    schema?: string | null
+  }): Promise<string> {
+    return invoke<string>('get_view_definition', params)
   }
 }

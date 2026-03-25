@@ -27,6 +27,9 @@
             <a-menu-item key="new-query"><template #icon><FileTextOutlined /></template>{{ $t('tree.new_query') }}</a-menu-item>
             <a-menu-item key="open-scripts"><template #icon><FolderOpenOutlined /></template>{{ $t('tree.open_scripts') }}</a-menu-item>
             <a-menu-divider />
+            <a-menu-item key="backup-database"><template #icon><DownloadOutlined /></template>{{ $t('tree.backup_database') }}</a-menu-item>
+            <a-menu-item key="restore-database"><template #icon><UploadOutlined /></template>{{ $t('tree.restore_database') }}</a-menu-item>
+            <a-menu-divider />
             <a-menu-item key="refresh"><template #icon><ReloadOutlined /></template>{{ $t('tree.refresh_db') }}</a-menu-item>
           </template>
           
@@ -65,6 +68,20 @@
         </template>
       </a-list>
     </a-modal>
+
+    <BackupDatabaseDialog
+      v-model="showBackupDialog"
+      :connection-id="props.connectionId || ''"
+      :database="activeDatabaseName"
+      @backed="handleDatabaseBacked"
+    />
+
+    <RestoreDatabaseDialog
+      v-model="showRestoreDialog"
+      :connection-id="props.connectionId || ''"
+      :database="activeDatabaseName"
+      @restored="handleDatabaseRestored"
+    />
   </div>
 </template>
 
@@ -74,12 +91,14 @@ import { useI18n } from 'vue-i18n'
 import {
   TableOutlined, ReloadOutlined, CopyOutlined,
   FolderOpenOutlined, DeleteOutlined, EditOutlined,
-  FileTextOutlined, CodeOutlined
+  FileTextOutlined, CodeOutlined, DownloadOutlined, UploadOutlined
 } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { metadataApi, workspaceApi, utilsApi } from '@/api'
 import { useConnectionStore } from '@/stores/connection'
 import TreeNodeItem from './TreeNodeItem.vue'
+import BackupDatabaseDialog from './BackupDatabaseDialog.vue'
+import RestoreDatabaseDialog from './RestoreDatabaseDialog.vue'
 import { useMonacoEditor } from '@/composables/useMonacoEditor'
 import { useContextMenu } from '@/composables/useContextMenu'
 
@@ -286,10 +305,41 @@ function onRightClick({ event, node }: any) {
 }
 
 const showScriptsModal = ref(false), savedScripts = ref<import('@/types/database').ScriptInfo[]>([]), loadingScripts = ref(false)
+const showBackupDialog = ref(false)
+const showRestoreDialog = ref(false)
+const activeDatabaseName = ref('')
+
+function getNodeDatabaseName(node: TreeNode) {
+  return node.metadata?.name || node.metadata?.database || ''
+}
+
+async function refreshDatabaseNode(databaseName: string) {
+  const node = treeData.value.find(item => item.type === 'database' && getNodeDatabaseName(item) === databaseName)
+  if (!node) {
+    await loadDatabases()
+    return
+  }
+
+  const wasExpanded = expandedKeys.value.includes(node.key)
+  await handleRefreshNode(node)
+
+  if (wasExpanded) {
+    await handleToggle(node)
+  }
+}
+
 async function handleMenuClick({ key }: any) {
   hideContextMenu(); if (!selectedNode.value) return
   if (key === 'new-query') emit('new-query', { database: selectedNode.value.metadata.name || selectedNode.value.metadata.database, connectionId: props.connectionId })
   else if (key === 'open-scripts') { showScriptsModal.value = true; loadingScripts.value = true; try { savedScripts.value = await workspaceApi.listDbScripts(props.connectionId!, selectedNode.value.metadata.name || selectedNode.value.metadata.database) } finally { loadingScripts.value = false } }
+  else if (key === 'backup-database') {
+    activeDatabaseName.value = getNodeDatabaseName(selectedNode.value)
+    showBackupDialog.value = true
+  }
+  else if (key === 'restore-database') {
+    activeDatabaseName.value = getNodeDatabaseName(selectedNode.value)
+    showRestoreDialog.value = true
+  }
   else if (key === 'refresh') handleRefreshNode(selectedNode.value)
   else if (key === 'copy-name') { navigator.clipboard.writeText(selectedNode.value.title); message.success(t('common.copy')) }
   else if (key === 'view-data') {
@@ -323,6 +373,17 @@ async function handleMenuClick({ key }: any) {
         setDdlValue(ddl)
       }
     } catch (e: any) { message.error(e) }
+  }
+}
+
+function handleDatabaseBacked() {
+  showBackupDialog.value = false
+}
+
+async function handleDatabaseRestored() {
+  showRestoreDialog.value = false
+  if (activeDatabaseName.value) {
+    await refreshDatabaseNode(activeDatabaseName.value)
   }
 }
 

@@ -39,6 +39,9 @@
         <a-button :icon="h(FilterOutlined)" @click="showFilterDialog = true">
           {{ $t('data.filter') }}
         </a-button>
+        <a-button :icon="h(UploadOutlined)" @click="showImportDialog = true">
+          {{ $t('data.import') }}
+        </a-button>
         <a-dropdown>
           <template #overlay>
             <a-menu @click="handleExport">
@@ -158,6 +161,15 @@
       :schema="props.schema"
       @inserted="handleRecordInserted"
     />
+
+    <ImportDataDialog
+      v-model="showImportDialog"
+      :connection-id="props.connectionId"
+      :database="props.database"
+      :table="props.table"
+      :schema="props.schema"
+      @imported="handleDataImported"
+    />
   </div>
 </template>
 
@@ -166,13 +178,14 @@ import { h, ref, watch, computed, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ReloadOutlined, PlusOutlined, DeleteOutlined, FilterOutlined,
-  ExportOutlined, FormOutlined
+  ExportOutlined, FormOutlined, UploadOutlined
 } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
 import { queryApi, metadataApi, dataApi, exportApi } from '@/api'
 import { save } from '@tauri-apps/plugin-dialog'
 import { useConnectionStore } from '@/stores/connection'
 import InsertRecordDialog from '@/components/database/InsertRecordDialog.vue'
+import ImportDataDialog from '@/components/database/ImportDataDialog.vue'
 import type { VxeGridProps, VxeGridInstance, VxeGridEvents } from 'vxe-table'
 import type { ColumnInfo, QueryResult } from '@/types/database'
 
@@ -220,6 +233,7 @@ const hasMore = ref(true)
 const selectedRowKeys = ref<any[]>([])
 const showFilterDialog = ref(false)
 const showInsertDialog = ref(false)
+const showImportDialog = ref(false)
 const filterCondition = ref('')
 const primaryKeys = ref<string[]>([])
 const tableColumns = ref<ColumnInfo[]>([])
@@ -731,6 +745,11 @@ function addRow() {
 
 async function handleRecordInserted() {
   showInsertDialog.value = false
+  await doRefresh()
+}
+
+async function handleDataImported() {
+  showImportDialog.value = false
   await doRefresh()
 }
 

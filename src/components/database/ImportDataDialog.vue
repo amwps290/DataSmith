@@ -63,7 +63,6 @@ import { FileOutlined } from '@ant-design/icons-vue'
 import { message, Modal } from 'ant-design-vue'
 import { useI18n } from 'vue-i18n'
 import { queryApi, metadataApi, dataApi, utilsApi } from '@/api'
-import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useDialogModel } from '@/composables/useDialogModel'
 
@@ -135,7 +134,7 @@ async function doImport() {
   try {
     // 如果是清空模式，先清空表
     if (importMode.value === 'truncate') {
-      await invoke('truncate_table', {
+      await dataApi.truncateTable({
         connectionId: props.connectionId,
         table: props.table,
         database: props.database,
@@ -180,7 +179,7 @@ async function importFromCSV(content: string) {
     const columns = await metadataApi.getTableStructure({
       connectionId: props.connectionId,
       table: props.table,
-      schema: props.database,
+      schema: props.schema,
       database: props.database,
     }) as { name: string }[]
     headers = columns.map(col => col.name)

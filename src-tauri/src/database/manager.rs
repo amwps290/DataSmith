@@ -187,6 +187,12 @@ impl ConnectionManager {
         db.delete_data(table, schema, where_conditions).await
     }
 
+    pub async fn truncate_table(&self, composite_id: &str, table: &str, schema: Option<&str>, database: Option<&str>) -> DbResult<()> {
+        let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
+        db.truncate_table(table, schema).await
+    }
+
     pub async fn get_database_type(&self, composite_id: &str) -> DbResult<DatabaseType> {
         let real_id = if composite_id.contains(':') { composite_id.to_string() } else { format!("{}:{}", composite_id, DEFAULT_SESSION_ID) };
         let config_id = real_id.split(':').next().unwrap_or(composite_id);
@@ -251,6 +257,12 @@ impl ConnectionManager {
         let db = self.get_db_ref(composite_id).await?;
         self.ensure_db_context(db.clone(), database).await?;
         db.get_table_ddl(table, schema).await
+    }
+
+    pub async fn get_view_definition(&self, composite_id: &str, view: &str, schema: Option<&str>, database: Option<&str>) -> DbResult<String> {
+        let db = self.get_db_ref(composite_id).await?;
+        self.ensure_db_context(db.clone(), database).await?;
+        db.get_view_definition(view, schema).await
     }
 
     pub async fn get_extensions(&self, composite_id: &str, database: Option<&str>) -> DbResult<Vec<ExtensionInfo>> {

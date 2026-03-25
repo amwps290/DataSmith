@@ -439,6 +439,17 @@ impl DatabaseOperations for MySqlDatabase {
         Ok(())
     }
 
+    async fn truncate_table(&self, table: &str, _schema: Option<&str>) -> DbResult<()> {
+        let (pool, config) = self.get_pool_and_config().await?;
+        let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+        Self::configure_connection(&mut conn, &config).await?;
+
+        let sql = format!("TRUNCATE TABLE {}", escape_mysql_id(table));
+        debug!(sql = %sql, "执行 MySQL 清空表");
+        conn.query_drop(&sql).await.map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
+        Ok(())
+    }
+
     async fn get_indexes(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
         let results = self.execute_query(&format!("SHOW INDEX FROM {}", escape_mysql_id(table)), None).await?;
         let mut map: HashMap<String, IndexInfo> = HashMap::new();
@@ -663,6 +674,17 @@ impl DatabaseOperations for MySqlDatabase {
             }
         }
         Err(DbError::Other("无法获取 DDL".into()))
+    }
+
+    async fn get_view_definition(&self, view: &str, _schema: Option<&str>) -> DbResult<String> {
+        let sql = format!("SHOW CREATE VIEW {}", escape_mysql_id(view));
+        let results = self.execute_query(&sql, None).await?;
+        if let Some(res) = results.first() {
+            if let Some(row) = res.rows.first() {
+                return Ok(row.get("Create View").or_else(|| row.values().nth(1)).and_then(|v| v.as_str()).unwrap_or("").to_string());
+            }
+        }
+        Err(DbError::Other("无法获取视图定义".into()))
     }
 
     async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {

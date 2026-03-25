@@ -364,6 +364,20 @@ impl DatabaseOperations for PostgreSqlDatabase {
         Ok(())
     }
 
+    async fn truncate_table(&self, table: &str, schema: Option<&str>) -> DbResult<()> {
+        let client = self.get_client_arc().await?;
+        let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
+        let sql = format!(
+            "TRUNCATE TABLE {}.{} RESTART IDENTITY",
+            escape_pg_id(schema_name),
+            escape_pg_id(table)
+        );
+
+        debug!(sql = %sql, "执行 PostgreSQL 清空表");
+        client.batch_execute(&sql).await.map_err(|e| DbError::QueryFailed(Self::format_pg_error(e)))?;
+        Ok(())
+    }
+
     async fn get_indexes(&self, table: &str, schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
         let client = self.get_client_arc().await?;
         let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
@@ -541,6 +555,32 @@ impl DatabaseOperations for PostgreSqlDatabase {
         ddl.push_str("\n);");
 
         Ok(ddl)
+    }
+
+    async fn get_view_definition(&self, view: &str, schema: Option<&str>) -> DbResult<String> {
+        let client = self.get_client_arc().await?;
+        let schema_name = schema.unwrap_or(PG_DEFAULT_SCHEMA);
+        let sql = "
+            SELECT pg_get_viewdef(c.oid, true)
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = $1
+              AND c.relname = $2
+              AND c.relkind IN ('v', 'm')
+        ";
+        let rows = client.query(sql, &[&schema_name, &view]).await.map_err(|e| DbError::QueryFailed(Self::format_pg_error(e)))?;
+
+        if let Some(row) = rows.first() {
+            let definition: String = row.get(0);
+            return Ok(format!(
+                "CREATE OR REPLACE VIEW {}.{} AS\n{}",
+                escape_pg_id(schema_name),
+                escape_pg_id(view),
+                definition
+            ));
+        }
+
+        Err(DbError::Other("无法获取视图定义".into()))
     }
 
     async fn get_functions(&self, _database: Option<&str>, schema: Option<&str>) -> DbResult<Vec<FunctionInfo>> {

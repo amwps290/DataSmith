@@ -169,6 +169,8 @@
     "new_query": "New Query Script",
     "open_scripts": "Open Scripts...",
     "refresh_db": "Refresh Database",
+    "backup_database": "Backup Database",
+    "restore_database": "Restore Database",
     "view_data": "View Data",
     "view_ddl": "View DDL",
     "design_table": "Design Table",
@@ -202,6 +204,7 @@
   },
   "data": {
     "filter": "Filter",
+    "import": "Import",
     "export": "Export",
     "export_csv": "Export as CSV",
     "export_json": "Export as JSON",

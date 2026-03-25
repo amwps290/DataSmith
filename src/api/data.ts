@@ -32,4 +32,13 @@ export const dataApi = {
   }): Promise<void> {
     return invoke<void>('delete_table_data', params)
   },
+
+  async truncateTable(params: {
+    connectionId: string,
+    database: string,
+    table: string,
+    schema?: string | null
+  }): Promise<void> {
+    return invoke<void>('truncate_table', params)
+  },
 }
