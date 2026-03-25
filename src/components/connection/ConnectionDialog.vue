@@ -114,6 +114,18 @@
           style="width: 100%"
         />
       </a-form-item>
+
+      <a-form-item :label="$t('connection.form.protection')">
+        <div class="protection-settings">
+          <div class="protection-item">
+            <div class="protection-copy">
+              <div class="protection-title">{{ $t('connection.form.read_only') }}</div>
+              <div class="protection-description">{{ $t('connection.form.read_only_help') }}</div>
+            </div>
+            <a-switch v-model:checked="formData.read_only" />
+          </div>
+        </div>
+      </a-form-item>
     </a-form>
 
     <template #footer>
@@ -169,6 +181,7 @@ const formData = reactive<{
   ssl: boolean
   connection_timeout: number
   pool_size: number
+  read_only: boolean
   color: string
 }>({
   name: '',
@@ -181,6 +194,7 @@ const formData = reactive<{
   ssl: false,
   connection_timeout: 10,
   pool_size: 10,
+  read_only: false,
   color: '',
 })
 
@@ -224,6 +238,7 @@ watch(
         ssl: connection.ssl || false,
         connection_timeout: connection.connection_timeout || 10,
         pool_size: connection.pool_size || 10,
+        read_only: connection.read_only ?? false,
         color: connection.color || '',
       })
     } else {
@@ -359,6 +374,7 @@ function resetForm() {
     ssl: false,
     connection_timeout: 10,
     pool_size: 10,
+    read_only: false,
     color: '',
   })
 }
@@ -412,5 +428,40 @@ function resetForm() {
   width: 10px;
   height: 10px;
   border-radius: 999px;
+}
+
+.protection-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.protection-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.protection-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.protection-title {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.protection-description {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
 }
 </style>

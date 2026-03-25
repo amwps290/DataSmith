@@ -18,6 +18,8 @@ pub struct ConnectionConfig {
     pub pool_size: u32,
     pub mysql_charset: Option<String>,
     pub mysql_init_sql: Option<String>,
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 /// 数据库类型枚举

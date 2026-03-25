@@ -36,6 +36,7 @@ export const useConnectionStore = defineStore('connection', () => {
       pool_size: config.pool_size,
       mysql_charset: config.mysql_charset,
       mysql_init_sql: config.mysql_init_sql,
+      read_only: config.read_only,
       color: config.color,
       tags: config.tags || [],
       created_at: isNew ? Date.now() : config.created_at,

@@ -21,6 +21,7 @@ export interface ConnectionConfig {
   pool_size: number
   mysql_charset?: string
   mysql_init_sql?: string
+  read_only: boolean
   group?: string
   color?: string
   tags: string[]
@@ -190,6 +191,7 @@ export interface StoredConnection {
   pool_size: number
   mysql_charset?: string
   mysql_init_sql?: string
+  read_only: boolean
   group?: string
   color?: string
   tags: string[]

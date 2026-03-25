@@ -46,6 +46,7 @@ fn stored_to_config_with_password(stored: &StoredConnection, password: &str) -> 
         pool_size: stored.pool_size,
         mysql_charset: stored.mysql_charset.clone(),
         mysql_init_sql: stored.mysql_init_sql.clone(),
+        read_only: stored.read_only,
     })
 }
 

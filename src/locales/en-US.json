@@ -157,6 +157,9 @@
       "ssl": "SSL Connection",
       "timeout": "Timeout (sec)",
       "pool_size": "Pool Size",
+      "protection": "Protection",
+      "read_only": "Read Only",
+      "read_only_help": "Treats this connection as read-only so data changes and schema edits can be blocked.",
       "placeholders": {
         "name": "Enter connection name",
         "type": "Select database type",
