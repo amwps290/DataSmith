@@ -118,7 +118,7 @@ import type { PreparedSqlStatement } from '@/api/query'
 import { useConnectionStore } from '@/stores/connection'
 import { useAppStore } from '@/stores/app'
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from '@/utils/storageService'
-import { analyzeSqlSafety, type SqlDangerIssue } from '@/utils/sqlSafety'
+import { analyzeSqlSafety, analyzeSqlWrites, type SqlDangerIssue } from '@/utils/sqlSafety'
 import SaveQueryDialog from './SaveQueryDialog.vue'
 import SqlSnippetsManager from './SqlSnippetsManager.vue'
 import type { VxeGridProps } from 'vxe-table'
@@ -153,8 +153,12 @@ const showHistory = ref(false)
 const sqlHistory = ref<any[]>([])
 const showSaveDialog = ref(false)
 const showSnippets = ref(false)
+const currentConnection = computed(() => {
+  const connectionId = props.connectionId || connectionStore.activeConnectionId
+  return connectionStore.connections.find(c => c.id === connectionId) || null
+})
 const currentDatabaseLabel = computed(() => {
-  const conn = connectionStore.connections.find(c => c.id === (props.connectionId || connectionStore.activeConnectionId))
+  const conn = currentConnection.value
   if (selectedDatabase.value) return selectedDatabase.value
   if (props.initialDatabase) return props.initialDatabase
   if (conn?.database) return conn.database
@@ -398,6 +402,15 @@ async function executeQuery() {
   try {
     const preparedStatements = await queryApi.prepareSqlScript(connId, fullSql)
     if (preparedStatements.length === 0) {
+      return
+    }
+
+    const writeAnalysis = analyzeSqlWrites(preparedStatements.map(statement => statement.sql))
+    if (currentConnection.value?.read_only && writeAnalysis.hasWrites) {
+      const warningText = t('editor.read_only_blocked', { count: writeAnalysis.writeStatements.length })
+      message.warning(warningText)
+      addMessage('warning', warningText)
+      resultTabKey.value = 'messages'
       return
     }
 

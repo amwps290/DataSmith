@@ -213,6 +213,7 @@
     "exec_context": "Current execution database: {database}",
     "database_switched": "Switched current database to: {database}",
     "default_database": "Default database",
+    "read_only_blocked": "This connection is read-only. Blocked execution of {count} write statement(s).",
     "export_result": "Export Result",
     "export_default_name": "query_result",
     "manual_stop": "Manually stopped",

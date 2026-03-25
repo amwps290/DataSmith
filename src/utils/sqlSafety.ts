@@ -15,6 +15,11 @@ export interface SqlSafetyAnalysis {
   requiresConfirmation: boolean
 }
 
+export interface SqlWriteAnalysis {
+  writeStatements: string[]
+  hasWrites: boolean
+}
+
 const WRITE_PREFIXES = ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'DROP', 'ALTER', 'CREATE', 'REPLACE', 'MERGE']
 
 function stripLeadingComments(sql: string): string {
@@ -61,8 +66,7 @@ function isWriteStatement(normalizedSql: string): boolean {
   return WRITE_PREFIXES.some((prefix) => normalizedSql.startsWith(prefix))
 }
 
-export function analyzeSqlSafety(statements: string[]): SqlSafetyAnalysis {
-  const issues: SqlDangerIssue[] = []
+export function analyzeSqlWrites(statements: string[]): SqlWriteAnalysis {
   const writeStatements: string[] = []
 
   for (const statement of statements) {
@@ -72,6 +76,21 @@ export function analyzeSqlSafety(statements: string[]): SqlSafetyAnalysis {
     if (isWriteStatement(normalizedSql)) {
       writeStatements.push(statement)
     }
+  }
+
+  return {
+    writeStatements,
+    hasWrites: writeStatements.length > 0,
+  }
+}
+
+export function analyzeSqlSafety(statements: string[]): SqlSafetyAnalysis {
+  const issues: SqlDangerIssue[] = []
+  const { writeStatements } = analyzeSqlWrites(statements)
+
+  for (const statement of statements) {
+    const normalizedSql = normalizeSql(statement)
+    if (!normalizedSql) continue
 
     if (normalizedSql.startsWith('UPDATE ') && !/\bWHERE\b/.test(normalizedSql)) {
       issues.push({ type: 'update_without_where', statement })

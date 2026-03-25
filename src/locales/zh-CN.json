@@ -213,6 +213,7 @@
     "exec_context": "当前执行数据库: {database}",
     "database_switched": "已切换当前数据库为: {database}",
     "default_database": "默认数据库",
+    "read_only_blocked": "当前连接处于只读模式，已阻止 {count} 条写语句执行",
     "export_result": "导出结果",
     "export_default_name": "查询结果",
     "manual_stop": "已手动停止",
