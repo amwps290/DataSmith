@@ -1,6 +1,6 @@
 import { ref, computed, reactive } from 'vue'
 import type { TabState } from '@/types/workspace'
-import type { SqlExecutionState } from '@/types/sqlExecution'
+import { createIdleExecutionState, type SqlExecutionState } from '@/types/sqlExecution'
 
 export interface DataTab extends TabState {
   table?: string
@@ -29,6 +29,7 @@ export function useTabManager() {
   const dataTabs = ref<DataTab[]>([])
   const mainTabKey = ref('')
   const sqlEditorRefs = reactive<Record<string, SqlEditorExposed>>({})
+  const sqlExecutionStates = reactive<Record<string, SqlExecutionState>>({})
 
   const activeTabType = computed(() =>
     dataTabs.value.find(t => t.key === mainTabKey.value)?.type
@@ -43,23 +44,55 @@ export function useTabManager() {
   })
 
   const activeEditorExecuting = computed(() =>
-    sqlEditorRefs[mainTabKey.value]?.executing || false
+    sqlExecutionStates[mainTabKey.value]?.status === 'running'
   )
 
   const activeEditorExecutionState = computed<SqlExecutionState | null>(() =>
-    sqlEditorRefs[mainTabKey.value]?.executionState || null
+    sqlExecutionStates[mainTabKey.value] || null
   )
 
   function setSqlEditorRef(el: unknown, key: string) {
-    if (el) sqlEditorRefs[key] = el as SqlEditorExposed
-    else delete sqlEditorRefs[key]
+    if (el) {
+      sqlEditorRefs[key] = el as SqlEditorExposed
+      if (!sqlExecutionStates[key]) {
+        sqlExecutionStates[key] = createIdleExecutionState()
+      }
+    } else {
+      delete sqlEditorRefs[key]
+      delete sqlExecutionStates[key]
+    }
+  }
+
+  function updateSqlExecutionState(key: string, state: SqlExecutionState) {
+    sqlExecutionStates[key] = { ...state }
   }
 
   function callActiveEditor(method: string, ...args: unknown[]) {
     const editor = sqlEditorRefs[mainTabKey.value]
-    if (editor && typeof editor[method] === 'function') {
-      (editor[method] as (...a: unknown[]) => void)(...args)
+    if (!editor) {
+      console.warn('[SQL][Toolbar] active editor not found', {
+        tabKey: mainTabKey.value,
+        method,
+        args,
+      })
+      return
     }
+
+    if (typeof editor[method] !== 'function') {
+      console.warn('[SQL][Toolbar] editor method not found', {
+        tabKey: mainTabKey.value,
+        method,
+        args,
+      })
+      return
+    }
+
+    console.info('[SQL][Toolbar] invoking editor method', {
+      tabKey: mainTabKey.value,
+      method,
+      args,
+    })
+    ;(editor[method] as (...a: unknown[]) => void)(...args)
   }
 
   function closeTab(key: string) {
@@ -175,11 +208,13 @@ export function useTabManager() {
     dataTabs,
     mainTabKey,
     sqlEditorRefs,
+    sqlExecutionStates,
     activeTabType,
     activeTabDatabase,
     activeEditorExecuting,
     activeEditorExecutionState,
     setSqlEditorRef,
+    updateSqlExecutionState,
     callActiveEditor,
     closeTab,
     closeTabsLeftOf,

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::time::Instant;
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 use super::traits::*;
 use super::constants::DEFAULT_SESSION_ID;
@@ -391,16 +391,29 @@ impl ConnectionManager {
     pub async fn cancel_query(&self, composite_id: &str, query_id: u64) -> DbResult<bool> {
         let real_id = self.normalize_composite_id(composite_id);
         let db = self.get_db_ref(&real_id).await?;
-
-        let should_cancel = self
+        let active_query_id = self
             .active_queries
             .read()
             .await
             .get(&real_id)
-            .copied()
-            == Some(query_id);
+            .copied();
+        let should_cancel = active_query_id == Some(query_id);
+
+        info!(
+            session = %real_id,
+            query_id = query_id,
+            active_query_id = ?active_query_id,
+            should_cancel = should_cancel,
+            "连接管理器收到取消请求"
+        );
 
         if !should_cancel {
+            warn!(
+                session = %real_id,
+                query_id = query_id,
+                active_query_id = ?active_query_id,
+                "取消请求未命中活动查询"
+            );
             return Ok(false);
         }
 
@@ -408,9 +421,16 @@ impl ConnectionManager {
             .write()
             .await
             .insert(real_id.clone(), query_id);
-        db.cancel_query(query_id).await?;
+        let cancelled = db.cancel_query(query_id).await?;
 
-        Ok(true)
+        info!(
+            session = %real_id,
+            query_id = query_id,
+            cancelled = cancelled,
+            "连接管理器已完成驱动取消调用"
+        );
+
+        Ok(cancelled)
     }
 
     pub async fn execute_query_batch(&self, composite_id: &str, sqls: &[String], database: Option<&str>, query_id: Option<u64>) -> DbResult<BatchExecutionResult> {

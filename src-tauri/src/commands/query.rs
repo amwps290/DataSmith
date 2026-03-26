@@ -127,10 +127,25 @@ pub async fn cancel_query(
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
     let manager = &state.connection_manager;
-    manager
+    info!(
+        connection_id = %connection_id,
+        query_id = query_id,
+        "收到取消执行请求"
+    );
+
+    let result = manager
         .cancel_query(&connection_id, query_id)
         .await
-        .to_cmd_result()
+        .to_cmd_result()?;
+
+    info!(
+        connection_id = %connection_id,
+        query_id = query_id,
+        cancelled = result,
+        "取消执行请求处理完成"
+    );
+
+    Ok(result)
 }
 
 #[tauri::command]

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio_postgres::{CancelToken, Client, NoTls};
-use tracing::{info, instrument, error, debug};
+use tracing::{info, instrument, error, debug, warn};
 use native_tls::TlsConnector;
 use postgres_native_tls::MakeTlsConnector;
 use tokio::sync::Mutex;
@@ -16,6 +16,7 @@ use crate::utils::sql_sanitize::{escape_pg_id, escape_string_literal};
 struct ActivePgQuery {
     query_id: u64,
     cancel_token: CancelToken,
+    backend_pid: i32,
 }
 
 struct PgState {
@@ -73,9 +74,9 @@ impl PostgreSqlDatabase {
         }
     }
 
-    async fn set_active_query(&self, query_id: u64, cancel_token: CancelToken) {
+    async fn set_active_query(&self, query_id: u64, cancel_token: CancelToken, backend_pid: i32) {
         let mut state = self.state.lock().await;
-        state.active_query = Some(ActivePgQuery { query_id, cancel_token });
+        state.active_query = Some(ActivePgQuery { query_id, cancel_token, backend_pid });
     }
 
     async fn clear_active_query(&self, query_id: u64) {
@@ -85,7 +86,7 @@ impl PostgreSqlDatabase {
         }
     }
 
-    async fn get_cancel_target(&self, query_id: u64) -> DbResult<Option<(ConnectionConfig, CancelToken)>> {
+    async fn get_cancel_target(&self, query_id: u64) -> DbResult<Option<(ConnectionConfig, CancelToken, i32)>> {
         let state = self.state.lock().await;
         let Some(active_query) = state.active_query.as_ref() else {
             return Ok(None);
@@ -99,7 +100,7 @@ impl PostgreSqlDatabase {
             .config
             .clone()
             .ok_or_else(|| DbError::ConfigError("未找到连接配置".into()))?;
-        Ok(Some((config, active_query.cancel_token.clone())))
+        Ok(Some((config, active_query.cancel_token.clone(), active_query.backend_pid)))
     }
 
     fn json_to_pg_literal(value: &serde_json::Value) -> String {
@@ -225,7 +226,12 @@ impl DatabaseOperations for PostgreSqlDatabase {
         let client = self.get_client_arc().await?;
 
         if let Some(query_id) = query_id {
-            self.set_active_query(query_id, client.cancel_token()).await;
+            let backend_pid: i32 = client
+                .query_one("SELECT pg_backend_pid()", &[])
+                .await
+                .map_err(|e| DbError::QueryFailed(Self::format_pg_error(e)))?
+                .get(0);
+            self.set_active_query(query_id, client.cancel_token(), backend_pid).await;
         }
         
         debug!(sql = %sql.replace('\n', " "), "执行查询");
@@ -669,27 +675,57 @@ impl DatabaseOperations for PostgreSqlDatabase {
     }
 
     async fn cancel_query(&self, query_id: u64) -> DbResult<bool> {
-        let Some((config, cancel_token)) = self.get_cancel_target(query_id).await? else {
+        let Some((config, cancel_token, backend_pid)) = self.get_cancel_target(query_id).await? else {
+            info!(query_id = query_id, "PostgreSQL 未找到可取消的活动查询");
             return Ok(false);
         };
+
+        info!(
+            query_id = query_id,
+            backend_pid = backend_pid,
+            ssl = config.ssl,
+            "PostgreSQL 开始取消查询"
+        );
 
         if config.ssl {
             let connector = TlsConnector::builder()
                 .danger_accept_invalid_certs(true)
                 .build()
                 .map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
-            cancel_token
+            if let Err(error) = cancel_token
                 .cancel_query(MakeTlsConnector::new(connector))
                 .await
-                .map_err(|e| DbError::QueryFailed(Self::format_pg_error(e)))?;
+            {
+                warn!(error = %Self::format_pg_error(error), query_id, backend_pid, "PostgreSQL cancel token 取消失败，准备回退到 pg_cancel_backend");
+            } else {
+                info!(query_id = query_id, backend_pid = backend_pid, "PostgreSQL cancel token 已发送");
+            }
         } else {
-            cancel_token
+            if let Err(error) = cancel_token
                 .cancel_query(NoTls)
                 .await
-                .map_err(|e| DbError::QueryFailed(Self::format_pg_error(e)))?;
+            {
+                warn!(error = %Self::format_pg_error(error), query_id, backend_pid, "PostgreSQL cancel token 取消失败，准备回退到 pg_cancel_backend");
+            } else {
+                info!(query_id = query_id, backend_pid = backend_pid, "PostgreSQL cancel token 已发送");
+            }
         }
 
-        Ok(true)
+        let cancel_client = Self::create_client(&config).await?;
+        let cancelled: bool = cancel_client
+            .query_one("SELECT pg_cancel_backend($1)", &[&backend_pid])
+            .await
+            .map_err(|e| DbError::QueryFailed(Self::format_pg_error(e)))?
+            .get(0);
+
+        info!(
+            query_id = query_id,
+            backend_pid = backend_pid,
+            cancelled = cancelled,
+            "PostgreSQL pg_cancel_backend 执行完成"
+        );
+
+        Ok(cancelled)
     }
 
     fn as_any(&self) -> &dyn std::any::Any { self }

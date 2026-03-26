@@ -36,7 +36,7 @@
           :execution-state="activeEditorExecutionState"
           :selected-database="activeTabDatabase"
           :databases="availableDatabases"
-          @action="callActiveEditor($event)"
+          @action="handleToolbarAction"
           @database-change="handleToolbarDbChange"
         />
 
@@ -55,7 +55,7 @@
             </template>
             <div class="tab-content-wrapper">
               <KeepAlive>
-                <SqlEditor v-if="tab.type === 'query'" :key="tab.key" :ref="(el: unknown) => setSqlEditorRef(el, tab.key)" :connection-id="tab.connectionId" :initial-database="tab.database" :initial-value="tab.content" :file-path="tab.filePath" @content-change="(val: string) => handleContentChange(tab.key, val)" @file-saved="(path: string, title: string) => handleFileSaved(tab.key, path, title)" @databases-loaded="(dbs: DatabaseInfo[]) => availableDatabases = dbs" @database-change="(db: string) => handleEditorDatabaseChange(tab.key, String(db || ''))" />
+                <SqlEditor v-if="tab.type === 'query'" :key="tab.key" :ref="(el: unknown) => setSqlEditorRef(el, tab.key)" :connection-id="tab.connectionId" :initial-database="tab.database" :initial-value="tab.content" :file-path="tab.filePath" @content-change="(val: string) => handleContentChange(tab.key, val)" @file-saved="(path: string, title: string) => handleFileSaved(tab.key, path, title)" @databases-loaded="(dbs: DatabaseInfo[]) => availableDatabases = dbs" @database-change="(db: string) => handleEditorDatabaseChange(tab.key, String(db || ''))" @execution-state-change="(state) => updateSqlExecutionState(tab.key, state)" />
                 <TableDataGrid v-else-if="tab.type === 'data'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" />
                 <TableDesigner v-else-if="tab.type === 'design'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" :read-only="tab.readOnly" />
                 <QueryBuilder v-else-if="tab.type === 'builder'" :key="tab.key" :connection-id="tab.connectionId || null" :initial-database="tab.database || null" @execute-query="(payload: QueryBuilderExecutePayload | string) => handleQueryBuilderExecute(tab, payload)" />
@@ -153,7 +153,7 @@ const { sidebarWidth, startResize } = useSidebarResize()
 const {
   dataTabs, mainTabKey,
   activeTabType, activeTabDatabase, activeEditorExecuting, activeEditorExecutionState,
-  setSqlEditorRef, callActiveEditor, closeTab, closeTabsLeftOf, closeTabsRightOf, closeOtherTabs, closeSavedTabs,
+  setSqlEditorRef, updateSqlExecutionState, callActiveEditor, closeTab, closeTabsLeftOf, closeTabsRightOf, closeOtherTabs, closeSavedTabs,
   tabExists, addTab, handleContentChange, handleFileSaved,
 } = useTabManager()
 
@@ -197,7 +197,27 @@ async function restoreSession() {
   } catch (_e) { if (isSqlSupported.value) handleNewQuery({}) } finally { workspaceStore.isRestoring = false }
 }
 
-function handleToolbarDbChange(val: unknown) { callActiveEditor('handleDatabaseChange', String(val || '')) }
+function handleToolbarAction(action: string) {
+  console.info('[SQL][Toolbar] action triggered', {
+    action,
+    tabKey: mainTabKey.value,
+    activeTabType: activeTabType.value,
+    hasEditor: activeTabType.value === 'query',
+    executing: activeEditorExecuting.value,
+    executionStatus: activeEditorExecutionState.value?.status || null,
+  })
+  callActiveEditor(action)
+}
+
+function handleToolbarDbChange(val: unknown) {
+  console.info('[SQL][Toolbar] database change triggered', {
+    tabKey: mainTabKey.value,
+    activeTabType: activeTabType.value,
+    database: String(val || ''),
+  })
+  callActiveEditor('handleDatabaseChange', String(val || ''))
+}
+
 function handleEditorDatabaseChange(tabKey: string, database: string) {
   const tab = dataTabs.value.find(item => item.key === tabKey)
   if (tab) tab.database = database

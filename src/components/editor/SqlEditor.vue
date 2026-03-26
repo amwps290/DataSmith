@@ -132,7 +132,7 @@ import type { VxeGridProps } from 'vxe-table'
 
 const { t } = useI18n()
 const props = defineProps<{ connectionId?: string; initialDatabase?: string; initialValue?: string; filePath?: string; tabId?: string; }>()
-const emit = defineEmits(['contentChange', 'fileSaved', 'databasesLoaded', 'databaseChange'])
+const emit = defineEmits(['contentChange', 'fileSaved', 'databasesLoaded', 'databaseChange', 'executionStateChange'])
 const connectionStore = useConnectionStore()
 const appStore = useAppStore()
 
@@ -313,10 +313,12 @@ function updateExecutionState(patch: Partial<SqlExecutionState> & { status?: Sql
     ...patch,
     updatedAt: Date.now(),
   }
+  emit('executionStateChange', { ...executionState.value })
 }
 
 function resetExecutionState() {
   executionState.value = createIdleExecutionState()
+  emit('executionStateChange', { ...executionState.value })
 }
 
 function finalizeExecutionState(
@@ -738,7 +740,22 @@ async function explainQuery() {
 }
 
 async function stopExecution() {
-  if (!executing.value) return
+  console.info('[SQL] stop requested', {
+    connectionId: sessionConnectionId.value,
+    executionId: activeExecutionId.value,
+    executing: executing.value,
+    status: executionState.value.status,
+  })
+
+  if (!executing.value) {
+    console.warn('[SQL] stop ignored because editor is not executing', {
+      connectionId: sessionConnectionId.value,
+      executionId: activeExecutionId.value,
+      status: executionState.value.status,
+    })
+    return
+  }
+
   const connId = sessionConnectionId.value
   const executionId = activeExecutionId.value
   const previousState = executionState.value
@@ -748,10 +765,34 @@ async function stopExecution() {
 
   if (connId && executionId > 0) {
     try {
-      await queryApi.cancelQuery(connId, executionId)
+      console.info('[SQL] sending cancel request', {
+        connectionId: connId,
+        executionId,
+      })
+      const cancelled = await queryApi.cancelQuery(connId, executionId)
+      console.info('[SQL] cancel request completed', {
+        connectionId: connId,
+        executionId,
+        cancelled,
+      })
+      if (!cancelled) {
+        console.warn('[SQL] backend reported no active query to cancel', {
+          connectionId: connId,
+          executionId,
+        })
+      }
     } catch (e: any) {
-      console.warn('[SQL] cancel failed', e)
+      console.error('[SQL] cancel failed', {
+        connectionId: connId,
+        executionId,
+        error: e,
+      })
     }
+  } else {
+    console.warn('[SQL] cancel request skipped because execution context is missing', {
+      connectionId: connId,
+      executionId,
+    })
   }
 
   finalizeExecutionState('cancelled', t('editor.manual_stop'), {
@@ -839,7 +880,7 @@ watch(() => [appStore.theme, appStore.editorSettings.fontSize, appStore.editorSe
   })
 }, { immediate: true })
 watch(() => props.connectionId || connectionStore.activeConnectionId, () => { updateAutocompleteContext(); loadAvailableDatabases(); })
-defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, explainQuery, handleDatabaseChange, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
+defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, explainQuery, stopExecution, handleDatabaseChange, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
 </script>
 
 <style scoped>
