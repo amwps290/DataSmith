@@ -33,7 +33,6 @@
         <SqlToolbar
           v-if="activeTabType === 'query'"
           :executing="activeEditorExecuting"
-          :execution-state="activeEditorExecutionState"
           :selected-database="activeTabDatabase"
           :databases="availableDatabases"
           @action="handleToolbarAction"
