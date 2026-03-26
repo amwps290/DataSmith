@@ -82,6 +82,18 @@ impl QueryResult {
     }
 }
 
+/// 批量执行结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchExecutionResult {
+    pub results: Vec<QueryResult>,
+    pub statements_total: usize,
+    pub statements_succeeded: usize,
+    pub failed_statement_index: Option<usize>,
+    pub error_message: Option<String>,
+    pub was_cancelled: bool,
+    pub execution_time_ms: u128,
+}
+
 /// 数据库元数据 - 数据库信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseInfo {

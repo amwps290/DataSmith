@@ -219,6 +219,30 @@
     "manual_stop": "已手动停止",
     "format_success": "格式化完成",
     "refresh_cache_success": "已刷新提示缓存",
+    "statement_progress": "{completed}/{total} 条 SQL",
+    "affected_rows_short": "{n} 行受影响",
+    "messages_result_sets": "结果集",
+    "status": {
+      "idle": "就绪",
+      "running": "执行中",
+      "success": "成功",
+      "failed": "失败",
+      "cancelled": "已取消",
+      "partial_success": "部分成功"
+    },
+    "summary": {
+      "running_query": "正在执行 {count} 条 SQL 语句",
+      "running_explain": "正在分析执行计划",
+      "query_success": "执行完成，成功执行 {count} 条语句，返回 {sets} 个结果集",
+      "query_success_empty": "执行完成，成功执行 {count} 条语句，未返回结果集",
+      "query_failed": "执行失败，第 {failed} 条语句执行失败",
+      "query_partial": "部分成功，已执行 {success}/{total} 条语句，第 {failed} 条语句失败",
+      "query_cancelled": "已取消执行",
+      "query_cancelled_partial": "执行已取消，前 {success}/{total} 条语句已完成",
+      "explain_success": "执行计划分析完成，返回 {sets} 个结果集",
+      "explain_failed": "执行计划分析失败",
+      "explain_cancelled": "已取消执行计划分析"
+    },
     "danger": {
       "confirm_title": "检测到高风险 SQL",
       "confirm_intro": "以下 SQL 可能导致大范围数据变更或结构删除，请确认是否继续执行：",

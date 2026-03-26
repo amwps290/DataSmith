@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::database::QueryResult;
+use crate::database::{BatchExecutionResult, QueryResult};
 use crate::utils::sql_formatter::SqlFormatter;
 use crate::utils::sql_script::{can_paginate_select_statement, split_sql_script};
 use crate::AppState;
@@ -112,7 +112,7 @@ pub async fn execute_query_batch(
     database: Option<String>,
     query_id: Option<u64>,
     state: State<'_, AppState>,
-) -> Result<Vec<QueryResult>, String> {
+) -> Result<BatchExecutionResult, String> {
     let manager = &state.connection_manager;
     manager
         .execute_query_batch(&connection_id, &sqls, database.as_deref(), query_id)

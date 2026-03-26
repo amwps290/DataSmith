@@ -6,6 +6,16 @@ export interface PreparedSqlStatement {
   can_page: boolean
 }
 
+export interface QueryBatchExecutionResult {
+  results: QueryResult[]
+  statements_total: number
+  statements_succeeded: number
+  failed_statement_index: number | null
+  error_message: string | null
+  was_cancelled: boolean
+  execution_time_ms: number
+}
+
 export const queryApi = {
   /**
    * 执行 SQL 查询
@@ -49,8 +59,8 @@ export const queryApi = {
     sqls: string[],
     database?: string | null,
     queryId?: number | null
-  ): Promise<QueryResult[]> {
-    return invoke<QueryResult[]>('execute_query_batch', {
+  ): Promise<QueryBatchExecutionResult> {
+    return invoke<QueryBatchExecutionResult>('execute_query_batch', {
       connectionId,
       sqls,
       database: database || null,

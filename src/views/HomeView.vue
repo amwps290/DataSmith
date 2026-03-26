@@ -33,6 +33,7 @@
         <SqlToolbar
           v-if="activeTabType === 'query'"
           :executing="activeEditorExecuting"
+          :execution-state="activeEditorExecutionState"
           :selected-database="activeTabDatabase"
           :databases="availableDatabases"
           @action="callActiveEditor($event)"
@@ -151,7 +152,7 @@ const workspaceStore = useWorkspaceStore()
 const { sidebarWidth, startResize } = useSidebarResize()
 const {
   dataTabs, mainTabKey,
-  activeTabType, activeTabDatabase, activeEditorExecuting,
+  activeTabType, activeTabDatabase, activeEditorExecuting, activeEditorExecutionState,
   setSqlEditorRef, callActiveEditor, closeTab, closeTabsLeftOf, closeTabsRightOf, closeOtherTabs, closeSavedTabs,
   tabExists, addTab, handleContentChange, handleFileSaved,
 } = useTabManager()

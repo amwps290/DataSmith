@@ -46,7 +46,11 @@
       </a-space>
     </div>
     <div class="toolbar-right">
-      <a-space>
+      <a-space :size="12">
+        <div class="execution-indicator" v-if="executionState">
+          <a-tag :color="statusColor" class="status-tag">{{ statusLabel }}</a-tag>
+          <span class="status-summary" v-if="executionState.summary">{{ executionState.summary }}</span>
+        </div>
         <span class="db-label">{{ $t('common.database') }}:</span>
         <a-select
           :value="selectedDatabase"
@@ -64,15 +68,18 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import {
   PlayCircleFilled, StopOutlined, SaveOutlined,
   FormatPainterOutlined, ClearOutlined, HistoryOutlined, CodeOutlined, SyncOutlined, SearchOutlined
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
 import type { DatabaseInfo } from '@/types/database'
+import type { SqlExecutionState, SqlExecutionStatus } from '@/types/sqlExecution'
 
-defineProps<{
+const props = defineProps<{
   executing: boolean
+  executionState: SqlExecutionState | null
   selectedDatabase: string
   databases: DatabaseInfo[]
 }>()
@@ -83,6 +90,38 @@ defineEmits<{
 }>()
 
 const appStore = useAppStore()
+
+const statusColorMap: Record<SqlExecutionStatus, string> = {
+  idle: 'default',
+  running: 'processing',
+  success: 'success',
+  failed: 'error',
+  cancelled: 'warning',
+  partial_success: 'gold',
+}
+
+const statusLabel = computed(() => {
+  const status = props.executionState?.status || 'idle'
+  return appStore.language === 'zh-CN'
+    ? ({
+        idle: '就绪',
+        running: '执行中',
+        success: '成功',
+        failed: '失败',
+        cancelled: '已取消',
+        partial_success: '部分成功',
+      } as Record<SqlExecutionStatus, string>)[status]
+    : ({
+        idle: 'Idle',
+        running: 'Running',
+        success: 'Success',
+        failed: 'Failed',
+        cancelled: 'Cancelled',
+        partial_success: 'Partial',
+      } as Record<SqlExecutionStatus, string>)[status]
+})
+
+const statusColor = computed(() => statusColorMap[props.executionState?.status || 'idle'])
 </script>
 
 <style scoped>
@@ -95,5 +134,9 @@ const appStore = useAppStore()
 .btn-run:hover { background: #f6ffed !important; }
 .btn-stop { color: #ff4d4f !important; }
 .btn-stop:hover { background: #fff1f0 !important; }
+.execution-indicator { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 420px; }
+.status-tag { margin-inline-end: 0; }
+.status-summary { color: #595959; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dark-mode .status-summary { color: #bfbfbf; }
 .db-label { font-size: 12px; color: #8c8c8c; margin-right: 8px; }
 </style>

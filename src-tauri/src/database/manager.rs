@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use std::time::Instant;
 use tracing::{debug, error, info, instrument};
 
 use super::traits::*;
@@ -412,7 +413,8 @@ impl ConnectionManager {
         Ok(true)
     }
 
-    pub async fn execute_query_batch(&self, composite_id: &str, sqls: &[String], database: Option<&str>, query_id: Option<u64>) -> DbResult<Vec<QueryResult>> {
+    pub async fn execute_query_batch(&self, composite_id: &str, sqls: &[String], database: Option<&str>, query_id: Option<u64>) -> DbResult<BatchExecutionResult> {
+        let start = Instant::now();
         let real_id = self.normalize_composite_id(composite_id);
         if let Some(query_id) = query_id {
             self.register_query_start(&real_id, query_id).await;
@@ -423,36 +425,70 @@ impl ConnectionManager {
             self.ensure_db_context(db.clone(), database).await?;
 
             let mut results = Vec::new();
-            for sql in sqls {
+            let mut statements_succeeded = 0usize;
+
+            for (index, sql) in sqls.iter().enumerate() {
                 if let Some(query_id) = query_id {
                     if self.is_query_cancelled(&real_id, query_id).await {
-                        return Err(DbError::QueryCancelled);
+                        return Ok(BatchExecutionResult {
+                            results,
+                            statements_total: sqls.len(),
+                            statements_succeeded,
+                            failed_statement_index: None,
+                            error_message: None,
+                            was_cancelled: true,
+                            execution_time_ms: start.elapsed().as_millis(),
+                        });
                     }
                 }
 
-                let res_vec = db.execute_query(sql, database, query_id).await?;
-                results.extend(res_vec);
+                match db.execute_query(sql, database, query_id).await {
+                    Ok(res_vec) => {
+                        statements_succeeded += 1;
+                        results.extend(res_vec);
+                    }
+                    Err(DbError::QueryCancelled) => {
+                        return Ok(BatchExecutionResult {
+                            results,
+                            statements_total: sqls.len(),
+                            statements_succeeded,
+                            failed_statement_index: None,
+                            error_message: None,
+                            was_cancelled: true,
+                            execution_time_ms: start.elapsed().as_millis(),
+                        });
+                    }
+                    Err(error) => {
+                        return Ok(BatchExecutionResult {
+                            results,
+                            statements_total: sqls.len(),
+                            statements_succeeded,
+                            failed_statement_index: Some(index + 1),
+                            error_message: Some(error.to_string()),
+                            was_cancelled: false,
+                            execution_time_ms: start.elapsed().as_millis(),
+                        });
+                    }
+                }
             }
 
-            Ok(results)
+            Ok(BatchExecutionResult {
+                results,
+                statements_total: sqls.len(),
+                statements_succeeded,
+                failed_statement_index: None,
+                error_message: None,
+                was_cancelled: false,
+                execution_time_ms: start.elapsed().as_millis(),
+            })
         }
         .await;
-
-        let was_cancelled = if let Some(query_id) = query_id {
-            self.is_query_cancelled(&real_id, query_id).await
-        } else {
-            false
-        };
 
         if let Some(query_id) = query_id {
             self.clear_query_tracking(&real_id, query_id).await;
         }
 
-        if was_cancelled {
-            Err(DbError::QueryCancelled)
-        } else {
-            result
-        }
+        result
     }
 }
 

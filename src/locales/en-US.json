@@ -219,6 +219,30 @@
     "manual_stop": "Manually stopped",
     "format_success": "Format complete",
     "refresh_cache_success": "Autocomplete cache refreshed",
+    "statement_progress": "{completed}/{total} SQL",
+    "affected_rows_short": "{n} rows affected",
+    "messages_result_sets": "result sets",
+    "status": {
+      "idle": "Idle",
+      "running": "Running",
+      "success": "Success",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "partial_success": "Partial Success"
+    },
+    "summary": {
+      "running_query": "Running {count} SQL statement(s)",
+      "running_explain": "Running explain analysis",
+      "query_success": "Execution completed. {count} statement(s) succeeded and returned {sets} result set(s)",
+      "query_success_empty": "Execution completed. {count} statement(s) succeeded with no result set",
+      "query_failed": "Execution failed on statement {failed}",
+      "query_partial": "Partial success. {success}/{total} statement(s) completed and statement {failed} failed",
+      "query_cancelled": "Execution cancelled",
+      "query_cancelled_partial": "Execution cancelled after {success}/{total} statement(s) completed",
+      "explain_success": "Explain analysis completed and returned {sets} result set(s)",
+      "explain_failed": "Explain analysis failed",
+      "explain_cancelled": "Explain analysis cancelled"
+    },
     "danger": {
       "confirm_title": "High-risk SQL detected",
       "confirm_intro": "The following SQL may cause broad data changes or destructive schema operations. Confirm before execution:",

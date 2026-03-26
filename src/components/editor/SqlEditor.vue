@@ -12,6 +12,12 @@
 
     <!-- 结果区域 -->
     <div class="result-section">
+      <div v-if="showExecutionSummary" class="execution-summary-card" :class="`status-${executionState.status}`">
+        <a-tag :color="executionStatusColor" class="execution-summary-tag">{{ executionStatusLabel }}</a-tag>
+        <span class="execution-summary-text">{{ executionState.summary }}</span>
+        <span v-if="executionSummaryMeta" class="execution-summary-meta">{{ executionSummaryMeta }}</span>
+      </div>
+
       <a-tabs v-model:activeKey="resultTabKey" size="small" class="result-tabs">
         <!-- 动态渲染多个结果页签 -->
         <a-tab-pane v-for="(result, index) in queryResults" :key="'result-' + index" :tab="queryResults.length > 1 ? $t('editor.result_n', { n: index + 1 }) : $t('editor.result')">
@@ -114,7 +120,8 @@ import { ExportOutlined } from '@ant-design/icons-vue'
 import { save } from '@tauri-apps/plugin-dialog'
 import { exportApi, queryApi, metadataApi, utilsApi } from '@/api'
 import type { QueryResult } from '@/types/database'
-import type { PreparedSqlStatement } from '@/api/query'
+import type { PreparedSqlStatement, QueryBatchExecutionResult } from '@/api/query'
+import { createIdleExecutionState, type SqlExecutionState, type SqlExecutionStatus } from '@/types/sqlExecution'
 import { useConnectionStore } from '@/stores/connection'
 import { useAppStore } from '@/stores/app'
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from '@/utils/storageService'
@@ -148,6 +155,7 @@ const selectedDatabase = ref(props.initialDatabase || '')
 const executing = ref(false)
 const executionSeq = ref(0)
 const activeExecutionId = ref(0)
+const executionState = ref<SqlExecutionState>(createIdleExecutionState())
 const queryResults = ref<QueryResult[]>([])
 const resultTabKey = ref('result-0')
 const messages = ref<any[]>([])
@@ -166,6 +174,33 @@ const currentDatabaseLabel = computed(() => {
   if (conn?.database) return conn.database
   if (conn?.db_type === 'sqlite') return 'main'
   return t('editor.default_database')
+})
+const executionStatusLabel = computed(() => t(`editor.status.${executionState.value.status}`))
+const executionStatusColorMap: Record<SqlExecutionStatus, string> = {
+  idle: 'default',
+  running: 'processing',
+  success: 'success',
+  failed: 'error',
+  cancelled: 'warning',
+  partial_success: 'gold',
+}
+const executionStatusColor = computed(() => executionStatusColorMap[executionState.value.status])
+const showExecutionSummary = computed(() => executionState.value.status !== 'idle' && Boolean(executionState.value.summary))
+const executionSummaryMeta = computed(() => {
+  const state = executionState.value
+  const parts: string[] = []
+
+  if (state.statementCount > 0) {
+    parts.push(t('editor.statement_progress', { completed: state.completedStatements, total: state.statementCount }))
+  }
+  if (state.resultSetCount > 0) {
+    parts.push(`${state.resultSetCount} ${t('editor.messages_result_sets')}`)
+  }
+  if (state.affectedRows > 0) {
+    parts.push(t('editor.affected_rows_short', { n: state.affectedRows }))
+  }
+
+  return parts.join(' · ')
 })
 
 const gridRefs = reactive<Record<number, any>>({})
@@ -258,6 +293,125 @@ async function loadNextPage(index: number) {
 
 function addMessage(type: string, text: string) { messages.value.unshift({ type, text, time: new Date().toLocaleTimeString() }) }
 
+function getMessageTypeForStatus(status: SqlExecutionStatus) {
+  switch (status) {
+    case 'success':
+      return 'success'
+    case 'failed':
+      return 'error'
+    case 'cancelled':
+    case 'partial_success':
+      return 'warning'
+    default:
+      return 'info'
+  }
+}
+
+function updateExecutionState(patch: Partial<SqlExecutionState> & { status?: SqlExecutionStatus }) {
+  executionState.value = {
+    ...executionState.value,
+    ...patch,
+    updatedAt: Date.now(),
+  }
+}
+
+function resetExecutionState() {
+  executionState.value = createIdleExecutionState()
+}
+
+function finalizeExecutionState(
+  status: SqlExecutionStatus,
+  summary: string,
+  options: Partial<Omit<SqlExecutionState, 'status' | 'summary' | 'updatedAt'>> = {}
+) {
+  updateExecutionState({
+    status,
+    summary,
+    detail: options.detail || '',
+    mode: options.mode ?? executionState.value.mode,
+    statementCount: options.statementCount ?? executionState.value.statementCount,
+    completedStatements: options.completedStatements ?? executionState.value.completedStatements,
+    resultSetCount: options.resultSetCount ?? executionState.value.resultSetCount,
+    affectedRows: options.affectedRows ?? executionState.value.affectedRows,
+  })
+
+  addMessage(getMessageTypeForStatus(status), summary)
+  if (options.detail) {
+    addMessage('error', options.detail)
+  }
+}
+
+function getAffectedRows(results: QueryResult[]) {
+  return results.reduce((acc, result) => acc + result.affected_rows, 0)
+}
+
+function isCancelledMessage(messageText: string) {
+  const normalized = messageText.toLowerCase()
+  return normalized.includes('查询已取消')
+    || normalized.includes('cancelled')
+    || normalized.includes('canceled')
+    || normalized.includes('canceling statement due to user request')
+    || normalized.includes('interrupted')
+}
+
+function applyBatchExecutionState(response: QueryBatchExecutionResult) {
+  const resultSetCount = response.results.length
+  const affectedRows = getAffectedRows(response.results)
+  const completedStatements = response.statements_succeeded
+  const statementCount = response.statements_total
+
+  if (response.was_cancelled) {
+    const status: SqlExecutionStatus = completedStatements > 0 ? 'partial_success' : 'cancelled'
+    const summary = completedStatements > 0
+      ? t('editor.summary.query_cancelled_partial', { success: completedStatements, total: statementCount })
+      : t('editor.summary.query_cancelled')
+
+    finalizeExecutionState(status, summary, {
+      mode: 'query',
+      statementCount,
+      completedStatements,
+      resultSetCount,
+      affectedRows,
+    })
+    return
+  }
+
+  if (response.error_message) {
+    const status: SqlExecutionStatus = completedStatements > 0 ? 'partial_success' : 'failed'
+    const summary = completedStatements > 0
+      ? t('editor.summary.query_partial', {
+          success: completedStatements,
+          total: statementCount,
+          failed: response.failed_statement_index || completedStatements + 1,
+        })
+      : t('editor.summary.query_failed', {
+          failed: response.failed_statement_index || 1,
+        })
+
+    finalizeExecutionState(status, summary, {
+      mode: 'query',
+      detail: response.error_message,
+      statementCount,
+      completedStatements,
+      resultSetCount,
+      affectedRows,
+    })
+    return
+  }
+
+  const summary = resultSetCount > 0
+    ? t('editor.summary.query_success', { count: completedStatements, sets: resultSetCount })
+    : t('editor.summary.query_success_empty', { count: completedStatements })
+
+  finalizeExecutionState('success', summary, {
+    mode: 'query',
+    statementCount,
+    completedStatements,
+    resultSetCount,
+    affectedRows,
+  })
+}
+
 function sanitizeFileName(name: string) {
   return name.replace(/[\\/:*?"<>|]+/g, '_').trim() || t('editor.export_default_name')
 }
@@ -346,11 +500,23 @@ function getErrorMessage(error: unknown): string {
   return String(error)
 }
 
-function beginExecution() {
+function beginExecution(mode: 'query' | 'explain', statementCount = 1) {
   const executionId = executionSeq.value + 1
   executionSeq.value = executionId
   activeExecutionId.value = executionId
   executing.value = true
+  updateExecutionState({
+    status: 'running',
+    mode,
+    summary: mode === 'query'
+      ? t('editor.summary.running_query', { count: statementCount })
+      : t('editor.summary.running_explain'),
+    detail: '',
+    statementCount,
+    completedStatements: 0,
+    resultSetCount: 0,
+    affectedRows: 0,
+  })
   return executionId
 }
 
@@ -435,7 +601,7 @@ async function executeQuery() {
       return
     }
 
-    executionId = beginExecution()
+    executionId = beginExecution('query', preparedStatements.length)
     queryResults.value = []
     Object.keys(queryResultStates).forEach(k => delete queryResultStates[Number(k)])
 
@@ -451,7 +617,7 @@ async function executeQuery() {
       statement.can_page ? `${statement.sql} LIMIT 100` : statement.sql
     )
 
-    const results = await queryApi.executeQueryBatch(
+    const response = await queryApi.executeQueryBatch(
       connId,
       processedStatements,
       selectedDatabase.value || null,
@@ -461,11 +627,11 @@ async function executeQuery() {
     if (isExecutionStale(executionId)) {
       return
     }
-    
-    queryResults.value = results
+
+    queryResults.value = response.results
     
     // 4. 为每个结果集绑定其对应的原始语句和分页状态
-    results.forEach((r, i) => {
+    response.results.forEach((r, i) => {
       // 注意：如果结果集数量多于语句数量（某些数据库特性），安全起见做个兜底
       const config = preparedStatements[i] || preparedStatements[preparedStatements.length - 1]
       
@@ -477,21 +643,37 @@ async function executeQuery() {
       }
     })
 
-    if (results.length > 0) {
+    applyBatchExecutionState(response)
+
+    if (response.results.length > 0) {
       resultTabKey.value = 'result-0'
-      const totalAffected = results.reduce((acc, r) => acc + r.affected_rows, 0)
-      addMessage('success', t('editor.exec_success', { sets: results.length, rows: totalAffected }))
     } else {
       resultTabKey.value = 'messages'
     }
-    saveToHistory(fullSql)
+    if (!response.error_message && !response.was_cancelled) {
+      saveToHistory(fullSql)
+    }
   } catch (e: any) {
     if (executionId !== null && isExecutionStale(executionId)) {
       return
     }
     const errorMessage = getErrorMessage(e)
-    message.error(errorMessage)
-    addMessage('error', errorMessage)
+
+    if (isCancelledMessage(errorMessage)) {
+      finalizeExecutionState('cancelled', t('editor.summary.query_cancelled'), {
+        mode: 'query',
+        statementCount: executionState.value.statementCount,
+        completedStatements: executionState.value.completedStatements,
+      })
+    } else {
+      message.error(errorMessage)
+      finalizeExecutionState('failed', t('editor.summary.query_failed', { failed: 1 }), {
+        mode: 'query',
+        detail: errorMessage,
+        statementCount: executionState.value.statementCount || 1,
+        completedStatements: 0,
+      })
+    }
     resultTabKey.value = 'messages'
   } finally {
     if (executionId !== null && !isExecutionStale(executionId)) {
@@ -506,7 +688,7 @@ async function explainQuery() {
   const sql = editor.getValue().trim()
   if (!sql) return message.warning(t('editor.input_sql_warn'))
 
-  const executionId = beginExecution()
+  const executionId = beginExecution('explain')
   try {
     addMessage('info', t('editor.exec_context', { database: currentDatabaseLabel.value }))
     console.info('[SQL] explain', {
@@ -520,14 +702,34 @@ async function explainQuery() {
     }
     queryResults.value = results
     resultTabKey.value = 'result-0'
-    addMessage('success', t('editor.explain_success'))
+    finalizeExecutionState('success', t('editor.summary.explain_success', { sets: results.length }), {
+      mode: 'explain',
+      statementCount: 1,
+      completedStatements: 1,
+      resultSetCount: results.length,
+      affectedRows: getAffectedRows(results),
+    })
   } catch (e: any) {
     if (isExecutionStale(executionId)) {
       return
     }
     const errorMessage = getErrorMessage(e)
-    message.error(errorMessage)
-    addMessage('error', errorMessage)
+    if (isCancelledMessage(errorMessage)) {
+      finalizeExecutionState('cancelled', t('editor.summary.explain_cancelled'), {
+        mode: 'explain',
+        statementCount: 1,
+        completedStatements: 0,
+      })
+    } else {
+      message.error(errorMessage)
+      finalizeExecutionState('failed', t('editor.summary.explain_failed'), {
+        mode: 'explain',
+        detail: errorMessage,
+        statementCount: 1,
+        completedStatements: 0,
+      })
+    }
+    resultTabKey.value = 'messages'
   } finally {
     if (!isExecutionStale(executionId)) {
       executing.value = false
@@ -539,6 +741,7 @@ async function stopExecution() {
   if (!executing.value) return
   const connId = sessionConnectionId.value
   const executionId = activeExecutionId.value
+  const previousState = executionState.value
   activeExecutionId.value = executionSeq.value + 1
   executing.value = false
   resultTabKey.value = 'messages'
@@ -551,10 +754,16 @@ async function stopExecution() {
     }
   }
 
-  addMessage('info', t('editor.manual_stop'))
+  finalizeExecutionState('cancelled', t('editor.manual_stop'), {
+    mode: previousState.mode,
+    statementCount: previousState.statementCount,
+    completedStatements: previousState.completedStatements,
+    resultSetCount: previousState.resultSetCount,
+    affectedRows: previousState.affectedRows,
+  })
 }
 async function formatSql() { if (!editor) return; try { const formatted = await queryApi.beautifySql(sessionConnectionId.value, editor.getValue()); editor.setValue(formatted); message.success(t('editor.format_success')) } catch (e: any) { message.error(getErrorMessage(e)) } }
-function clearEditor() { editor?.setValue(''); queryResults.value = []; messages.value = []; }
+function clearEditor() { editor?.setValue(''); queryResults.value = []; messages.value = []; resetExecutionState(); }
 function handleQuerySaved() { message.success(t('common.save')) }
 function insertSnippet(sql: string) { if (!editor) return; const selection = editor.getSelection(); editor.executeEdits('insert-snippet', [{ range: selection || editor.getSelection()!, text: sql }]); showSnippets.value = false }
 async function pasteFromSystemClipboard() {
@@ -630,7 +839,7 @@ watch(() => [appStore.theme, appStore.editorSettings.fontSize, appStore.editorSe
   })
 }, { immediate: true })
 watch(() => props.connectionId || connectionStore.activeConnectionId, () => { updateAutocompleteContext(); loadAvailableDatabases(); })
-defineExpose({ setSelectedDatabase, executing, executeQuery, explainQuery, handleDatabaseChange, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
+defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, explainQuery, handleDatabaseChange, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
 </script>
 
 <style scoped>
@@ -643,6 +852,17 @@ defineExpose({ setSelectedDatabase, executing, executeQuery, explainQuery, handl
 .dark-mode .split-resizer { background: #303030; }
 .resizer-handle { width: 30px; height: 2px; background: #d9d9d9; border-radius: 1px; }
 .result-section { flex: 1; min-height: 100px; display: flex; flex-direction: column; overflow: hidden; }
+.execution-summary-card { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #f0f0f0; background: #fafafa; flex-shrink: 0; }
+.dark-mode .execution-summary-card { background: #1a1a1a; border-bottom-color: #303030; }
+.execution-summary-card.status-success { background: #f6ffed; }
+.execution-summary-card.status-failed { background: #fff2f0; }
+.execution-summary-card.status-cancelled { background: #fffbe6; }
+.execution-summary-card.status-partial_success { background: #fff7e6; }
+.execution-summary-card.status-running { background: #e6f4ff; }
+.execution-summary-tag { margin-inline-end: 0; }
+.execution-summary-text { color: #262626; font-size: 13px; font-weight: 500; }
+.dark-mode .execution-summary-text { color: #f5f5f5; }
+.execution-summary-meta { color: #8c8c8c; font-size: 12px; }
 .result-tabs { height: 100%; display: flex; flex-direction: column; }
 .result-tabs :deep(.ant-tabs-content) { flex: 1; overflow: hidden; }
 .result-tabs :deep(.ant-tabs-tabpane) { height: 100%; display: flex; flex-direction: column; }

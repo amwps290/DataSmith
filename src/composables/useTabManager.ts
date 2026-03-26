@@ -1,5 +1,6 @@
 import { ref, computed, reactive } from 'vue'
 import type { TabState } from '@/types/workspace'
+import type { SqlExecutionState } from '@/types/sqlExecution'
 
 export interface DataTab extends TabState {
   table?: string
@@ -20,6 +21,7 @@ export interface SqlEditorExposed {
   handleDatabaseChange: (db: string) => void
   setSelectedDatabase: (db: string) => void
   executing: boolean
+  executionState: SqlExecutionState
   [key: string]: unknown
 }
 
@@ -42,6 +44,10 @@ export function useTabManager() {
 
   const activeEditorExecuting = computed(() =>
     sqlEditorRefs[mainTabKey.value]?.executing || false
+  )
+
+  const activeEditorExecutionState = computed<SqlExecutionState | null>(() =>
+    sqlEditorRefs[mainTabKey.value]?.executionState || null
   )
 
   function setSqlEditorRef(el: unknown, key: string) {
@@ -172,6 +178,7 @@ export function useTabManager() {
     activeTabType,
     activeTabDatabase,
     activeEditorExecuting,
+    activeEditorExecutionState,
     setSqlEditorRef,
     callActiveEditor,
     closeTab,
