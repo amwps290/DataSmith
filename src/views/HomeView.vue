@@ -437,8 +437,85 @@ function getConnectionColor(connectionId?: string) {
 .main-workspace { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #fff; min-width: 0; }
 .dark-mode .main-workspace { background: #1f1f1f; }
 .workspace-tabs { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.workspace-tabs :deep(.ant-tabs-nav) { margin-bottom: 0; padding: 0 4px; background: #f0f0f0; flex-shrink: 0; }
-.dark-mode .workspace-tabs :deep(.ant-tabs-nav) { background: #141414; }
+.workspace-tabs :deep(.ant-tabs-nav) {
+  margin-bottom: 0;
+  padding: 0;
+  background: #f8f9fb;
+  border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
+}
+.dark-mode .workspace-tabs :deep(.ant-tabs-nav) {
+  background: #181818;
+  border-bottom-color: #303030;
+}
+.workspace-tabs :deep(.ant-tabs-nav::before) { display: none; }
+.workspace-tabs :deep(.ant-tabs-nav-wrap) { padding: 0; }
+.workspace-tabs :deep(.ant-tabs-nav-list) { gap: 0; }
+.workspace-tabs :deep(.ant-tabs-tab) {
+  margin: 0 !important;
+  padding: 0 12px;
+  height: 32px;
+  border: 0 !important;
+  border-right: 1px solid #e5e7eb !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: #595959;
+}
+.dark-mode .workspace-tabs :deep(.ant-tabs-tab) {
+  border-right-color: #303030 !important;
+  color: #a6a6a6;
+}
+.workspace-tabs :deep(.ant-tabs-tab:hover) {
+  background: #f3f4f6 !important;
+  color: #262626;
+}
+.dark-mode .workspace-tabs :deep(.ant-tabs-tab:hover) {
+  background: #202020 !important;
+  color: #f5f5f5;
+}
+.workspace-tabs :deep(.ant-tabs-tab-active) {
+  background: #ffffff !important;
+}
+.dark-mode .workspace-tabs :deep(.ant-tabs-tab-active) {
+  background: #1f1f1f !important;
+}
+.workspace-tabs :deep(.ant-tabs-tab-active .ant-tabs-tab-btn) {
+  color: #1677ff;
+}
+.workspace-tabs :deep(.ant-tabs-tab-btn) {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.workspace-tabs :deep(.ant-tabs-tab-remove) {
+  margin-left: 8px;
+  width: 14px;
+  height: 14px;
+  border-radius: 0;
+}
+.workspace-tabs :deep(.ant-tabs-nav-add) {
+  min-width: 32px;
+  width: 32px;
+  height: 32px;
+  margin: 0 !important;
+  border: 0 !important;
+  border-left: 1px solid #e5e7eb !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: #595959;
+}
+.dark-mode .workspace-tabs :deep(.ant-tabs-nav-add) {
+  border-left-color: #303030 !important;
+  color: #a6a6a6;
+}
+.workspace-tabs :deep(.ant-tabs-nav-add:hover) {
+  background: #f3f4f6 !important;
+  color: #262626;
+}
+.dark-mode .workspace-tabs :deep(.ant-tabs-nav-add:hover) {
+  background: #202020 !important;
+  color: #f5f5f5;
+}
 .workspace-tabs :deep(.ant-tabs-content) { flex: 1; height: 100%; overflow: hidden; }
 .workspace-tabs :deep(.ant-tabs-tabpane) { height: 100%; display: flex; flex-direction: column; }
 .tab-title { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }

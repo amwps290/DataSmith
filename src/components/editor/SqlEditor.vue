@@ -1,6 +1,6 @@
 <template>
-  <div class="sql-editor-container">
-    <div class="editor-workbench" :style="{ height: editorHeight + 'px' }">
+  <div ref="sqlEditorRoot" class="sql-editor-container">
+    <div class="editor-workbench">
       <SqlToolbar
         vertical
         :executing="executing"
@@ -16,20 +16,24 @@
       </div>
     </div>
 
-    <!-- 拖拽调整器 -->
-    <div class="split-resizer" @mousedown="startResize">
-      <div class="resizer-handle"></div>
-    </div>
-
-    <!-- 结果区域 -->
-    <div class="result-section">
-      <div v-if="showExecutionSummary" class="execution-summary-card" :class="`status-${executionState.status}`">
-        <a-tag :color="executionStatusColor" class="execution-summary-tag">{{ executionStatusLabel }}</a-tag>
-        <span class="execution-summary-text">{{ executionState.summary }}</span>
-        <span v-if="executionSummaryMeta" class="execution-summary-meta">{{ executionSummaryMeta }}</span>
+    <div class="result-dock" :class="{ collapsed: !resultPanelVisible }" :style="{ height: `${resultDockHeight}px` }">
+      <div v-if="resultPanelVisible" class="split-resizer" @mousedown="startResize">
+        <div class="resizer-handle"></div>
       </div>
 
-      <a-tabs v-model:activeKey="resultTabKey" size="small" class="result-tabs">
+      <div class="result-dock-header">
+        <button class="result-dock-toggle" type="button" @click="toggleResultPanel">
+          {{ resultPanelVisible ? '▾' : '▴' }}
+        </button>
+        <span class="result-dock-title">{{ $t('editor.result') }}</span>
+        <a-tag v-if="showExecutionSummary" :color="executionStatusColor" class="execution-summary-tag">
+          {{ executionStatusLabel }}
+        </a-tag>
+        <span v-if="showExecutionSummary" class="execution-summary-text">{{ executionState.summary }}</span>
+        <span v-if="showExecutionSummary && executionSummaryMeta" class="execution-summary-meta">{{ executionSummaryMeta }}</span>
+      </div>
+
+      <a-tabs v-if="resultPanelVisible" v-model:activeKey="resultTabKey" size="small" class="result-tabs">
         <!-- 动态渲染多个结果页签 -->
         <a-tab-pane v-for="(result, index) in queryResults" :key="'result-' + index">
           <template #tab>
@@ -187,6 +191,10 @@ const props = defineProps<{ connectionId?: string; initialDatabase?: string; ini
 const emit = defineEmits(['contentChange', 'fileSaved', 'databasesLoaded', 'databaseChange', 'executionStateChange'])
 const connectionStore = useConnectionStore()
 const appStore = useAppStore()
+const RESULT_PANEL_HEIGHT_KEY = 'sql_result_panel_height'
+const RESULT_PANEL_VISIBLE_KEY = 'sql_result_panel_visible'
+const RESULT_PANEL_MIN_HEIGHT = 180
+const RESULT_PANEL_COLLAPSED_HEIGHT = 32
 
 const internalSessionId = ref(props.tabId || props.filePath || `editor-${Math.random().toString(36).substring(2, 9)}`)
 const sessionConnectionId = computed(() => {
@@ -196,11 +204,11 @@ const sessionConnectionId = computed(() => {
   return `${baseId}:tab_${sid}`
 })
 
+const sqlEditorRoot = ref<HTMLElement>()
 const editorContainer = ref<HTMLElement>()
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
 const autocompleteManager = getSqlAutocompleteManager()
 
-const editorHeight = ref(350) 
 const isSplitResizing = ref(false)
 const availableDatabases = ref<any[]>([])
 const selectedDatabase = ref(props.initialDatabase || '')
@@ -215,6 +223,10 @@ const showHistory = ref(false)
 const sqlHistory = ref<any[]>([])
 const showSaveDialog = ref(false)
 const showSnippets = ref(false)
+const resultPanelVisible = ref(getStorageItem(RESULT_PANEL_VISIBLE_KEY, false))
+const resultPanelHeight = ref(getStorageItem(RESULT_PANEL_HEIGHT_KEY, 260))
+const executionSummaryVisible = ref(false)
+let executionSummaryTimer: number | null = null
 const currentConnection = computed(() => {
   const connectionId = props.connectionId || connectionStore.activeConnectionId
   return connectionStore.connections.find(c => c.id === connectionId) || null
@@ -237,7 +249,7 @@ const executionStatusColorMap: Record<SqlExecutionStatus, string> = {
   partial_success: 'gold',
 }
 const executionStatusColor = computed(() => executionStatusColorMap[executionState.value.status])
-const showExecutionSummary = computed(() => executionState.value.status !== 'idle' && Boolean(executionState.value.summary))
+const showExecutionSummary = computed(() => executionSummaryVisible.value && executionState.value.status !== 'idle' && Boolean(executionState.value.summary))
 const executionSummaryMeta = computed(() => {
   const state = executionState.value
   const parts: string[] = []
@@ -254,6 +266,7 @@ const executionSummaryMeta = computed(() => {
 
   return parts.join(' · ')
 })
+const resultDockHeight = computed(() => resultPanelVisible.value ? resultPanelHeight.value : RESULT_PANEL_COLLAPSED_HEIGHT)
 
 const gridRefs = reactive<Record<number, any>>({})
 function setGridRef(el: any, index: number) { if (el) gridRefs[index] = el; else delete gridRefs[index]; }
@@ -271,6 +284,48 @@ const hasResultTabsOnRight = computed(() => resultContextIndex.value >= 0 && res
 function hideResultContextMenu() {
   resultContextMenuVisible.value = false
   resultContextIndex.value = -1
+}
+
+function showExecutionSummaryTemporarily(duration = 3600) {
+  executionSummaryVisible.value = true
+  if (executionSummaryTimer !== null) {
+    clearTimeout(executionSummaryTimer)
+    executionSummaryTimer = null
+  }
+
+  if (duration > 0) {
+    executionSummaryTimer = window.setTimeout(() => {
+      executionSummaryVisible.value = false
+      executionSummaryTimer = null
+    }, duration)
+  }
+}
+
+function keepExecutionSummaryVisible() {
+  showExecutionSummaryTemporarily(0)
+}
+
+function hideExecutionSummary() {
+  executionSummaryVisible.value = false
+  if (executionSummaryTimer !== null) {
+    clearTimeout(executionSummaryTimer)
+    executionSummaryTimer = null
+  }
+}
+
+function revealResultPanel() {
+  resultPanelVisible.value = true
+}
+
+function toggleResultPanel() {
+  resultPanelVisible.value = !resultPanelVisible.value
+  setStorageItem(RESULT_PANEL_VISIBLE_KEY, resultPanelVisible.value)
+}
+
+function getMaxResultPanelHeight() {
+  const containerHeight = sqlEditorRoot.value?.clientHeight || 0
+  if (containerHeight <= 0) return 420
+  return Math.max(RESULT_PANEL_MIN_HEIGHT, containerHeight - 180)
 }
 
 function handleResultTabContextMenu(event: MouseEvent, index: number) {
@@ -506,6 +561,7 @@ function updateExecutionState(patch: Partial<SqlExecutionState> & { status?: Sql
 }
 
 function resetExecutionState() {
+  hideExecutionSummary()
   executionState.value = createIdleExecutionState()
   emit('executionStateChange', { ...executionState.value })
 }
@@ -530,6 +586,8 @@ function finalizeExecutionState(
   if (options.detail) {
     addMessage('error', options.detail)
   }
+
+  showExecutionSummaryTemporarily()
 }
 
 function getAffectedRows(results: QueryResult[]) {
@@ -708,6 +766,7 @@ function beginExecution(mode: 'query' | 'explain', statementCount = 1) {
     resultSetCount: 0,
     affectedRows: 0,
   })
+  keepExecutionSummaryVisible()
   return executionId
 }
 
@@ -826,6 +885,7 @@ async function executeQuery() {
     )
 
     applyBatchExecutionState(response)
+    revealResultPanel()
 
     if (response.results.length > 0) {
       resultTabKey.value = `result-${appendedIndex}`
@@ -886,6 +946,7 @@ async function explainQuery() {
       results,
       results.map((result) => buildResultState(undefined, result))
     )
+    revealResultPanel()
     resultTabKey.value = `result-${appendedIndex}`
     finalizeExecutionState('success', t('editor.summary.explain_success', { sets: results.length }), {
       mode: 'explain',
@@ -1016,7 +1077,29 @@ async function setSelectedDatabase(database: string) {
   emit('databaseChange', database)
 }
 async function handleSave(isAuto = false) { if (!editor || !props.filePath) return; const content = editor.getValue(); if (!content.trim()) return; try { await utilsApi.writeFile(props.filePath, content); if (!isAuto) message.success(t('common.save')) } catch (err: any) { if (!isAuto) message.error(`${t('common.fail')}: ${err}`) } }
-function startResize(e: MouseEvent) { isSplitResizing.value = true; const startY = e.clientY, startHeight = editorHeight.value; const doResize = (ev: MouseEvent) => { if (isSplitResizing.value) { editorHeight.value = Math.max(100, startHeight + (ev.clientY - startY)); } }; const stopResize = () => { isSplitResizing.value = false; document.removeEventListener('mousemove', doResize); document.removeEventListener('mouseup', stopResize); document.body.style.cursor = '' }; document.body.style.cursor = 'row-resize'; document.addEventListener('mousemove', doResize); document.addEventListener('mouseup', stopResize) }
+function startResize(e: MouseEvent) {
+  isSplitResizing.value = true
+  const startY = e.clientY
+  const startHeight = resultPanelHeight.value
+  const doResize = (ev: MouseEvent) => {
+    if (!isSplitResizing.value) return
+    const nextHeight = Math.min(
+      getMaxResultPanelHeight(),
+      Math.max(RESULT_PANEL_MIN_HEIGHT, startHeight - (ev.clientY - startY))
+    )
+    resultPanelHeight.value = nextHeight
+  }
+  const stopResize = () => {
+    isSplitResizing.value = false
+    setStorageItem(RESULT_PANEL_HEIGHT_KEY, resultPanelHeight.value)
+    document.removeEventListener('mousemove', doResize)
+    document.removeEventListener('mouseup', stopResize)
+    document.body.style.cursor = ''
+  }
+  document.body.style.cursor = 'row-resize'
+  document.addEventListener('mousemove', doResize)
+  document.addEventListener('mouseup', stopResize)
+}
 function updateAutocompleteContext() {
   const model = editor?.getModel(), baseId = props.connectionId || connectionStore.activeConnectionId
   if (model && baseId && connectionStore.connections.length > 0) {
@@ -1042,6 +1125,7 @@ function handleDatabaseChange(dbName: string) {
 
 onMounted(() => {
   if (!editorContainer.value) return
+  resultPanelHeight.value = Math.min(getMaxResultPanelHeight(), Math.max(RESULT_PANEL_MIN_HEIGHT, resultPanelHeight.value))
   editor = monaco.editor.create(editorContainer.value, { value: props.initialValue || t('editor.placeholder'), language: 'sql', theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs', automaticLayout: true, readOnly: false, domReadOnly: false, fontSize: appStore.editorSettings.fontSize, fontFamily: appStore.editorSettings.fontFamily, minimap: { enabled: appStore.editorSettings.minimap }, scrollBeyondLastLine: false, lineNumbers: appStore.editorSettings.lineNumbers, renderLineHighlight: 'all', quickSuggestions: { other: true, comments: false, strings: false }, suggestOnTriggerCharacters: true, acceptSuggestionOnCommitCharacter: true, acceptSuggestionOnEnter: 'on', tabCompletion: 'on' })
   updateAutocompleteContext(); editor.onDidChangeModelContent(() => { emit('contentChange', editor?.getValue() || ''); triggerAutoSave() }); editor.onKeyUp((event) => { if (event.keyCode === monaco.KeyCode.Space || event.keyCode === monaco.KeyCode.Period) editor?.trigger('keyboard', 'editor.action.triggerSuggest', {}) }); editor.addCommand(monaco.KeyCode.F5, () => executeQuery()); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => handleSave()); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => { void pasteFromSystemClipboard() });
   sqlHistory.value = getStorageItem(STORAGE_KEYS.SQL_HISTORY, [])
@@ -1049,7 +1133,7 @@ onMounted(() => {
 })
 let autoSaveTimer: any = null; function triggerAutoSave() { if (autoSaveTimer) clearTimeout(autoSaveTimer); autoSaveTimer = setTimeout(() => { handleSave(true) }, 2000) }
 onActivated(() => { nextTick(() => { if (editor) editor.layout() }) })
-onUnmounted(() => { hideResultContextMenu(); const model = editor?.getModel(); if (model) autocompleteManager.unbindModel(model); editor?.dispose(); })
+onUnmounted(() => { hideExecutionSummary(); hideResultContextMenu(); const model = editor?.getModel(); if (model) autocompleteManager.unbindModel(model); editor?.dispose(); })
 watch(() => [appStore.theme, appStore.editorSettings.fontSize, appStore.editorSettings.minimap, appStore.editorSettings.lineNumbers, appStore.editorSettings.fontFamily], ([theme]) => {
   if (!editor) return
   monaco.editor.setTheme(theme === 'dark' ? 'vs-dark' : 'vs')
@@ -1063,38 +1147,75 @@ watch(() => [appStore.theme, appStore.editorSettings.fontSize, appStore.editorSe
   })
 }, { immediate: true })
 watch(() => props.connectionId || connectionStore.activeConnectionId, () => { updateAutocompleteContext(); loadAvailableDatabases(); })
+watch(resultPanelVisible, (value) => { setStorageItem(RESULT_PANEL_VISIBLE_KEY, value) })
+watch(resultPanelHeight, (value) => { setStorageItem(RESULT_PANEL_HEIGHT_KEY, value) })
 defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, explainQuery, stopExecution, handleDatabaseChange, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
 </script>
 
 <style scoped>
-.sql-editor-container { display: flex; flex-direction: column; height: 100%; overflow: hidden; background: #fff; }
+.sql-editor-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: #ffffff;
+}
 .dark-mode .sql-editor-container { background: #1f1f1f; }
-.editor-workbench { display: flex; flex-shrink: 0; min-height: 100px; overflow: hidden; }
-.editor-section { flex: 1; min-width: 0; min-height: 100px; overflow: hidden; }
-.monaco-container { height: 100%; width: 100%; }
+.editor-workbench {
+  display: flex;
+  flex: 1;
+  min-height: 120px;
+  overflow: hidden;
+  background: #ffffff;
+}
+.dark-mode .editor-workbench {
+  background: #1f1f1f;
+}
+.editor-section {
+  flex: 1;
+  min-width: 0;
+  min-height: 100px;
+  overflow: hidden;
+  position: relative;
+  background: inherit;
+}
+.editor-section::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 1px;
+  background: #e5e7eb;
+  pointer-events: none;
+  z-index: 2;
+}
+.dark-mode .editor-section::before {
+  background: #303030;
+}
+.monaco-container {
+  height: 100%;
+  width: 100%;
+  background: transparent;
+}
+.result-dock { flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; border-top: 1px solid #e5e7eb; background: rgba(255, 255, 255, 0.96); box-shadow: 0 -12px 24px rgba(15, 23, 42, 0.06); transition: height 0.18s ease; }
+.dark-mode .result-dock { background: rgba(24, 24, 24, 0.98); border-top-color: #303030; box-shadow: 0 -12px 24px rgba(0, 0, 0, 0.24); }
+.result-dock.collapsed { box-shadow: 0 -6px 16px rgba(15, 23, 42, 0.04); }
 .split-resizer { height: 4px; background: #f0f0f0; cursor: row-resize; display: flex; align-items: center; justify-content: center; transition: background 0.2s; flex-shrink: 0; }
 .split-resizer:hover { background: #1890ff; }
 .dark-mode .split-resizer { background: #303030; }
 .resizer-handle { width: 30px; height: 2px; background: #d9d9d9; border-radius: 1px; }
-.result-section { flex: 1; min-height: 100px; display: flex; flex-direction: column; overflow: hidden; }
-.execution-summary-card { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #f0f0f0; background: #fafafa; flex-shrink: 0; }
-.dark-mode .execution-summary-card { background: #1a1a1a; border-bottom-color: #303030; }
-.execution-summary-card.status-success { background: #f6ffed; border-bottom-color: #b7eb8f; }
-.execution-summary-card.status-failed { background: #fff2f0; border-bottom-color: #ffccc7; }
-.execution-summary-card.status-cancelled { background: #fffbe6; border-bottom-color: #ffe58f; }
-.execution-summary-card.status-partial_success { background: #fff7e6; border-bottom-color: #ffd591; }
-.execution-summary-card.status-running { background: #e6f4ff; border-bottom-color: #91caff; }
-.dark-mode .execution-summary-card.status-success { background: #162312; border-bottom-color: #274916; }
-.dark-mode .execution-summary-card.status-failed { background: #2a1215; border-bottom-color: #58181c; }
-.dark-mode .execution-summary-card.status-cancelled { background: #2b2111; border-bottom-color: #594214; }
-.dark-mode .execution-summary-card.status-partial_success { background: #2b1d11; border-bottom-color: #593815; }
-.dark-mode .execution-summary-card.status-running { background: #111b26; border-bottom-color: #15417e; }
+.result-dock-header { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 10px; border-bottom: 1px solid #f0f0f0; background: rgba(248, 250, 252, 0.92); flex-shrink: 0; }
+.dark-mode .result-dock-header { border-bottom-color: #2c2c2c; background: rgba(24, 24, 24, 0.96); }
+.result-dock.collapsed .result-dock-header { border-bottom: 0; }
+.result-dock-toggle { width: 18px; height: 18px; padding: 0; border: 0; background: transparent; color: #6b7280; font-size: 11px; cursor: pointer; }
+.dark-mode .result-dock-toggle { color: #9ca3af; }
+.result-dock-title { font-size: 12px; font-weight: 600; color: #4b5563; flex-shrink: 0; }
+.dark-mode .result-dock-title { color: #d1d5db; }
 .execution-summary-tag { margin-inline-end: 0; }
-.execution-summary-text { color: #262626; font-size: 13px; font-weight: 500; }
+.execution-summary-text { color: #262626; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dark-mode .execution-summary-text { color: #f5f5f5; }
-.execution-summary-meta { color: #8c8c8c; font-size: 12px; }
+.execution-summary-meta { color: #8c8c8c; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dark-mode .execution-summary-meta { color: #a6a6a6; }
-.result-tabs { height: 100%; display: flex; flex-direction: column; }
+.result-tabs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .result-tabs :deep(.ant-tabs-content) { flex: 1; overflow: hidden; }
 .result-tabs :deep(.ant-tabs-tabpane) { height: 100%; display: flex; flex-direction: column; }
 .result-content { flex: 1; display: flex; flex-direction: column; padding: 12px; overflow: hidden; position: relative; }
@@ -1137,6 +1258,12 @@ defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, exp
 :deep(.danger-confirm-list li) { margin-bottom: 8px; line-height: 1.5; word-break: break-word; }
 
 @media (max-width: 768px) {
+  .result-dock-header {
+    flex-wrap: wrap;
+    padding-bottom: 4px;
+    padding-top: 4px;
+  }
+
   .result-info {
     align-items: flex-start;
     flex-direction: column;

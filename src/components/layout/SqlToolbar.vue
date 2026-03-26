@@ -111,16 +111,36 @@ function handleDatabaseMenuClick({ key }: { key: string | number }) {
 <style scoped>
 .global-sql-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 0 12px; height: 40px; background: #f5f5f5; border-bottom: 1px solid #d9d9d9; flex-shrink: 0; }
 .dark-mode .global-sql-toolbar { background: #1a1a1a; border-bottom-color: #303030; }
-.global-sql-toolbar.vertical { width: 40px; height: 100%; flex-direction: column; justify-content: flex-start; gap: 4px; padding: 4px 3px; border-right: 1px solid #d9d9d9; border-bottom: 0; background: #f7f7f7; }
-.dark-mode .global-sql-toolbar.vertical { background: #181818; border-right-color: #303030; }
+.global-sql-toolbar.vertical {
+  width: 32px;
+  height: 100%;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 0;
+  padding: 0;
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 0;
+  background: #ffffff;
+}
+.dark-mode .global-sql-toolbar.vertical {
+  background: #1f1f1f;
+  border-right-color: #303030;
+}
 .toolbar-left { display: flex; align-items: center; }
 .toolbar-left.vertical { flex-direction: column; width: 100%; }
 .toolbar-group { display: flex; align-items: center; gap: 4px; }
-.toolbar-group.vertical { width: 100%; flex-direction: column; gap: 1px; }
+.toolbar-group.vertical { width: 100%; flex-direction: column; gap: 0; }
 .toolbar-left :deep(.ant-btn-text),
 .toolbar-right :deep(.ant-btn-text) { width: auto; min-width: 32px; padding: 0 8px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 4px; color: #595959; font-size: 14px; }
 .toolbar-left.vertical :deep(.ant-btn-text),
-.toolbar-right.vertical :deep(.ant-btn-text) { width: 100%; min-width: 0; height: 24px; padding: 0; border-radius: 3px; font-size: 12px; }
+.toolbar-right.vertical :deep(.ant-btn-text) {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0;
+  border-radius: 0;
+  font-size: 12px;
+}
 .dark-mode .toolbar-left :deep(.ant-btn-text),
 .dark-mode .toolbar-right :deep(.ant-btn-text) { color: #aaa; }
 .toolbar-left :deep(.ant-btn-text:hover),
@@ -128,11 +148,18 @@ function handleDatabaseMenuClick({ key }: { key: string | number }) {
 .dark-mode .toolbar-left :deep(.ant-btn-text:hover),
 .dark-mode .toolbar-right :deep(.ant-btn-text:hover) { background: rgba(255, 255, 255, 0.08); }
 .toolbar-right.vertical { width: 100%; margin-top: auto; }
-.global-sql-toolbar.vertical :deep(.ant-divider-horizontal) { margin: 4px 0; min-width: 100%; }
+.global-sql-toolbar.vertical :deep(.ant-divider-horizontal) {
+  margin: 0;
+  min-width: 100%;
+  border-block-start-color: #eef2f7;
+}
+.dark-mode .global-sql-toolbar.vertical :deep(.ant-divider-horizontal) {
+  border-block-start-color: #2a2a2a;
+}
 .btn-run { color: #52c41a !important; font-weight: bold; }
-.btn-run:hover { background: #f6ffed !important; }
+.btn-run:hover { background: rgba(82, 196, 26, 0.12) !important; }
 .btn-stop { color: #ff4d4f !important; }
-.btn-stop:hover { background: #fff1f0 !important; }
+.btn-stop:hover { background: rgba(255, 77, 79, 0.12) !important; }
 .db-label { font-size: 12px; color: #8c8c8c; margin-right: 8px; }
 .db-trigger { width: 100%; }
 </style>
