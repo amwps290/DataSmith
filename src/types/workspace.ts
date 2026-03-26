@@ -4,7 +4,8 @@ export enum TabType {
   Query = 'query',
   Redis = 'redis',
   Compare = 'compare',
-  Builder = 'builder'
+  Builder = 'builder',
+  Settings = 'settings'
 }
 
 export interface TabState {

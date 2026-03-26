@@ -1,8 +1,19 @@
 <template>
   <div class="sql-editor-container">
-    <!-- 编辑器区域 -->
-    <div class="editor-section" :style="{ height: editorHeight + 'px' }">
-      <div ref="editorContainer" class="monaco-container"></div>
+    <div class="editor-workbench" :style="{ height: editorHeight + 'px' }">
+      <SqlToolbar
+        vertical
+        :executing="executing"
+        :selected-database="selectedDatabase"
+        :databases="availableDatabases"
+        @action="handleToolbarAction"
+        @database-change="handleToolbarDbChange"
+      />
+
+      <!-- 编辑器区域 -->
+      <div class="editor-section">
+        <div ref="editorContainer" class="monaco-container"></div>
+      </div>
     </div>
 
     <!-- 拖拽调整器 -->
@@ -169,6 +180,7 @@ import { analyzeSqlSafety, analyzeSqlWrites, type SqlDangerIssue } from '@/utils
 import SaveQueryDialog from './SaveQueryDialog.vue'
 import SqlSnippetsManager from './SqlSnippetsManager.vue'
 import type { VxeGridProps } from 'vxe-table'
+import SqlToolbar from '@/components/layout/SqlToolbar.vue'
 
 const { t } = useI18n()
 const props = defineProps<{ connectionId?: string; initialDatabase?: string; initialValue?: string; filePath?: string; tabId?: string; }>()
@@ -447,6 +459,28 @@ async function loadNextPage(index: number) {
 }
 
 function addMessage(type: string, text: string) { messages.value.unshift({ type, text, time: new Date().toLocaleTimeString() }) }
+
+function handleToolbarAction(method: string) {
+  const actionMap: Record<string, () => void | Promise<void>> = {
+    executeQuery,
+    explainQuery,
+    stopExecution,
+    handleSave,
+    formatSql,
+    clearEditor,
+    openHistory,
+    openSnippets,
+    refreshAutocomplete,
+  }
+
+  const action = actionMap[method]
+  if (!action) return
+  void action()
+}
+
+function handleToolbarDbChange(database: string) {
+  void handleDatabaseChange(database)
+}
 
 function getMessageTypeForStatus(status: SqlExecutionStatus) {
   switch (status) {
@@ -1035,7 +1069,8 @@ defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, exp
 <style scoped>
 .sql-editor-container { display: flex; flex-direction: column; height: 100%; overflow: hidden; background: #fff; }
 .dark-mode .sql-editor-container { background: #1f1f1f; }
-.editor-section { flex-shrink: 0; min-height: 100px; overflow: hidden; }
+.editor-workbench { display: flex; flex-shrink: 0; min-height: 100px; overflow: hidden; }
+.editor-section { flex: 1; min-width: 0; min-height: 100px; overflow: hidden; }
 .monaco-container { height: 100%; width: 100%; }
 .split-resizer { height: 4px; background: #f0f0f0; cursor: row-resize; display: flex; align-items: center; justify-content: center; transition: background 0.2s; flex-shrink: 0; }
 .split-resizer:hover { background: #1890ff; }

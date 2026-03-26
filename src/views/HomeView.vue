@@ -30,15 +30,6 @@
       <div v-if="!appStore.sidebarCollapsed" class="sidebar-resizer" @mousedown="startResize"></div>
 
       <div class="main-workspace">
-        <SqlToolbar
-          v-if="activeTabType === 'query'"
-          :executing="activeEditorExecuting"
-          :selected-database="activeTabDatabase"
-          :databases="availableDatabases"
-          @action="handleToolbarAction"
-          @database-change="handleToolbarDbChange"
-        />
-
         <a-tabs v-model:activeKey="mainTabKey" type="editable-card" size="small" @edit="onTabEdit" class="workspace-tabs">
           <a-tab-pane v-for="tab in dataTabs" :key="tab.key" :closable="tab.closable !== false">
             <template #tab>
@@ -49,16 +40,18 @@
                 <EditOutlined v-else-if="tab.type === 'design'" />
                 <BuildOutlined v-else-if="tab.type === 'builder'" />
                 <RetweetOutlined v-else-if="tab.type === 'compare'" />
+                <SettingOutlined v-else-if="tab.type === 'settings'" />
                 <span class="title-text">{{ tab.title }}</span>
               </span>
             </template>
             <div class="tab-content-wrapper">
               <KeepAlive>
-                <SqlEditor v-if="tab.type === 'query'" :key="tab.key" :ref="(el: unknown) => setSqlEditorRef(el, tab.key)" :connection-id="tab.connectionId" :initial-database="tab.database" :initial-value="tab.content" :file-path="tab.filePath" @content-change="(val: string) => handleContentChange(tab.key, val)" @file-saved="(path: string, title: string) => handleFileSaved(tab.key, path, title)" @databases-loaded="(dbs: DatabaseInfo[]) => availableDatabases = dbs" @database-change="(db: string) => handleEditorDatabaseChange(tab.key, String(db || ''))" @execution-state-change="(state) => updateSqlExecutionState(tab.key, state)" />
+                <SqlEditor v-if="tab.type === 'query'" :key="tab.key" :ref="(el: unknown) => setSqlEditorRef(el, tab.key)" :connection-id="tab.connectionId" :initial-database="tab.database" :initial-value="tab.content" :file-path="tab.filePath" @content-change="(val: string) => handleContentChange(tab.key, val)" @file-saved="(path: string, title: string) => handleFileSaved(tab.key, path, title)" @database-change="(db: string) => handleEditorDatabaseChange(tab.key, String(db || ''))" @execution-state-change="(state) => updateSqlExecutionState(tab.key, state)" />
                 <TableDataGrid v-else-if="tab.type === 'data'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" />
                 <TableDesigner v-else-if="tab.type === 'design'" :key="tab.key" :connection-id="tab.connectionId!" :database="tab.database!" :table="tab.table!" :schema="tab.schema" :read-only="tab.readOnly" />
                 <QueryBuilder v-else-if="tab.type === 'builder'" :key="tab.key" :connection-id="tab.connectionId || null" :initial-database="tab.database || null" @execute-query="(payload: QueryBuilderExecutePayload | string) => handleQueryBuilderExecute(tab, payload)" />
                 <DataCompare v-else-if="tab.type === 'compare'" :key="tab.key" :connection-id="tab.connectionId || null" :initial-database="tab.database || null" />
+                <SettingsContent v-else-if="tab.type === 'settings'" :key="tab.key" embedded />
                 <RedisEditor v-else-if="tab.type === 'redis'" :key="tab.key" :ref="redisEditorRef" />
               </KeepAlive>
             </div>
@@ -111,10 +104,9 @@
 <script setup lang="ts">
 import { defineAsyncComponent, reactive, ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
 import {
   FileTextOutlined,
-  TableOutlined, EditOutlined, RetweetOutlined, BuildOutlined,
+  TableOutlined, EditOutlined, RetweetOutlined, BuildOutlined, SettingOutlined,
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useConnectionStore } from '@/stores/connection'
@@ -122,10 +114,9 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import ConnectionPanel from '@/components/connection/ConnectionPanel.vue'
 import ConnectionDialog from '@/components/connection/ConnectionDialog.vue'
 import AppHeader from '@/components/layout/AppHeader.vue'
-import SqlToolbar from '@/components/layout/SqlToolbar.vue'
 import { invoke } from '@tauri-apps/api/core'
 import { message } from 'ant-design-vue'
-import type { ConnectionConfig, DatabaseInfo, ScriptInfo } from '@/types/database'
+import type { ConnectionConfig, ScriptInfo } from '@/types/database'
 import { TabType } from '@/types/workspace'
 import { useSidebarResize } from '@/composables/useSidebarResize'
 import { useTabManager, type DataTab } from '@/composables/useTabManager'
@@ -140,9 +131,9 @@ const TableDesigner = defineAsyncComponent(() => import('@/components/database/T
 const GlobalSearch = defineAsyncComponent(() => import('@/components/search/GlobalSearch.vue'))
 const QueryBuilder = defineAsyncComponent(() => import('@/components/tools/QueryBuilder.vue'))
 const DataCompare = defineAsyncComponent(() => import('@/components/tools/DataCompare.vue'))
+const SettingsContent = defineAsyncComponent(() => import('@/components/settings/SettingsContent.vue'))
 
 const { t } = useI18n()
-const router = useRouter()
 const appStore = useAppStore()
 const connectionStore = useConnectionStore()
 const workspaceStore = useWorkspaceStore()
@@ -151,8 +142,8 @@ const workspaceStore = useWorkspaceStore()
 const { sidebarWidth, startResize } = useSidebarResize()
 const {
   dataTabs, mainTabKey,
-  activeTabType, activeTabDatabase, activeEditorExecuting, activeEditorExecutionState,
-  setSqlEditorRef, updateSqlExecutionState, callActiveEditor, closeTab, closeTabsLeftOf, closeTabsRightOf, closeOtherTabs, closeSavedTabs,
+  activeTabType, activeTabDatabase,
+  setSqlEditorRef, updateSqlExecutionState, closeTab, closeTabsLeftOf, closeTabsRightOf, closeOtherTabs, closeSavedTabs,
   tabExists, addTab, handleContentChange, handleFileSaved,
 } = useTabManager()
 
@@ -160,7 +151,6 @@ const showConnectionDialog = ref(false)
 const showGlobalSearch = ref(false)
 const editingConnection = ref<ConnectionConfig | null>(null)
 const redisEditorRef = ref()
-const availableDatabases = ref<DatabaseInfo[]>([])
 let sessionReconnectTimer: number | null = null
 
 function clearSessionReconnectTimer() {
@@ -196,7 +186,17 @@ function scheduleSessionReconnect(connectionIds: string[]) {
 }
 
 function openSettings() {
-  router.push({ name: 'Settings' })
+  const key = 'settings'
+  if (tabExists(key)) {
+    mainTabKey.value = key
+    return
+  }
+
+  addTab({
+    key,
+    title: t('common.settings'),
+    type: TabType.Settings,
+  })
 }
 
 const activeConnection = computed(() => connectionStore.getActiveConnection())
@@ -231,27 +231,6 @@ async function restoreSession() {
     workspaceStore.isRestoring = false
     scheduleSessionReconnect(pendingReconnectIds)
   }
-}
-
-function handleToolbarAction(action: string) {
-  console.info('[SQL][Toolbar] action triggered', {
-    action,
-    tabKey: mainTabKey.value,
-    activeTabType: activeTabType.value,
-    hasEditor: activeTabType.value === 'query',
-    executing: activeEditorExecuting.value,
-    executionStatus: activeEditorExecutionState.value?.status || null,
-  })
-  callActiveEditor(action)
-}
-
-function handleToolbarDbChange(val: unknown) {
-  console.info('[SQL][Toolbar] database change triggered', {
-    tabKey: mainTabKey.value,
-    activeTabType: activeTabType.value,
-    database: String(val || ''),
-  })
-  callActiveEditor('handleDatabaseChange', String(val || ''))
 }
 
 function handleEditorDatabaseChange(tabKey: string, database: string) {

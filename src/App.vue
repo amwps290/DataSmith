@@ -1,7 +1,14 @@
 <template>
   <a-config-provider :theme="themeConfig">
     <div id="app" :class="{ 'dark-mode': isDark }" :style="appStyleVars">
-      <router-view />
+      <router-view v-slot="{ Component, route }">
+        <transition name="page-shell" mode="out-in">
+          <keep-alive v-if="route.meta.keepAlive">
+            <component :is="Component" :key="String(route.name || route.path)" />
+          </keep-alive>
+          <component v-else :is="Component" :key="String(route.name || route.path)" />
+        </transition>
+      </router-view>
     </div>
   </a-config-provider>
 </template>
@@ -41,5 +48,20 @@ onMounted(() => {
 .dark-mode {
   background-color: #141414;
   color: rgba(255, 255, 255, 0.85);
+}
+
+.page-shell-enter-active,
+.page-shell-leave-active {
+  transition: opacity 0.24s ease, transform 0.24s ease;
+}
+
+.page-shell-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.page-shell-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
 }
 </style>
