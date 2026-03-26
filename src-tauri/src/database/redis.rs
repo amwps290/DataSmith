@@ -166,7 +166,7 @@ impl DatabaseOperations for RedisDatabase {
         Ok(())
     }
 
-    async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<Vec<QueryResult>> {
+    async fn execute_query(&self, sql: &str, _database: Option<&str>, _query_id: Option<u64>) -> DbResult<Vec<QueryResult>> {
         let parts: Vec<&str> = sql.split_whitespace().collect();
         if parts.is_empty() { return Ok(vec![]) }
         

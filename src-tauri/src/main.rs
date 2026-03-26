@@ -32,6 +32,7 @@ fn main() {
             commands::query::beautify_sql,
             commands::query::prepare_sql_script,
             commands::query::execute_query_batch,
+            commands::query::cancel_query,
             commands::query::alter_table_structure,
             commands::query::update_table_data,
             commands::query::insert_table_data,

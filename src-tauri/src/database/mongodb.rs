@@ -49,7 +49,7 @@ impl DatabaseOperations for MongoDatabase {
         Ok(())
     }
 
-    async fn execute_query(&self, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
+    async fn execute_query(&self, sql: &str, database: Option<&str>, _query_id: Option<u64>) -> DbResult<Vec<QueryResult>> {
         let state = self.state.lock().await;
         let client = state.client.as_ref().ok_or(DbError::not_connected())?;
         let db_name = database.ok_or(DbError::QueryFailed("未指定数据库".into()))?;

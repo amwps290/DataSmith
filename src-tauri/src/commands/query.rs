@@ -39,6 +39,7 @@ pub async fn execute_query(
     connection_id: String,
     sql: String,
     database: Option<String>,
+    query_id: Option<u64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<QueryResult>, String> {
     let manager = &state.connection_manager;
@@ -51,7 +52,7 @@ pub async fn execute_query(
     );
     
     manager
-        .execute_query(&connection_id, &sql, database.as_deref())
+        .execute_query(&connection_id, &sql, database.as_deref(), query_id)
         .await
         .to_cmd_result()
 }
@@ -63,6 +64,7 @@ pub async fn explain_query(
     connection_id: String,
     sql: String,
     database: Option<String>,
+    query_id: Option<u64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<QueryResult>, String> {
     let manager = &state.connection_manager;
@@ -75,7 +77,7 @@ pub async fn explain_query(
     );
     
     manager
-        .explain_query(&connection_id, &sql, database.as_deref())
+        .explain_query(&connection_id, &sql, database.as_deref(), query_id)
         .await
         .to_cmd_result()
 }
@@ -108,15 +110,27 @@ pub async fn execute_query_batch(
     connection_id: String,
     sqls: Vec<String>,
     database: Option<String>,
+    query_id: Option<u64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<QueryResult>, String> {
     let manager = &state.connection_manager;
-    let mut results = Vec::new();
-    for sql in sqls {
-        let res_vec = manager.execute_query(&connection_id, &sql, database.as_deref()).await.to_cmd_result()?;
-        results.extend(res_vec);
-    }
-    Ok(results)
+    manager
+        .execute_query_batch(&connection_id, &sqls, database.as_deref(), query_id)
+        .await
+        .to_cmd_result()
+}
+
+#[tauri::command]
+pub async fn cancel_query(
+    connection_id: String,
+    query_id: u64,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let manager = &state.connection_manager;
+    manager
+        .cancel_query(&connection_id, query_id)
+        .await
+        .to_cmd_result()
 }
 
 #[tauri::command]

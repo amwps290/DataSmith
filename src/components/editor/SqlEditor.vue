@@ -455,6 +455,7 @@ async function executeQuery() {
       connId,
       processedStatements,
       selectedDatabase.value || null,
+      executionId,
     )
 
     if (isExecutionStale(executionId)) {
@@ -513,7 +514,7 @@ async function explainQuery() {
       database: selectedDatabase.value || null,
       displayDatabase: currentDatabaseLabel.value,
     })
-    const results = await queryApi.explainQuery(connId, sql, selectedDatabase.value || null)
+    const results = await queryApi.explainQuery(connId, sql, selectedDatabase.value || null, executionId)
     if (isExecutionStale(executionId)) {
       return
     }
@@ -534,11 +535,22 @@ async function explainQuery() {
   }
 }
 
-function stopExecution() {
+async function stopExecution() {
   if (!executing.value) return
+  const connId = sessionConnectionId.value
+  const executionId = activeExecutionId.value
   activeExecutionId.value = executionSeq.value + 1
   executing.value = false
   resultTabKey.value = 'messages'
+
+  if (connId && executionId > 0) {
+    try {
+      await queryApi.cancelQuery(connId, executionId)
+    } catch (e: any) {
+      console.warn('[SQL] cancel failed', e)
+    }
+  }
+
   addMessage('info', t('editor.manual_stop'))
 }
 async function formatSql() { if (!editor) return; try { const formatted = await queryApi.beautifySql(sessionConnectionId.value, editor.getValue()); editor.setValue(formatted); message.success(t('editor.format_success')) } catch (e: any) { message.error(getErrorMessage(e)) } }

@@ -11,9 +11,15 @@ use crate::utils::sql_sanitize::{escape_mysql_id, escape_string_literal};
 use crate::utils::sql_script::split_sql_script;
 
 /// MySQL 数据库驱动状态
+struct ActiveMySqlQuery {
+    query_id: u64,
+    connection_id: u32,
+}
+
 struct MySqlState {
     pool: Option<Pool>,
     config: Option<ConnectionConfig>,
+    active_query: Option<ActiveMySqlQuery>,
 }
 
 /// MySQL 数据库驱动 - 基于 mysql_async 的原生实现
@@ -24,7 +30,7 @@ pub struct MySqlDatabase {
 impl MySqlDatabase {
     pub fn new() -> Self {
         Self { 
-            state: Mutex::new(MySqlState { pool: None, config: None })
+            state: Mutex::new(MySqlState { pool: None, config: None, active_query: None })
         }
     }
 
@@ -160,6 +166,35 @@ impl MySqlDatabase {
         Ok((pool, config))
     }
 
+    async fn set_active_query(&self, query_id: u64, connection_id: u32) {
+        let mut state = self.state.lock().await;
+        state.active_query = Some(ActiveMySqlQuery { query_id, connection_id });
+    }
+
+    async fn clear_active_query(&self, query_id: u64) {
+        let mut state = self.state.lock().await;
+        if state.active_query.as_ref().map(|query| query.query_id) == Some(query_id) {
+            state.active_query = None;
+        }
+    }
+
+    async fn get_cancel_target(&self, query_id: u64) -> DbResult<Option<(ConnectionConfig, u32)>> {
+        let state = self.state.lock().await;
+        let Some(active_query) = state.active_query.as_ref() else {
+            return Ok(None);
+        };
+
+        if active_query.query_id != query_id {
+            return Ok(None);
+        }
+
+        let config = state
+            .config
+            .clone()
+            .ok_or_else(|| DbError::ConfigError("未找到连接配置".into()))?;
+        Ok(Some((config, active_query.connection_id)))
+    }
+
     async fn resolve_database_name(&self, database: Option<&str>, schema: Option<&str>) -> DbResult<String> {
         if let Some(name) = schema.or(database) {
             return Ok(name.to_string());
@@ -213,6 +248,7 @@ impl DatabaseOperations for MySqlDatabase {
             pool.disconnect().await.map_err(|e| DbError::Other(e.to_string()))?;
         }
         state.config = None;
+        state.active_query = None;
         Ok(())
     }
 
@@ -238,63 +274,76 @@ impl DatabaseOperations for MySqlDatabase {
     }
 
     #[instrument(skip(self, sql))]
-    async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<Vec<QueryResult>> {
+    async fn execute_query(&self, sql: &str, _database: Option<&str>, query_id: Option<u64>) -> DbResult<Vec<QueryResult>> {
         let _start_total = Instant::now();
         let (pool, config) = self.get_pool_and_config().await?;
         let mut conn = pool.get_conn().await.map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
         Self::configure_connection(&mut conn, &config).await?;
 
+        if let Some(query_id) = query_id {
+            self.set_active_query(query_id, conn.id()).await;
+        }
+
         debug!(sql = %sql.replace('\n', " "), "执行 MySQL 查询");
 
-        let sqls = split_sql_script(sql, &DatabaseType::MySQL);
-        let mut results = Vec::new();
+        let result = async {
+            let sqls = split_sql_script(sql, &DatabaseType::MySQL);
+            let mut results = Vec::new();
 
-        for statement in sqls {
-            let start_stmt = Instant::now();
-            let rows: Vec<Row> = conn.query(statement.sql.as_str()).await.map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
-            
-            let mut columns = Vec::new();
-            if let Some(first_row) = rows.first() {
-                columns = first_row.columns().iter().map(|c| c.name_str().to_string()).collect();
-            }
-            
-            let mut final_rows = Vec::new();
-            for row in rows {
-                let mut row_map = HashMap::new();
-                for (i, col_name) in columns.iter().enumerate() {
-                    let value: Value = row.get(i).unwrap_or(Value::NULL);
-                    let json_val = match value {
-                        Value::NULL => serde_json::Value::Null,
-                        Value::Bytes(b) => serde_json::Value::String(String::from_utf8_lossy(&b).into_owned()),
-                        Value::Int(i) => serde_json::Value::Number(i.into()),
-                        Value::UInt(u) => serde_json::Value::Number(u.into()),
-                        Value::Float(f) => serde_json::Value::Number(serde_json::Number::from_f64(f as f64).unwrap_or(serde_json::Number::from(0))),
-                        Value::Double(d) => serde_json::Value::Number(serde_json::Number::from_f64(d).unwrap_or(serde_json::Number::from(0))),
-                        Value::Date(y, m, d, h, i, s, ms) => serde_json::Value::String(format!("{}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}", y, m, d, h, i, s, ms)),
-                        Value::Time(neg, d, h, m, s, ms) => serde_json::Value::String(format!("{}{}:{:02}:{:02}:{:02}.{:03}", if neg { "-" } else { "" }, d, h, m, s, ms)),
-                    };
-                    row_map.insert(col_name.clone(), json_val);
+            for statement in sqls {
+                let start_stmt = Instant::now();
+                let rows: Vec<Row> = conn.query(statement.sql.as_str()).await.map_err(|e| DbError::QueryFailed(Self::format_mysql_error(e)))?;
+                
+                let mut columns = Vec::new();
+                if let Some(first_row) = rows.first() {
+                    columns = first_row.columns().iter().map(|c| c.name_str().to_string()).collect();
                 }
-                final_rows.push(row_map);
+                
+                let mut final_rows = Vec::new();
+                for row in rows {
+                    let mut row_map = HashMap::new();
+                    for (i, col_name) in columns.iter().enumerate() {
+                        let value: Value = row.get(i).unwrap_or(Value::NULL);
+                        let json_val = match value {
+                            Value::NULL => serde_json::Value::Null,
+                            Value::Bytes(b) => serde_json::Value::String(String::from_utf8_lossy(&b).into_owned()),
+                            Value::Int(i) => serde_json::Value::Number(i.into()),
+                            Value::UInt(u) => serde_json::Value::Number(u.into()),
+                            Value::Float(f) => serde_json::Value::Number(serde_json::Number::from_f64(f as f64).unwrap_or(serde_json::Number::from(0))),
+                            Value::Double(d) => serde_json::Value::Number(serde_json::Number::from_f64(d).unwrap_or(serde_json::Number::from(0))),
+                            Value::Date(y, m, d, h, i, s, ms) => serde_json::Value::String(format!("{}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}", y, m, d, h, i, s, ms)),
+                            Value::Time(neg, d, h, m, s, ms) => serde_json::Value::String(format!("{}{}:{:02}:{:02}:{:02}.{:03}", if neg { "-" } else { "" }, d, h, m, s, ms)),
+                        };
+                        row_map.insert(col_name.clone(), json_val);
+                    }
+                    final_rows.push(row_map);
+                }
+                
+                results.push(QueryResult {
+                    columns,
+                    rows: final_rows,
+                    affected_rows: conn.affected_rows(),
+                    execution_time_ms: start_stmt.elapsed().as_millis(),
+                });
             }
-            
-            results.push(QueryResult {
-                columns,
-                rows: final_rows,
-                affected_rows: conn.affected_rows(),
-                execution_time_ms: start_stmt.elapsed().as_millis(),
-            });
+
+            if results.is_empty() {
+                results.push(QueryResult::empty(0));
+            }
+
+            Ok(results)
+        }
+        .await;
+
+        if let Some(query_id) = query_id {
+            self.clear_active_query(query_id).await;
         }
 
-        if results.is_empty() {
-            results.push(QueryResult::empty(0));
-        }
-
-        Ok(results)
+        result
     }
 
     async fn get_databases(&self) -> DbResult<Vec<DatabaseInfo>> {
-        let results = self.execute_query("SHOW DATABASES", None).await?;
+        let results = self.execute_query("SHOW DATABASES", None, None).await?;
         if let Some(res) = results.first() {
             Ok(res.rows.iter().map(|r| DatabaseInfo { 
                 name: r.values().next().and_then(|v| v.as_str()).unwrap_or("").to_string(), 
@@ -312,7 +361,7 @@ impl DatabaseOperations for MySqlDatabase {
             "SHOW TABLES".to_string()
         };
         
-        let results = self.execute_query(&sql, None).await?;
+        let results = self.execute_query(&sql, None, None).await?;
         if let Some(res) = results.first() {
             Ok(res.rows.iter().map(|r| TableInfo {
                 name: r.get("TABLE_NAME").or_else(|| r.values().next()).and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -335,7 +384,7 @@ impl DatabaseOperations for MySqlDatabase {
             escape_string_literal(&target_db)
         );
 
-        let results = self.execute_query(&sql, None).await?;
+        let results = self.execute_query(&sql, None, None).await?;
         if let Some(res) = results.first() {
             Ok(res.rows.iter().map(|r| TableInfo {
                 name: r.get("TABLE_NAME").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -355,7 +404,7 @@ impl DatabaseOperations for MySqlDatabase {
         let schema = database.unwrap_or("");
         let sql = format!("SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, EXTRA, COLUMN_COMMENT, CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE FROM information_schema.COLUMNS WHERE TABLE_NAME = {} AND TABLE_SCHEMA = {} ORDER BY ORDINAL_POSITION", escape_string_literal(table), escape_string_literal(schema));
         
-        let results = self.execute_query(&sql, None).await?;
+        let results = self.execute_query(&sql, None, None).await?;
         if let Some(res) = results.first() {
             Ok(res.rows.iter().map(|r| {
                 let key = r.get("COLUMN_KEY").and_then(|v| v.as_str()).unwrap_or("");
@@ -451,7 +500,7 @@ impl DatabaseOperations for MySqlDatabase {
     }
 
     async fn get_indexes(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
-        let results = self.execute_query(&format!("SHOW INDEX FROM {}", escape_mysql_id(table)), None).await?;
+        let results = self.execute_query(&format!("SHOW INDEX FROM {}", escape_mysql_id(table)), None, None).await?;
         let mut map: HashMap<String, IndexInfo> = HashMap::new();
         
         if let Some(res) = results.first() {
@@ -483,7 +532,7 @@ impl DatabaseOperations for MySqlDatabase {
         }
 
         let sql = "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME";
-        let results = self.execute_query(sql, None).await?;
+        let results = self.execute_query(sql, None, None).await?;
         if let Some(res) = results.first() {
             Ok(res.rows.iter().map(|r| SchemaInfo {
                 name: r.get("SCHEMA_NAME").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -516,7 +565,7 @@ impl DatabaseOperations for MySqlDatabase {
             escape_string_literal(&target_schema)
         );
 
-        let results = self.execute_query(&sql, None).await?;
+        let results = self.execute_query(&sql, None, None).await?;
         if let Some(res) = results.first() {
             Ok(res.rows.iter().map(|r| FunctionInfo {
                 name: r.get("ROUTINE_NAME").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -553,7 +602,7 @@ impl DatabaseOperations for MySqlDatabase {
             escape_string_literal(&target_schema)
         );
 
-        let results = self.execute_query(&sql, None).await?;
+        let results = self.execute_query(&sql, None, None).await?;
         if let Some(res) = results.first() {
             Ok(res.rows.iter().map(|r| FunctionInfo {
                 name: r.get("ROUTINE_NAME").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -574,7 +623,7 @@ impl DatabaseOperations for MySqlDatabase {
             "SELECT kcu.CONSTRAINT_NAME, kcu.COLUMN_NAME, kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME, rc.UPDATE_RULE, rc.DELETE_RULE FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc ON kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA WHERE kcu.TABLE_NAME = {} AND kcu.REFERENCED_TABLE_NAME IS NOT NULL",
             escape_string_literal(table)
         );
-        let results = self.execute_query(&sql, None).await?;
+        let results = self.execute_query(&sql, None, None).await?;
         let mut fks = Vec::new();
         if let Some(res) = results.first() {
             for r in &res.rows {
@@ -667,7 +716,7 @@ impl DatabaseOperations for MySqlDatabase {
 
     async fn get_table_ddl(&self, table: &str, _schema: Option<&str>) -> DbResult<String> {
         let sql = format!("SHOW CREATE TABLE {}", escape_mysql_id(table));
-        let results = self.execute_query(&sql, None).await?;
+        let results = self.execute_query(&sql, None, None).await?;
         if let Some(res) = results.first() {
             if let Some(row) = res.rows.first() {
                 return Ok(row.get("Create Table").or_else(|| row.values().nth(1)).and_then(|v| v.as_str()).unwrap_or("").to_string());
@@ -678,7 +727,7 @@ impl DatabaseOperations for MySqlDatabase {
 
     async fn get_view_definition(&self, view: &str, _schema: Option<&str>) -> DbResult<String> {
         let sql = format!("SHOW CREATE VIEW {}", escape_mysql_id(view));
-        let results = self.execute_query(&sql, None).await?;
+        let results = self.execute_query(&sql, None, None).await?;
         if let Some(res) = results.first() {
             if let Some(row) = res.rows.first() {
                 return Ok(row.get("Create View").or_else(|| row.values().nth(1)).and_then(|v| v.as_str()).unwrap_or("").to_string());
@@ -687,9 +736,26 @@ impl DatabaseOperations for MySqlDatabase {
         Err(DbError::Other("无法获取视图定义".into()))
     }
 
-    async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
+    async fn explain_query(&self, sql: &str, database: Option<&str>, query_id: Option<u64>) -> DbResult<Vec<QueryResult>> {
         let explain_sql = format!("EXPLAIN {}", sql);
-        self.execute_query(&explain_sql, database).await
+        self.execute_query(&explain_sql, database, query_id).await
+    }
+
+    async fn cancel_query(&self, query_id: u64) -> DbResult<bool> {
+        let Some((config, connection_id)) = self.get_cancel_target(query_id).await? else {
+            return Ok(false);
+        };
+
+        let mut cancel_conn = Conn::new(Self::create_opts(&config))
+            .await
+            .map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+        Self::configure_connection(&mut cancel_conn, &config).await?;
+
+        match cancel_conn.query_drop(format!("KILL QUERY {}", connection_id)).await {
+            Ok(_) => Ok(true),
+            Err(MySqlError::Server(server_error)) if server_error.code == 1094 => Ok(false),
+            Err(error) => Err(DbError::QueryFailed(Self::format_mysql_error(error))),
+        }
     }
 
     fn as_any(&self) -> &dyn std::any::Any { self }

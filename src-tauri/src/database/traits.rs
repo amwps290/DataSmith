@@ -201,6 +201,9 @@ pub enum DbError {
     #[error("查询执行失败: {0}")]
     QueryFailed(String),
 
+    #[error("查询已取消")]
+    QueryCancelled,
+
     #[error("不支持的数据库类型")]
     UnsupportedDatabase,
 
@@ -251,7 +254,7 @@ pub trait DatabaseOperations: Send + Sync {
     async fn disconnect(&self) -> DbResult<()>;
 
     /// 执行查询 - 支持多结果集
-    async fn execute_query(&self, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>>;
+    async fn execute_query(&self, sql: &str, database: Option<&str>, query_id: Option<u64>) -> DbResult<Vec<QueryResult>>;
 
     /// 获取数据库列表
     async fn get_databases(&self) -> DbResult<Vec<DatabaseInfo>>;
@@ -310,8 +313,13 @@ pub trait DatabaseOperations: Send + Sync {
     }
     
     /// 获取执行计划
-    async fn explain_query(&self, _sql: &str, _database: Option<&str>) -> DbResult<Vec<QueryResult>> {
+    async fn explain_query(&self, _sql: &str, _database: Option<&str>, _query_id: Option<u64>) -> DbResult<Vec<QueryResult>> {
         Err(DbError::Other("该数据库类型不支持执行计划分析".into()))
+    }
+
+    /// 取消当前查询
+    async fn cancel_query(&self, _query_id: u64) -> DbResult<bool> {
+        Ok(false)
     }
     
     fn as_any(&self) -> &dyn std::any::Any;

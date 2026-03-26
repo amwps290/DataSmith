@@ -13,12 +13,14 @@ export const queryApi = {
   async executeQuery(
     connectionId: string, 
     sql: string, 
-    database?: string | null
+    database?: string | null,
+    queryId?: number | null
   ): Promise<QueryResult[]> {
     return invoke<QueryResult[]>('execute_query', { 
       connectionId, 
       sql, 
-      database: database || null 
+      database: database || null,
+      queryId: queryId ?? null,
     })
   },
 
@@ -28,12 +30,14 @@ export const queryApi = {
   async explainQuery(
     connectionId: string, 
     sql: string, 
-    database?: string | null
+    database?: string | null,
+    queryId?: number | null
   ): Promise<QueryResult[]> {
     return invoke<QueryResult[]>('explain_query', { 
       connectionId, 
       sql, 
-      database: database || null 
+      database: database || null,
+      queryId: queryId ?? null,
     })
   },
 
@@ -43,12 +47,27 @@ export const queryApi = {
   async executeQueryBatch(
     connectionId: string,
     sqls: string[],
-    database?: string | null
+    database?: string | null,
+    queryId?: number | null
   ): Promise<QueryResult[]> {
     return invoke<QueryResult[]>('execute_query_batch', {
       connectionId,
       sqls,
       database: database || null,
+      queryId: queryId ?? null,
+    })
+  },
+
+  /**
+   * 取消正在执行的 SQL
+   */
+  async cancelQuery(
+    connectionId: string,
+    queryId: number
+  ): Promise<boolean> {
+    return invoke<boolean>('cancel_query', {
+      connectionId,
+      queryId,
     })
   },
 

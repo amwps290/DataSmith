@@ -14,6 +14,8 @@ pub struct ConnectionManager {
     connections: Arc<RwLock<HashMap<String, Arc<dyn DatabaseOperations>>>>,
     connection_types: Arc<RwLock<HashMap<String, DatabaseType>>>,
     configs: Arc<RwLock<HashMap<String, ConnectionConfig>>>,
+    active_queries: Arc<RwLock<HashMap<String, u64>>>,
+    cancelled_queries: Arc<RwLock<HashMap<String, u64>>>,
 }
 
 impl ConnectionManager {
@@ -22,16 +24,53 @@ impl ConnectionManager {
             connections: Arc::new(RwLock::new(HashMap::new())),
             connection_types: Arc::new(RwLock::new(HashMap::new())),
             configs: Arc::new(RwLock::new(HashMap::new())),
+            active_queries: Arc::new(RwLock::new(HashMap::new())),
+            cancelled_queries: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    fn normalize_composite_id(&self, composite_id: &str) -> String {
+        if composite_id.contains(':') {
+            composite_id.to_string()
+        } else {
+            format!("{}:{}", composite_id, DEFAULT_SESSION_ID)
+        }
+    }
+
+    async fn register_query_start(&self, composite_id: &str, query_id: u64) {
+        self.active_queries
+            .write()
+            .await
+            .insert(composite_id.to_string(), query_id);
+        self.cancelled_queries.write().await.remove(composite_id);
+    }
+
+    async fn is_query_cancelled(&self, composite_id: &str, query_id: u64) -> bool {
+        self.cancelled_queries
+            .read()
+            .await
+            .get(composite_id)
+            .copied()
+            == Some(query_id)
+    }
+
+    async fn clear_query_tracking(&self, composite_id: &str, query_id: u64) {
+        {
+            let mut active_queries = self.active_queries.write().await;
+            if active_queries.get(composite_id).copied() == Some(query_id) {
+                active_queries.remove(composite_id);
+            }
+        }
+
+        let mut cancelled_queries = self.cancelled_queries.write().await;
+        if cancelled_queries.get(composite_id).copied() == Some(query_id) {
+            cancelled_queries.remove(composite_id);
         }
     }
 
     /// 核心：解析 ID 并获取驱动实例，获取后立即释放锁
     pub async fn get_db_ref(&self, composite_id: &str) -> DbResult<Arc<dyn DatabaseOperations>> {
-        let real_id = if composite_id.contains(':') {
-            composite_id.to_string()
-        } else {
-            format!("{}:{}", composite_id, DEFAULT_SESSION_ID)
-        };
+        let real_id = self.normalize_composite_id(composite_id);
 
         // 1. 尝试直接获取已存在的连接
         {
@@ -94,6 +133,7 @@ impl ConnectionManager {
         self.ensure_session(&config_id, DEFAULT_SESSION_ID).await
     }
 
+    #[allow(unreachable_patterns)]
     fn create_instance(&self, db_type: &DatabaseType) -> DbResult<Box<dyn DatabaseOperations>> {
         match db_type {
             #[cfg(feature = "mysql")]
@@ -127,6 +167,8 @@ impl ConnectionManager {
         
         self.connection_types.write().await.retain(|k, _| !k.starts_with(&prefix) && k != config_id);
         self.configs.write().await.remove(config_id);
+        self.active_queries.write().await.retain(|k, _| !k.starts_with(&prefix) && k != config_id);
+        self.cancelled_queries.write().await.retain(|k, _| !k.starts_with(&prefix) && k != config_id);
         Ok(())
     }
 
@@ -140,10 +182,41 @@ impl ConnectionManager {
 
     // --- 代理方法：转发给具体驱动 ---
 
-    pub async fn execute_query(&self, composite_id: &str, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
-        let db = self.get_db_ref(composite_id).await?;
-        self.ensure_db_context(db.clone(), database).await?;
-        db.execute_query(sql, database).await
+    pub async fn execute_query(&self, composite_id: &str, sql: &str, database: Option<&str>, query_id: Option<u64>) -> DbResult<Vec<QueryResult>> {
+        let real_id = self.normalize_composite_id(composite_id);
+        if let Some(query_id) = query_id {
+            self.register_query_start(&real_id, query_id).await;
+        }
+
+        let result = async {
+            let db = self.get_db_ref(&real_id).await?;
+            self.ensure_db_context(db.clone(), database).await?;
+
+            if let Some(query_id) = query_id {
+                if self.is_query_cancelled(&real_id, query_id).await {
+                    return Err(DbError::QueryCancelled);
+                }
+            }
+
+            db.execute_query(sql, database, query_id).await
+        }
+        .await;
+
+        let was_cancelled = if let Some(query_id) = query_id {
+            self.is_query_cancelled(&real_id, query_id).await
+        } else {
+            false
+        };
+
+        if let Some(query_id) = query_id {
+            self.clear_query_tracking(&real_id, query_id).await;
+        }
+
+        if was_cancelled {
+            Err(DbError::QueryCancelled)
+        } else {
+            result
+        }
     }
 
     pub async fn get_databases(&self, composite_id: &str) -> DbResult<Vec<DatabaseInfo>> {
@@ -194,7 +267,7 @@ impl ConnectionManager {
     }
 
     pub async fn get_database_type(&self, composite_id: &str) -> DbResult<DatabaseType> {
-        let real_id = if composite_id.contains(':') { composite_id.to_string() } else { format!("{}:{}", composite_id, DEFAULT_SESSION_ID) };
+        let real_id = self.normalize_composite_id(composite_id);
         let config_id = real_id.split(':').next().unwrap_or(composite_id);
         
         if let Some(t) = self.connection_types.read().await.get(&real_id) {
@@ -277,10 +350,109 @@ impl ConnectionManager {
         db.alter_table(table, schema, database, changes).await
     }
 
-    pub async fn explain_query(&self, composite_id: &str, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
-        let db = self.get_db_ref(composite_id).await?;
-        self.ensure_db_context(db.clone(), database).await?;
-        db.explain_query(sql, database).await
+    pub async fn explain_query(&self, composite_id: &str, sql: &str, database: Option<&str>, query_id: Option<u64>) -> DbResult<Vec<QueryResult>> {
+        let real_id = self.normalize_composite_id(composite_id);
+        if let Some(query_id) = query_id {
+            self.register_query_start(&real_id, query_id).await;
+        }
+
+        let result = async {
+            let db = self.get_db_ref(&real_id).await?;
+            self.ensure_db_context(db.clone(), database).await?;
+
+            if let Some(query_id) = query_id {
+                if self.is_query_cancelled(&real_id, query_id).await {
+                    return Err(DbError::QueryCancelled);
+                }
+            }
+
+            db.explain_query(sql, database, query_id).await
+        }
+        .await;
+
+        let was_cancelled = if let Some(query_id) = query_id {
+            self.is_query_cancelled(&real_id, query_id).await
+        } else {
+            false
+        };
+
+        if let Some(query_id) = query_id {
+            self.clear_query_tracking(&real_id, query_id).await;
+        }
+
+        if was_cancelled {
+            Err(DbError::QueryCancelled)
+        } else {
+            result
+        }
+    }
+
+    pub async fn cancel_query(&self, composite_id: &str, query_id: u64) -> DbResult<bool> {
+        let real_id = self.normalize_composite_id(composite_id);
+        let db = self.get_db_ref(&real_id).await?;
+
+        let should_cancel = self
+            .active_queries
+            .read()
+            .await
+            .get(&real_id)
+            .copied()
+            == Some(query_id);
+
+        if !should_cancel {
+            return Ok(false);
+        }
+
+        self.cancelled_queries
+            .write()
+            .await
+            .insert(real_id.clone(), query_id);
+        db.cancel_query(query_id).await?;
+
+        Ok(true)
+    }
+
+    pub async fn execute_query_batch(&self, composite_id: &str, sqls: &[String], database: Option<&str>, query_id: Option<u64>) -> DbResult<Vec<QueryResult>> {
+        let real_id = self.normalize_composite_id(composite_id);
+        if let Some(query_id) = query_id {
+            self.register_query_start(&real_id, query_id).await;
+        }
+
+        let result = async {
+            let db = self.get_db_ref(&real_id).await?;
+            self.ensure_db_context(db.clone(), database).await?;
+
+            let mut results = Vec::new();
+            for sql in sqls {
+                if let Some(query_id) = query_id {
+                    if self.is_query_cancelled(&real_id, query_id).await {
+                        return Err(DbError::QueryCancelled);
+                    }
+                }
+
+                let res_vec = db.execute_query(sql, database, query_id).await?;
+                results.extend(res_vec);
+            }
+
+            Ok(results)
+        }
+        .await;
+
+        let was_cancelled = if let Some(query_id) = query_id {
+            self.is_query_cancelled(&real_id, query_id).await
+        } else {
+            false
+        };
+
+        if let Some(query_id) = query_id {
+            self.clear_query_tracking(&real_id, query_id).await;
+        }
+
+        if was_cancelled {
+            Err(DbError::QueryCancelled)
+        } else {
+            result
+        }
     }
 }
 

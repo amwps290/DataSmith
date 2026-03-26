@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection, InterruptHandle};
 use tokio::sync::Mutex;
 use tracing::{debug, instrument};
 use std::fs::File;
@@ -18,15 +19,22 @@ struct SqliteState {
     path: Option<String>,
 }
 
+struct ActiveSqliteQuery {
+    query_id: u64,
+    interrupt_handle: InterruptHandle,
+}
+
 /// SQLite 数据库驱动 - 基于 rusqlite 的原生实现
 pub struct SqliteDatabase {
     state: Mutex<SqliteState>,
+    active_query: Arc<StdMutex<Option<ActiveSqliteQuery>>>,
 }
 
 impl SqliteDatabase {
     pub fn new() -> Self {
         Self { 
-            state: Mutex::new(SqliteState { conn: None, path: None })
+            state: Mutex::new(SqliteState { conn: None, path: None }),
+            active_query: Arc::new(StdMutex::new(None)),
         }
     }
 
@@ -61,6 +69,18 @@ impl SqliteDatabase {
             serde_json::Value::Array(_) | serde_json::Value::Object(_) => Box::new(value.to_string()),
         }
     }
+
+    fn set_active_query(&self, query_id: u64, interrupt_handle: InterruptHandle) {
+        let mut active_query = self.active_query.lock().unwrap();
+        *active_query = Some(ActiveSqliteQuery { query_id, interrupt_handle });
+    }
+
+    fn clear_active_query(&self, query_id: u64) {
+        let mut active_query = self.active_query.lock().unwrap();
+        if active_query.as_ref().map(|query| query.query_id) == Some(query_id) {
+            *active_query = None;
+        }
+    }
 }
 
 #[async_trait]
@@ -81,55 +101,68 @@ impl DatabaseOperations for SqliteDatabase {
     async fn disconnect(&self) -> DbResult<()> {
         let mut state = self.state.lock().await;
         state.conn = None;
+        *self.active_query.lock().unwrap() = None;
         Ok(())
     }
 
     #[instrument(skip(self, sql))]
-    async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<Vec<QueryResult>> {
+    async fn execute_query(&self, sql: &str, _database: Option<&str>, query_id: Option<u64>) -> DbResult<Vec<QueryResult>> {
         let start = Instant::now();
         let state = self.state.lock().await;
         let conn = state.conn.as_ref().ok_or(DbError::not_connected())?;
 
-        let sqls = split_sql_script(sql, &DatabaseType::SQLite);
-        let mut results = Vec::new();
+        if let Some(query_id) = query_id {
+            self.set_active_query(query_id, conn.get_interrupt_handle());
+        }
 
-        for statement in sqls {
-            let mut stmt = conn.prepare(&statement.sql).map_err(|e| DbError::QueryFailed(e.to_string()))?;
-            let column_count = stmt.column_count();
-            let column_names: Vec<String> = stmt.column_names().into_iter().map(|n| n.to_string()).collect();
+        let result = (|| {
+            let sqls = split_sql_script(sql, &DatabaseType::SQLite);
+            let mut results = Vec::new();
 
-            let mut rows = Vec::new();
-            if column_count > 0 {
-                let mut query_rows = stmt.query(params![]).map_err(|e| DbError::QueryFailed(e.to_string()))?;
-                while let Some(row) = query_rows.next().map_err(|e| DbError::QueryFailed(e.to_string()))? {
-                    let mut row_map = HashMap::new();
-                    for i in 0..column_count {
-                        let value: serde_json::Value = match row.get_ref(i).unwrap() {
-                            rusqlite::types::ValueRef::Null => serde_json::Value::Null,
-                            rusqlite::types::ValueRef::Integer(i) => serde_json::Value::Number(i.into()),
-                            rusqlite::types::ValueRef::Real(f) => serde_json::Value::Number(serde_json::Number::from_f64(f).unwrap()),
-                            rusqlite::types::ValueRef::Text(t) => serde_json::Value::String(String::from_utf8_lossy(t).into_owned()),
-                            rusqlite::types::ValueRef::Blob(b) => serde_json::Value::String(format!("BLOB ({} bytes)", b.len())),
-                        };
-                        row_map.insert(column_names[i].clone(), value);
+            for statement in sqls {
+                let mut stmt = conn.prepare(&statement.sql).map_err(|e| DbError::QueryFailed(e.to_string()))?;
+                let column_count = stmt.column_count();
+                let column_names: Vec<String> = stmt.column_names().into_iter().map(|n| n.to_string()).collect();
+
+                let mut rows = Vec::new();
+                if column_count > 0 {
+                    let mut query_rows = stmt.query(params![]).map_err(|e| DbError::QueryFailed(e.to_string()))?;
+                    while let Some(row) = query_rows.next().map_err(|e| DbError::QueryFailed(e.to_string()))? {
+                        let mut row_map = HashMap::new();
+                        for i in 0..column_count {
+                            let value: serde_json::Value = match row.get_ref(i).unwrap() {
+                                rusqlite::types::ValueRef::Null => serde_json::Value::Null,
+                                rusqlite::types::ValueRef::Integer(i) => serde_json::Value::Number(i.into()),
+                                rusqlite::types::ValueRef::Real(f) => serde_json::Value::Number(serde_json::Number::from_f64(f).unwrap()),
+                                rusqlite::types::ValueRef::Text(t) => serde_json::Value::String(String::from_utf8_lossy(t).into_owned()),
+                                rusqlite::types::ValueRef::Blob(b) => serde_json::Value::String(format!("BLOB ({} bytes)", b.len())),
+                            };
+                            row_map.insert(column_names[i].clone(), value);
+                        }
+                        rows.push(row_map);
                     }
-                    rows.push(row_map);
                 }
+
+                results.push(QueryResult {
+                    columns: column_names,
+                    rows,
+                    affected_rows: conn.changes() as u64,
+                    execution_time_ms: start.elapsed().as_millis(),
+                });
             }
 
-            results.push(QueryResult {
-                columns: column_names,
-                rows,
-                affected_rows: conn.changes() as u64,
-                execution_time_ms: start.elapsed().as_millis(),
-            });
+            if results.is_empty() {
+                results.push(QueryResult::empty(0));
+            }
+
+            Ok(results)
+        })();
+
+        if let Some(query_id) = query_id {
+            self.clear_active_query(query_id);
         }
 
-        if results.is_empty() {
-            results.push(QueryResult::empty(0));
-        }
-
-        Ok(results)
+        result
     }
 
     async fn get_databases(&self) -> DbResult<Vec<DatabaseInfo>> {
@@ -230,12 +263,12 @@ impl DatabaseOperations for SqliteDatabase {
     }
 
     async fn get_indexes(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<IndexInfo>> {
-        let res_vec = self.execute_query(&format!("PRAGMA index_list('{}')", table.replace("'", "''")), None).await?;
+        let res_vec = self.execute_query(&format!("PRAGMA index_list('{}')", table.replace("'", "''")), None, None).await?;
         let mut indexes = Vec::new();
         if let Some(res) = res_vec.first() {
             for r in &res.rows {
                 let name = r.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                let col_res_vec = self.execute_query(&format!("PRAGMA index_info('{}')", name.replace("'", "''")), None).await?;
+                let col_res_vec = self.execute_query(&format!("PRAGMA index_info('{}')", name.replace("'", "''")), None, None).await?;
                 if let Some(col_res) = col_res_vec.first() {
                     let columns = col_res.rows.iter().map(|cr| cr.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string()).collect();
                     indexes.push(IndexInfo { 
@@ -251,7 +284,7 @@ impl DatabaseOperations for SqliteDatabase {
 
     async fn get_foreign_keys(&self, table: &str, _schema: Option<&str>) -> DbResult<Vec<ForeignKeyInfo>> {
         let sql = format!("PRAGMA foreign_key_list('{}')", table.replace("'", "''"));
-        let results = self.execute_query(&sql, None).await?;
+        let results = self.execute_query(&sql, None, None).await?;
         let mut fks = Vec::new();
         if let Some(res) = results.first() {
             for r in &res.rows {
@@ -294,7 +327,7 @@ impl DatabaseOperations for SqliteDatabase {
 
     async fn get_table_ddl(&self, table: &str, _schema: Option<&str>) -> DbResult<String> {
         let sql = format!("SELECT sql FROM sqlite_master WHERE name = '{}'", table.replace("'", "''"));
-        let results = self.execute_query(&sql, None).await?;
+        let results = self.execute_query(&sql, None, None).await?;
         if let Some(res) = results.first() {
             if let Some(row) = res.rows.first() {
                 return Ok(row.get("sql").and_then(|v| v.as_str()).unwrap_or("").to_string());
@@ -308,7 +341,7 @@ impl DatabaseOperations for SqliteDatabase {
             "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = '{}'",
             view.replace('\'', "''")
         );
-        let results = self.execute_query(&sql, None).await?;
+        let results = self.execute_query(&sql, None, None).await?;
         if let Some(res) = results.first() {
             if let Some(row) = res.rows.first() {
                 return Ok(row.get("sql").and_then(|v| v.as_str()).unwrap_or("").to_string());
@@ -317,9 +350,21 @@ impl DatabaseOperations for SqliteDatabase {
         Err(DbError::Other("无法获取视图定义".into()))
     }
 
-    async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
+    async fn explain_query(&self, sql: &str, database: Option<&str>, query_id: Option<u64>) -> DbResult<Vec<QueryResult>> {
         let explain_sql = format!("EXPLAIN QUERY PLAN {}", sql);
-        self.execute_query(&explain_sql, database).await
+        self.execute_query(&explain_sql, database, query_id).await
+    }
+
+    async fn cancel_query(&self, query_id: u64) -> DbResult<bool> {
+        let active_query = self.active_query.lock().unwrap();
+        if let Some(active_query) = active_query.as_ref() {
+            if active_query.query_id == query_id {
+                active_query.interrupt_handle.interrupt();
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     fn as_any(&self) -> &dyn std::any::Any { self }

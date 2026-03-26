@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio_postgres::{Client, NoTls};
+use tokio_postgres::{CancelToken, Client, NoTls};
 use tracing::{info, instrument, error, debug};
 use native_tls::TlsConnector;
 use postgres_native_tls::MakeTlsConnector;
@@ -13,9 +13,15 @@ use super::constants::PG_DEFAULT_SCHEMA;
 use crate::utils::sql_sanitize::{escape_pg_id, escape_string_literal};
 
 /// PostgreSQL 驱动状态容器 - 用于内部互斥
+struct ActivePgQuery {
+    query_id: u64,
+    cancel_token: CancelToken,
+}
+
 struct PgState {
     client: Option<Arc<Client>>,
     config: Option<ConnectionConfig>,
+    active_query: Option<ActivePgQuery>,
 }
 
 /// PostgreSQL 数据库驱动 - 基于 tokio-postgres 的底层实现 (具备内部并发能力)
@@ -26,7 +32,7 @@ pub struct PostgreSqlDatabase {
 impl PostgreSqlDatabase {
     pub fn new() -> Self {
         Self { 
-            state: Mutex::new(PgState { client: None, config: None })
+            state: Mutex::new(PgState { client: None, config: None, active_query: None })
         }
     }
 
@@ -65,6 +71,35 @@ impl PostgreSqlDatabase {
             tokio::spawn(async move { if let Err(e) = connection.await { error!("PostgreSQL 连接异常: {}", e); } });
             Ok(client)
         }
+    }
+
+    async fn set_active_query(&self, query_id: u64, cancel_token: CancelToken) {
+        let mut state = self.state.lock().await;
+        state.active_query = Some(ActivePgQuery { query_id, cancel_token });
+    }
+
+    async fn clear_active_query(&self, query_id: u64) {
+        let mut state = self.state.lock().await;
+        if state.active_query.as_ref().map(|query| query.query_id) == Some(query_id) {
+            state.active_query = None;
+        }
+    }
+
+    async fn get_cancel_target(&self, query_id: u64) -> DbResult<Option<(ConnectionConfig, CancelToken)>> {
+        let state = self.state.lock().await;
+        let Some(active_query) = state.active_query.as_ref() else {
+            return Ok(None);
+        };
+
+        if active_query.query_id != query_id {
+            return Ok(None);
+        }
+
+        let config = state
+            .config
+            .clone()
+            .ok_or_else(|| DbError::ConfigError("未找到连接配置".into()))?;
+        Ok(Some((config, active_query.cancel_token.clone())))
     }
 
     fn json_to_pg_literal(value: &serde_json::Value) -> String {
@@ -163,6 +198,7 @@ impl DatabaseOperations for PostgreSqlDatabase {
         let mut state = self.state.lock().await;
         state.client = None;
         state.config = None;
+        state.active_query = None;
         Ok(())
     }
 
@@ -184,67 +220,80 @@ impl DatabaseOperations for PostgreSqlDatabase {
     }
 
     #[instrument(skip(self, sql))]
-    async fn execute_query(&self, sql: &str, _database: Option<&str>) -> DbResult<Vec<QueryResult>> {
+    async fn execute_query(&self, sql: &str, _database: Option<&str>, query_id: Option<u64>) -> DbResult<Vec<QueryResult>> {
         let start = Instant::now();
         let client = self.get_client_arc().await?;
+
+        if let Some(query_id) = query_id {
+            self.set_active_query(query_id, client.cancel_token()).await;
+        }
         
         debug!(sql = %sql.replace('\n', " "), "执行查询");
 
-        // 1. 执行 simple_query (文本协议)，它能自动处理多条语句
-        let messages = client.simple_query(sql).await.map_err(|e| DbError::QueryFailed(Self::format_pg_error(e)))?;
-        
-        let mut results = Vec::new();
-        let mut current_columns = Vec::new();
-        let mut current_rows = Vec::new();
+        let result = async {
+            // 1. 执行 simple_query (文本协议)，它能自动处理多条语句
+            let messages = client.simple_query(sql).await.map_err(|e| DbError::QueryFailed(Self::format_pg_error(e)))?;
+            
+            let mut results = Vec::new();
+            let mut current_columns = Vec::new();
+            let mut current_rows = Vec::new();
 
-        for msg in messages {
-            match msg {
-                tokio_postgres::SimpleQueryMessage::RowDescription(columns) => {
-                    current_columns = columns.iter().map(|c| c.name().to_string()).collect();
-                },
-                tokio_postgres::SimpleQueryMessage::Row(row) => {
-                    if current_columns.is_empty() {
-                        for i in 0..row.len() {
-                            current_columns.push(format!("column_{}", i + 1));
+            for msg in messages {
+                match msg {
+                    tokio_postgres::SimpleQueryMessage::RowDescription(columns) => {
+                        current_columns = columns.iter().map(|c| c.name().to_string()).collect();
+                    },
+                    tokio_postgres::SimpleQueryMessage::Row(row) => {
+                        if current_columns.is_empty() {
+                            for i in 0..row.len() {
+                                current_columns.push(format!("column_{}", i + 1));
+                            }
                         }
-                    }
-                    
-                    let mut row_map = HashMap::new();
-                    for i in 0..row.len() {
-                        let col_name = current_columns.get(i).cloned().unwrap_or_else(|| format!("column_{}", i + 1));
-                        let val = row.get(i).map(|s| serde_json::Value::String(s.to_string())).unwrap_or(serde_json::Value::Null);
-                        row_map.insert(col_name, val);
-                    }
-                    current_rows.push(row_map);
-                },
-                tokio_postgres::SimpleQueryMessage::CommandComplete(count) => {
-                    results.push(QueryResult {
-                        columns: current_columns.clone(),
-                        rows: current_rows.clone(),
-                        affected_rows: count,
-                        execution_time_ms: start.elapsed().as_millis(),
-                    });
-                    current_columns.clear();
-                    current_rows.clear();
-                },
-                _ => {}
+                        
+                        let mut row_map = HashMap::new();
+                        for i in 0..row.len() {
+                            let col_name = current_columns.get(i).cloned().unwrap_or_else(|| format!("column_{}", i + 1));
+                            let val = row.get(i).map(|s| serde_json::Value::String(s.to_string())).unwrap_or(serde_json::Value::Null);
+                            row_map.insert(col_name, val);
+                        }
+                        current_rows.push(row_map);
+                    },
+                    tokio_postgres::SimpleQueryMessage::CommandComplete(count) => {
+                        results.push(QueryResult {
+                            columns: current_columns.clone(),
+                            rows: current_rows.clone(),
+                            affected_rows: count,
+                            execution_time_ms: start.elapsed().as_millis(),
+                        });
+                        current_columns.clear();
+                        current_rows.clear();
+                    },
+                    _ => {}
+                }
             }
+
+            if !current_rows.is_empty() || !current_columns.is_empty() {
+                results.push(QueryResult {
+                    columns: current_columns,
+                    rows: current_rows,
+                    affected_rows: 0,
+                    execution_time_ms: start.elapsed().as_millis(),
+                });
+            }
+
+            if results.is_empty() {
+                results.push(QueryResult::empty(start.elapsed().as_millis()));
+            }
+
+            Ok(results)
+        }
+        .await;
+
+        if let Some(query_id) = query_id {
+            self.clear_active_query(query_id).await;
         }
 
-        if !current_rows.is_empty() || !current_columns.is_empty() {
-            results.push(QueryResult {
-                columns: current_columns,
-                rows: current_rows,
-                affected_rows: 0,
-                execution_time_ms: start.elapsed().as_millis(),
-            });
-        }
-
-        if results.is_empty() {
-            results.push(QueryResult::empty(start.elapsed().as_millis()));
-        }
-
-        Ok(results)
+        result
     }
 
     async fn get_databases(&self) -> DbResult<Vec<DatabaseInfo>> {
@@ -614,9 +663,33 @@ impl DatabaseOperations for PostgreSqlDatabase {
         Ok(rows.into_iter().map(|r| ExtensionInfo { name: r.get(0), version: r.get(1), schema: Some(r.get(2)), comment: r.try_get(3).ok() }).collect())
     }
 
-    async fn explain_query(&self, sql: &str, database: Option<&str>) -> DbResult<Vec<QueryResult>> {
+    async fn explain_query(&self, sql: &str, database: Option<&str>, query_id: Option<u64>) -> DbResult<Vec<QueryResult>> {
         let explain_sql = format!("EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON) {}", sql);
-        self.execute_query(&explain_sql, database).await
+        self.execute_query(&explain_sql, database, query_id).await
+    }
+
+    async fn cancel_query(&self, query_id: u64) -> DbResult<bool> {
+        let Some((config, cancel_token)) = self.get_cancel_target(query_id).await? else {
+            return Ok(false);
+        };
+
+        if config.ssl {
+            let connector = TlsConnector::builder()
+                .danger_accept_invalid_certs(true)
+                .build()
+                .map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
+            cancel_token
+                .cancel_query(MakeTlsConnector::new(connector))
+                .await
+                .map_err(|e| DbError::QueryFailed(Self::format_pg_error(e)))?;
+        } else {
+            cancel_token
+                .cancel_query(NoTls)
+                .await
+                .map_err(|e| DbError::QueryFailed(Self::format_pg_error(e)))?;
+        }
+
+        Ok(true)
     }
 
     fn as_any(&self) -> &dyn std::any::Any { self }

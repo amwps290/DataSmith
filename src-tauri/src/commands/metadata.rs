@@ -212,7 +212,7 @@ pub async fn get_procedures(
         _ => return Ok(Vec::new()),
     };
 
-    let results = manager.execute_query(&connection_id, &sql, Some(&database)).await.to_cmd_result()?;
+    let results = manager.execute_query(&connection_id, &sql, Some(&database), None).await.to_cmd_result()?;
     let names = results
         .first()
         .map(|result| {
