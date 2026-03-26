@@ -20,7 +20,22 @@
 
       <a-tabs v-model:activeKey="resultTabKey" size="small" class="result-tabs">
         <!-- 动态渲染多个结果页签 -->
-        <a-tab-pane v-for="(result, index) in queryResults" :key="'result-' + index" :tab="queryResults.length > 1 ? $t('editor.result_n', { n: index + 1 }) : $t('editor.result')">
+        <a-tab-pane v-for="(result, index) in queryResults" :key="'result-' + index">
+          <template #tab>
+            <span class="result-tab-label" @contextmenu.prevent="handleResultTabContextMenu($event, index)">
+              <span class="result-tab-title">
+                {{ queryResults.length > 1 ? $t('editor.result_n', { n: index + 1 }) : $t('editor.result') }}
+              </span>
+              <button
+                class="result-tab-close"
+                type="button"
+                :title="$t('common.close')"
+                @click.stop="closeResultAt(index)"
+              >
+                ×
+              </button>
+            </span>
+          </template>
           <div class="result-content">
             <div v-if="executing" class="executing-overlay">
               <a-spin :tip="$t('editor.executing')" />
@@ -55,7 +70,7 @@
                 @scroll="(params: any) => handleScroll({ ...params, index })"
               >
                 <template #cell_default="{ row, column }">
-                  <span :class="{ 'null-text': row[column.field] === null }">
+                  <span class="result-cell-text" :class="{ 'null-text': row[column.field] === null }">
                     {{ row[column.field] === null ? 'NULL' : row[column.field] }}
                   </span>
                 </template>
@@ -104,6 +119,31 @@
         </template>
       </a-list>
     </a-drawer>
+
+    <div
+      v-if="resultContextMenuVisible"
+      class="result-context-menu-overlay"
+      @click="hideResultContextMenu()"
+    >
+      <div
+        class="result-context-menu"
+        :style="{ left: resultContextMenuX + 'px', top: resultContextMenuY + 'px' }"
+        @click.stop
+      >
+        <a-menu @click="handleResultMenuClick" size="small">
+          <a-menu-item key="close-current" :disabled="resultContextIndex < 0">
+            {{ $t('common.close') }}
+          </a-menu-item>
+          <a-menu-item key="close-left" :disabled="!hasResultTabsOnLeft">
+            {{ $t('common.close_left') }}
+          </a-menu-item>
+          <a-menu-item key="close-right" :disabled="!hasResultTabsOnRight">
+            {{ $t('common.close_right') }}
+          </a-menu-item>
+        </a-menu>
+      </div>
+    </div>
+
     <SaveQueryDialog v-model="showSaveDialog" :sql="editor?.getValue() || ''" @saved="handleQuerySaved" />
     <SqlSnippetsManager v-model:visible="showSnippets" @insert="insertSnippet" />
   </div>
@@ -157,7 +197,7 @@ const executionSeq = ref(0)
 const activeExecutionId = ref(0)
 const executionState = ref<SqlExecutionState>(createIdleExecutionState())
 const queryResults = ref<QueryResult[]>([])
-const resultTabKey = ref('result-0')
+const resultTabKey = ref('empty')
 const messages = ref<any[]>([])
 const showHistory = ref(false)
 const sqlHistory = ref<any[]>([])
@@ -205,6 +245,28 @@ const executionSummaryMeta = computed(() => {
 
 const gridRefs = reactive<Record<number, any>>({})
 function setGridRef(el: any, index: number) { if (el) gridRefs[index] = el; else delete gridRefs[index]; }
+const resultContextMenuVisible = ref(false)
+const resultContextMenuX = ref(0)
+const resultContextMenuY = ref(0)
+const resultContextIndex = ref(-1)
+const activeResultIndex = computed(() => {
+  const match = /^result-(\d+)$/.exec(resultTabKey.value)
+  return match ? Number(match[1]) : -1
+})
+const hasResultTabsOnLeft = computed(() => resultContextIndex.value > 0)
+const hasResultTabsOnRight = computed(() => resultContextIndex.value >= 0 && resultContextIndex.value < queryResults.value.length - 1)
+
+function hideResultContextMenu() {
+  resultContextMenuVisible.value = false
+  resultContextIndex.value = -1
+}
+
+function handleResultTabContextMenu(event: MouseEvent, index: number) {
+  resultContextIndex.value = index
+  resultContextMenuX.value = event.clientX
+  resultContextMenuY.value = event.clientY
+  resultContextMenuVisible.value = true
+}
 
 // 结果集状态追踪
 const queryResultStates = reactive<Record<number, {
@@ -222,11 +284,104 @@ function getGridOptions(result: QueryResult, index: number): VxeGridProps {
     loading: state?.loading || false,
     columnConfig: { resizable: true },
     rowConfig: { isHover: true, isCurrent: true, height: 36 },
+    mouseConfig: { selected: true },
     scrollX: { enabled: true, gt: 20 },
     scrollY: { enabled: true, gt: 0 },
     columns: result.columns.map(col => ({ field: col, title: col, minWidth: 150, showOverflow: true, slots: { default: 'cell_default' } })),
     data: result.rows
   }
+}
+
+function buildResultState(statement: PreparedSqlStatement | undefined, result: QueryResult) {
+  return {
+    pagination: { current: 1, pageSize: 100 },
+    loading: false,
+    hasMore: Boolean(statement?.can_page) && result.rows.length === 100,
+    sql: statement?.sql || '',
+  }
+}
+
+function appendQueryResults(results: QueryResult[], states: Array<{ pagination: { current: number; pageSize: number }; loading: boolean; hasMore: boolean; sql: string }>) {
+  const startIndex = queryResults.value.length
+  queryResults.value = [...queryResults.value, ...results]
+  states.forEach((state, offset) => {
+    queryResultStates[startIndex + offset] = {
+      pagination: { ...state.pagination },
+      loading: state.loading,
+      hasMore: state.hasMore,
+      sql: state.sql,
+    }
+  })
+  return startIndex
+}
+
+function replaceResultTabs(keptSourceIndices: number[]) {
+  const nextResults = keptSourceIndices.map((sourceIndex) => queryResults.value[sourceIndex])
+  const nextStates = keptSourceIndices.map((sourceIndex) => queryResultStates[sourceIndex])
+  const previousActiveIndex = activeResultIndex.value
+
+  queryResults.value = nextResults
+  Object.keys(queryResultStates).forEach((key) => delete queryResultStates[Number(key)])
+  nextStates.forEach((state, index) => {
+    if (!state) return
+    queryResultStates[index] = {
+      pagination: { ...state.pagination },
+      loading: state.loading,
+      hasMore: state.hasMore,
+      sql: state.sql,
+    }
+  })
+
+  if (previousActiveIndex < 0) {
+    if (queryResults.value.length === 0 && resultTabKey.value !== 'messages') {
+      resultTabKey.value = 'empty'
+    }
+    return
+  }
+
+  const preservedIndex = keptSourceIndices.indexOf(previousActiveIndex)
+  if (preservedIndex >= 0) {
+    resultTabKey.value = `result-${preservedIndex}`
+    return
+  }
+
+  if (queryResults.value.length === 0) {
+    resultTabKey.value = 'empty'
+    return
+  }
+
+  const nearestRightIndex = keptSourceIndices.findIndex((sourceIndex) => sourceIndex > previousActiveIndex)
+  resultTabKey.value = nearestRightIndex >= 0
+    ? `result-${nearestRightIndex}`
+    : `result-${queryResults.value.length - 1}`
+}
+
+function closeResultAt(index: number) {
+  if (index < 0 || index >= queryResults.value.length) return
+  replaceResultTabs(queryResults.value.map((_, itemIndex) => itemIndex).filter((itemIndex) => itemIndex !== index))
+}
+
+function closeResultTabsLeftOf(index: number) {
+  if (index <= 0) return
+  replaceResultTabs(queryResults.value.map((_, itemIndex) => itemIndex).filter((itemIndex) => itemIndex >= index))
+}
+
+function closeResultTabsRightOf(index: number) {
+  if (index < 0 || index >= queryResults.value.length - 1) return
+  replaceResultTabs(queryResults.value.map((_, itemIndex) => itemIndex).filter((itemIndex) => itemIndex <= index))
+}
+
+function handleResultMenuClick({ key }: { key: string | number }) {
+  const action = String(key)
+  const targetIndex = resultContextIndex.value
+  if (action === 'close-current') {
+    closeResultAt(targetIndex)
+  } else if (action === 'close-left') {
+    closeResultTabsLeftOf(targetIndex)
+  } else if (action === 'close-right') {
+    closeResultTabsRightOf(targetIndex)
+  }
+  hideResultContextMenu()
 }
 
 // 滚动触发加载
@@ -604,8 +759,6 @@ async function executeQuery() {
     }
 
     executionId = beginExecution('query', preparedStatements.length)
-    queryResults.value = []
-    Object.keys(queryResultStates).forEach(k => delete queryResultStates[Number(k)])
 
     if (isSelection) addMessage('info', t('editor.executing_selection'))
     addMessage('info', t('editor.exec_context', { database: currentDatabaseLabel.value }))
@@ -630,25 +783,18 @@ async function executeQuery() {
       return
     }
 
-    queryResults.value = response.results
-    
-    // 4. 为每个结果集绑定其对应的原始语句和分页状态
-    response.results.forEach((r, i) => {
-      // 注意：如果结果集数量多于语句数量（某些数据库特性），安全起见做个兜底
-      const config = preparedStatements[i] || preparedStatements[preparedStatements.length - 1]
-      
-      queryResultStates[i] = {
-        pagination: { current: 1, pageSize: 100 },
-        loading: false,
-        hasMore: Boolean(config?.can_page) && r.rows.length === 100,
-        sql: config?.sql || '' // 存储该结果集对应的原始单条 SQL
-      }
-    })
+    const appendedIndex = appendQueryResults(
+      response.results,
+      response.results.map((r, i) => {
+        const config = preparedStatements[i] || preparedStatements[preparedStatements.length - 1]
+        return buildResultState(config, r)
+      })
+    )
 
     applyBatchExecutionState(response)
 
     if (response.results.length > 0) {
-      resultTabKey.value = 'result-0'
+      resultTabKey.value = `result-${appendedIndex}`
     } else {
       resultTabKey.value = 'messages'
     }
@@ -702,8 +848,11 @@ async function explainQuery() {
     if (isExecutionStale(executionId)) {
       return
     }
-    queryResults.value = results
-    resultTabKey.value = 'result-0'
+    const appendedIndex = appendQueryResults(
+      results,
+      results.map((result) => buildResultState(undefined, result))
+    )
+    resultTabKey.value = `result-${appendedIndex}`
     finalizeExecutionState('success', t('editor.summary.explain_success', { sets: results.length }), {
       mode: 'explain',
       statementCount: 1,
@@ -804,7 +953,7 @@ async function stopExecution() {
   })
 }
 async function formatSql() { if (!editor) return; try { const formatted = await queryApi.beautifySql(sessionConnectionId.value, editor.getValue()); editor.setValue(formatted); message.success(t('editor.format_success')) } catch (e: any) { message.error(getErrorMessage(e)) } }
-function clearEditor() { editor?.setValue(''); queryResults.value = []; messages.value = []; resetExecutionState(); }
+function clearEditor() { editor?.setValue(''); queryResults.value = []; resultTabKey.value = 'empty'; messages.value = []; Object.keys(queryResultStates).forEach(k => delete queryResultStates[Number(k)]); hideResultContextMenu(); resetExecutionState(); }
 function handleQuerySaved() { message.success(t('common.save')) }
 function insertSnippet(sql: string) { if (!editor) return; const selection = editor.getSelection(); editor.executeEdits('insert-snippet', [{ range: selection || editor.getSelection()!, text: sql }]); showSnippets.value = false }
 async function pasteFromSystemClipboard() {
@@ -866,7 +1015,7 @@ onMounted(() => {
 })
 let autoSaveTimer: any = null; function triggerAutoSave() { if (autoSaveTimer) clearTimeout(autoSaveTimer); autoSaveTimer = setTimeout(() => { handleSave(true) }, 2000) }
 onActivated(() => { nextTick(() => { if (editor) editor.layout() }) })
-onUnmounted(() => { const model = editor?.getModel(); if (model) autocompleteManager.unbindModel(model); editor?.dispose(); })
+onUnmounted(() => { hideResultContextMenu(); const model = editor?.getModel(); if (model) autocompleteManager.unbindModel(model); editor?.dispose(); })
 watch(() => [appStore.theme, appStore.editorSettings.fontSize, appStore.editorSettings.minimap, appStore.editorSettings.lineNumbers, appStore.editorSettings.fontFamily], ([theme]) => {
   if (!editor) return
   monaco.editor.setTheme(theme === 'dark' ? 'vs-dark' : 'vs')
@@ -895,15 +1044,21 @@ defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, exp
 .result-section { flex: 1; min-height: 100px; display: flex; flex-direction: column; overflow: hidden; }
 .execution-summary-card { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #f0f0f0; background: #fafafa; flex-shrink: 0; }
 .dark-mode .execution-summary-card { background: #1a1a1a; border-bottom-color: #303030; }
-.execution-summary-card.status-success { background: #f6ffed; }
-.execution-summary-card.status-failed { background: #fff2f0; }
-.execution-summary-card.status-cancelled { background: #fffbe6; }
-.execution-summary-card.status-partial_success { background: #fff7e6; }
-.execution-summary-card.status-running { background: #e6f4ff; }
+.execution-summary-card.status-success { background: #f6ffed; border-bottom-color: #b7eb8f; }
+.execution-summary-card.status-failed { background: #fff2f0; border-bottom-color: #ffccc7; }
+.execution-summary-card.status-cancelled { background: #fffbe6; border-bottom-color: #ffe58f; }
+.execution-summary-card.status-partial_success { background: #fff7e6; border-bottom-color: #ffd591; }
+.execution-summary-card.status-running { background: #e6f4ff; border-bottom-color: #91caff; }
+.dark-mode .execution-summary-card.status-success { background: #162312; border-bottom-color: #274916; }
+.dark-mode .execution-summary-card.status-failed { background: #2a1215; border-bottom-color: #58181c; }
+.dark-mode .execution-summary-card.status-cancelled { background: #2b2111; border-bottom-color: #594214; }
+.dark-mode .execution-summary-card.status-partial_success { background: #2b1d11; border-bottom-color: #593815; }
+.dark-mode .execution-summary-card.status-running { background: #111b26; border-bottom-color: #15417e; }
 .execution-summary-tag { margin-inline-end: 0; }
 .execution-summary-text { color: #262626; font-size: 13px; font-weight: 500; }
 .dark-mode .execution-summary-text { color: #f5f5f5; }
 .execution-summary-meta { color: #8c8c8c; font-size: 12px; }
+.dark-mode .execution-summary-meta { color: #a6a6a6; }
 .result-tabs { height: 100%; display: flex; flex-direction: column; }
 .result-tabs :deep(.ant-tabs-content) { flex: 1; overflow: hidden; }
 .result-tabs :deep(.ant-tabs-tabpane) { height: 100%; display: flex; flex-direction: column; }
@@ -923,6 +1078,23 @@ defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, exp
 .history-item:hover { background: #f5f5f5; }
 .dark-mode .history-item:hover { background: #262626; }
 .history-sql { font-family: monospace; background: transparent; padding: 0; }
+.result-tab-label { display: inline-flex; align-items: center; gap: 6px; max-width: 180px; }
+.result-tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.result-tab-close { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 999px; background: transparent; color: #8c8c8c; font-size: 12px; line-height: 1; cursor: pointer; flex-shrink: 0; transition: background-color 0.2s, color 0.2s; }
+.result-tab-close:hover { background: rgba(0, 0, 0, 0.08); color: #262626; }
+.dark-mode .result-tab-close { color: #a6a6a6; }
+.dark-mode .result-tab-close:hover { background: rgba(255, 255, 255, 0.12); color: #f5f5f5; }
+.result-context-menu-overlay { position: fixed; inset: 0; z-index: 9999; }
+.result-context-menu { position: absolute; min-width: 140px; background: #fff; border: 1px solid #d9d9d9; border-radius: 8px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16); overflow: hidden; }
+.dark-mode .result-context-menu { background: #1f1f1f; border-color: #303030; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36); }
+.result-cell-text,
+.messages-content,
+:deep(.table-wrapper .vxe-cell),
+:deep(.table-wrapper .vxe-cell--label),
+:deep(.table-wrapper .vxe-body--row .vxe-cell) {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
 .null-text { color: #bfbfbf; font-style: italic; }
 :deep(.danger-confirm-content) { display: flex; flex-direction: column; gap: 12px; }
 :deep(.danger-confirm-intro) { margin: 0; color: #595959; }
