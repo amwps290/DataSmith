@@ -109,7 +109,7 @@
 </template>
 
 <script setup lang="ts">
-import { defineAsyncComponent, reactive, ref, computed, nextTick, onMounted, watch } from 'vue'
+import { defineAsyncComponent, reactive, ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
@@ -161,6 +161,39 @@ const showGlobalSearch = ref(false)
 const editingConnection = ref<ConnectionConfig | null>(null)
 const redisEditorRef = ref()
 const availableDatabases = ref<DatabaseInfo[]>([])
+let sessionReconnectTimer: number | null = null
+
+function clearSessionReconnectTimer() {
+  if (sessionReconnectTimer !== null) {
+    clearTimeout(sessionReconnectTimer)
+    sessionReconnectTimer = null
+  }
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+function scheduleSessionReconnect(connectionIds: string[]) {
+  clearSessionReconnectTimer()
+  if (connectionIds.length === 0) return
+
+  sessionReconnectTimer = window.setTimeout(async () => {
+    sessionReconnectTimer = null
+    await nextTick()
+
+    for (const [index, id] of connectionIds.entries()) {
+      const conn = connectionStore.connections.find(item => item.id === id)
+      if (!conn || connectionStore.getConnectionStatus(id) === 'connected') continue
+
+      await connectionStore.connectToDatabase(id).catch(() => {})
+
+      if (index < connectionIds.length - 1) {
+        await wait(180)
+      }
+    }
+  }, 450)
+}
 
 function openSettings() {
   router.push({ name: 'Settings' })
@@ -178,6 +211,7 @@ watch([dataTabs, mainTabKey], () => { workspaceStore.saveSession(dataTabs.value,
 
 async function restoreSession() {
   workspaceStore.isRestoring = true
+  let pendingReconnectIds: string[] = []
   try {
     const session = await workspaceStore.loadSession()
     if (session && session.open_tabs.length > 0) {
@@ -188,12 +222,15 @@ async function restoreSession() {
       mainTabKey.value = session.active_tab_key
       if (connectionStore.connections.length === 0) await connectionStore.fetchConnections()
       const connectionIds = [...new Set(dataTabs.value.map(tab => tab.connectionId).filter(Boolean))] as string[]
-      for (const id of connectionIds) {
-        const conn = connectionStore.connections.find(c => c.id === id)
-        if (conn) connectionStore.connectToDatabase(conn.id).catch(() => {})
-      }
+      const activeTabConnectionId = dataTabs.value.find(tab => tab.key === mainTabKey.value)?.connectionId
+      pendingReconnectIds = activeTabConnectionId
+        ? [activeTabConnectionId, ...connectionIds.filter(id => id !== activeTabConnectionId)]
+        : connectionIds
     } else if (isSqlSupported.value) { handleNewQuery({}) }
-  } catch (_e) { if (isSqlSupported.value) handleNewQuery({}) } finally { workspaceStore.isRestoring = false }
+  } catch (_e) { if (isSqlSupported.value) handleNewQuery({}) } finally {
+    workspaceStore.isRestoring = false
+    scheduleSessionReconnect(pendingReconnectIds)
+  }
 }
 
 function handleToolbarAction(action: string) {
@@ -224,6 +261,10 @@ function handleEditorDatabaseChange(tabKey: string, database: string) {
 
 onMounted(async () => {
   restoreSession()
+})
+
+onUnmounted(() => {
+  clearSessionReconnectTimer()
 })
 
 interface TableEventData { connectionId?: string; database?: string; table?: string; schema?: string; metadata?: { schema?: string } }

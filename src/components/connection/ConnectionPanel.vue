@@ -148,7 +148,7 @@
 </template>
 
 <script setup lang="ts">
-import { h, computed, ref, onMounted } from 'vue'
+import { h, computed, ref, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   DatabaseOutlined, PlusOutlined, LinkOutlined, EditOutlined, DeleteOutlined,
@@ -226,12 +226,18 @@ const filteredConnections = computed(() => {
 
 function handleSelectConnection(conn: ConnectionConfig) { connectionStore.setActiveConnection(conn.id) }
 
-function handleToggleExpand(conn: ConnectionConfig) {
-  if (getConnectionStatus(conn.id) !== 'connected') { handleConnectToDatabase(conn); return }
+async function handleToggleExpand(conn: ConnectionConfig) {
+  if (getConnectionStatus(conn.id) !== 'connected') { await handleConnectToDatabase(conn); return }
   const newExpanded = new Set(expandedConnections.value)
-  if (newExpanded.has(conn.id)) newExpanded.delete(conn.id)
+  const shouldExpand = !newExpanded.has(conn.id)
+  if (!shouldExpand) newExpanded.delete(conn.id)
   else newExpanded.add(conn.id)
   expandedConnections.value = newExpanded
+
+  if (shouldExpand) {
+    await nextTick()
+    databaseTreeRefs.get(conn.id)?.refresh?.()
+  }
 }
 
 async function handleToggleConnection(conn: ConnectionConfig) {

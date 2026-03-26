@@ -15,7 +15,16 @@ export const useConnectionStore = defineStore('connection', () => {
   // 获取所有连接
   async function fetchConnections() {
     return withErrorHandler(async () => {
-      connections.value = await connectionApi.getConnections()
+      const loadedConnections = await connectionApi.getConnections()
+      const previousStatuses = new Map(connectionStatuses.value)
+
+      connections.value = loadedConnections
+      connectionStatuses.value = new Map(
+        loadedConnections.map(connection => [
+          connection.id,
+          previousStatuses.get(connection.id) || 'disconnected'
+        ])
+      )
     }, { messagePrefix: '获取连接列表失败' })
   }
 
@@ -131,6 +140,7 @@ export const useConnectionStore = defineStore('connection', () => {
     }
 
     return withErrorHandler(async () => {
+      updateConnectionStatus(id, 'connecting')
       await connectionApi.createConnection(id, getConnectionOverrides(conn))
       updateConnectionStatus(id, 'connected')
     }, { 
