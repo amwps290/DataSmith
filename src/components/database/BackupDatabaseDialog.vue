@@ -10,12 +10,13 @@
     <a-form :label-col="{ span: 6 }" :wrapper-col="{ span: 18 }">
       <a-form-item :label="$t('dialog.backup_database.content')">
         <a-checkbox-group v-model:value="backupOptions">
-          <a-checkbox value="structure">{{ $t('dialog.backup_database.structure') }}</a-checkbox>
-          <a-checkbox value="data">{{ $t('dialog.backup_database.table_data') }}</a-checkbox>
-          <a-checkbox value="views">{{ $t('dialog.backup_database.views') }}</a-checkbox>
-          <a-checkbox value="procedures">{{ $t('dialog.backup_database.procedures') }}</a-checkbox>
-          <a-checkbox value="functions">{{ $t('dialog.backup_database.functions') }}</a-checkbox>
-          <a-checkbox value="triggers">{{ $t('dialog.backup_database.triggers') }}</a-checkbox>
+          <a-checkbox
+            v-for="option in availableBackupOptions"
+            :key="option.value"
+            :value="option.value"
+          >
+            {{ option.label }}
+          </a-checkbox>
         </a-checkbox-group>
       </a-form-item>
 
@@ -32,12 +33,6 @@
         </a-input>
       </a-form-item>
 
-      <a-form-item :label="$t('dialog.backup_database.compress')">
-        <a-switch v-model:checked="compress" />
-        <span style="margin-left: 8px; color: #999; font-size: 12px;">
-          {{ $t('dialog.backup_database.compress_tip') }}
-        </span>
-      </a-form-item>
     </a-form>
   </a-modal>
 </template>
@@ -68,9 +63,16 @@ const emit = defineEmits(['update:modelValue', 'backed'])
 const visible = useDialogModel(props, emit)
 
 const backing = ref(false)
-const backupOptions = ref(['structure', 'data'])
+type BackupOptionValue = 'structure' | 'data' | 'views'
+
+const availableBackupOptions = computed<Array<{ value: BackupOptionValue, label: string }>>(() => [
+  { value: 'structure', label: t('dialog.backup_database.structure') },
+  { value: 'data', label: t('dialog.backup_database.table_data') },
+  { value: 'views', label: t('dialog.backup_database.views') },
+])
+const defaultBackupOptions: BackupOptionValue[] = ['structure', 'data']
+const backupOptions = ref<BackupOptionValue[]>([...defaultBackupOptions])
 const savePath = ref('')
-const compress = ref(false)
 const currentDbType = computed<DatabaseType>(() => {
   return connectionStore.connections.find(connection => connection.id === props.connectionId)?.db_type || 'mysql'
 })
@@ -107,11 +109,17 @@ function stringifySqlValue(value: unknown) {
   return `'${JSON.stringify(value).replace(/'/g, "''")}'`
 }
 
+function getSelectedBackupSummary() {
+  return availableBackupOptions.value
+    .filter(option => backupOptions.value.includes(option.value))
+    .map(option => option.label)
+    .join('、')
+}
+
 // 生成默认文件名
 function getDefaultFileName(): string {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
-  const extension = compress.value ? '.sql.gz' : '.sql'
-  return `${props.database}_backup_${timestamp}${extension}`
+  return `${props.database}_backup_${timestamp}.sql`
 }
 
 // 当对话框打开时，设置默认保存路径（Downloads目录）
@@ -128,17 +136,6 @@ watch(() => props.modelValue, async (newVal) => {
   }
 })
 
-// 当压缩选项改变时，更新文件扩展名
-watch(compress, async () => {
-  try {
-    const downloadsPath = await downloadDir()
-    const fileName = getDefaultFileName()
-    savePath.value = `${downloadsPath}\\${fileName}`
-  } catch (error) {
-    savePath.value = getDefaultFileName()
-  }
-})
-
 async function selectSavePath() {
   const defaultPath = getDefaultFileName()
 
@@ -146,7 +143,7 @@ async function selectSavePath() {
     defaultPath,
     filters: [{
       name: t('dialog.backup_database.sql_file'),
-      extensions: compress.value ? ['sql.gz'] : ['sql'],
+      extensions: ['sql'],
     }],
   })
 
@@ -238,7 +235,11 @@ async function handleBackup() {
     // 显示备份成功提示
     Modal.success({
       title: t('dialog.backup_database.success_title'),
-      content: t('dialog.backup_database.success_content', { database: props.database, path: savePath.value }),
+      content: t('dialog.backup_database.success_content', {
+        database: props.database,
+        path: savePath.value,
+        summary: getSelectedBackupSummary(),
+      }),
       okText: t('common.ok'),
     })
 
@@ -252,9 +253,8 @@ async function handleBackup() {
 }
 
 function handleCancel() {
-  backupOptions.value = ['structure', 'data']
+  backupOptions.value = [...defaultBackupOptions]
   savePath.value = ''
-  compress.value = false
   visible.value = false
 }
 </script>

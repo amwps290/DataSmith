@@ -448,7 +448,7 @@
       "save_path_required": "Please select a save location",
       "content_required": "Please select at least one backup item",
       "success_title": "Backup Successful",
-      "success_content": "Database \"{database}\" has been backed up to:\n{path}",
+      "success_content": "Database \"{database}\" has been backed up to:\n{path}\n\nContents: {summary}",
       "fail": "Backup failed: {error}",
       "comment_backup": "Database backup",
       "comment_time": "Backup time",
