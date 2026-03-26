@@ -455,6 +455,8 @@ function getConnectionColor(connectionId?: string) {
   margin: 0 !important;
   padding: 0 12px;
   height: 32px;
+  display: inline-flex;
+  align-items: center;
   border: 0 !important;
   border-right: 1px solid #e5e7eb !important;
   border-radius: 0 !important;
@@ -486,12 +488,18 @@ function getConnectionColor(connectionId?: string) {
   display: inline-flex;
   align-items: center;
   min-width: 0;
+  line-height: 1;
 }
 .workspace-tabs :deep(.ant-tabs-tab-remove) {
   margin-left: 8px;
   width: 14px;
   height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 0;
+  line-height: 1;
+  transform: translateY(-1px);
 }
 .workspace-tabs :deep(.ant-tabs-nav-add) {
   min-width: 32px;
