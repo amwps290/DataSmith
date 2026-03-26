@@ -27,7 +27,7 @@
         </a-button>
         <a-divider type="vertical" />
         <a-select
-          v-model:value="selectedDatabase"
+          :value="selectedDatabase"
           :placeholder="$t('redis.select_database')"
           style="width: 150px"
           :disabled="!hasActiveConnection"
@@ -203,6 +203,113 @@ function handleCursorChange(line: number, column: number) {
   cursorColumn.value = column
 }
 
+function tokenizeRedisCommand(line: string): string[] {
+  const tokens: string[] = []
+  let current = ''
+  let quote: '"' | "'" | null = null
+  let escaping = false
+
+  for (const char of line) {
+    if (escaping) {
+      current += char
+      escaping = false
+      continue
+    }
+
+    if (char === '\\') {
+      escaping = true
+      continue
+    }
+
+    if (quote) {
+      if (char === quote) {
+        quote = null
+      } else {
+        current += char
+      }
+      continue
+    }
+
+    if (char === '"' || char === '\'') {
+      quote = char
+      continue
+    }
+
+    if (/\s/.test(char)) {
+      if (current) {
+        tokens.push(current)
+        current = ''
+      }
+      continue
+    }
+
+    current += char
+  }
+
+  if (escaping) {
+    current += '\\'
+  }
+
+  if (current) {
+    tokens.push(current)
+  }
+
+  return tokens
+}
+
+function parseRedisCommandInput(input: string) {
+  const executableLine = input
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .find(line => line && !line.startsWith('#'))
+
+  if (!executableLine) {
+    return null
+  }
+
+  const parts = tokenizeRedisCommand(executableLine)
+  if (parts.length === 0) {
+    return null
+  }
+
+  const [command, ...args] = parts
+  return {
+    command: command.toUpperCase(),
+    args,
+    displayText: parts.join(' '),
+  }
+}
+
+function syncDatabaseState(dbName: string) {
+  selectedDatabase.value = dbName
+  if (activeKeyName.value) {
+    viewerRefreshKey.value++
+  }
+}
+
+async function switchRedisDatabase(dbName: string, options?: { showSuccessMessage?: boolean }) {
+  if (!hasActiveConnection.value) {
+    message.warning(t('redis.no_connection'))
+    return
+  }
+
+  const normalizedDb = /^db\d+$/.test(dbName) ? dbName : `db${dbName.replace(/^db/, '') || '0'}`
+  const dbNum = normalizedDb.replace('db', '')
+
+  await redisApi.executeCommand(
+    connectionStore.activeConnectionId!,
+    'SELECT',
+    [dbNum],
+  )
+
+  syncDatabaseState(normalizedDb)
+  addMessage('info', t('redis.switched_db', { db: normalizedDb }))
+
+  if (options?.showSuccessMessage !== false) {
+    message.success(t('redis.switched_db', { db: normalizedDb }))
+  }
+}
+
 function openKeyViewer() {
   const keyName = keyInput.value.trim()
   if (!hasActiveConnection.value) {
@@ -254,6 +361,7 @@ watch(
   (newId) => {
     commandResults.value = []
     messages.value = []
+    selectedDatabase.value = 'db0'
     keyInput.value = ''
     activeKeyName.value = ''
     viewerRefreshKey.value = 0
@@ -278,6 +386,12 @@ async function executeCommand() {
     return
   }
 
+  const parsedCommand = parseRedisCommandInput(command)
+  if (!parsedCommand) {
+    message.warning(t('redis.input_command'))
+    return
+  }
+
   executing.value = true
   resultPanelRef.value?.setActiveKey('result')
 
@@ -285,22 +399,34 @@ async function executeCommand() {
   addMessage('info', `${t('redis.executing')}${dbInfo}`)
 
   try {
-    const result = await redisApi.executeCommand(
+    const startedAt = performance.now()
+    const rawResult = await redisApi.executeCommand(
       connectionStore.activeConnectionId!,
-      command,
-      [],
+      parsedCommand.command,
+      parsedCommand.args,
     )
+    const result = {
+      success: true,
+      result: rawResult,
+      error: null,
+      execution_time_ms: Math.round(performance.now() - startedAt),
+    }
 
     commandResults.value.push(result)
-
-    if (result.success) {
-      addMessage('success', `${t('redis.exec_success', { time: result.execution_time_ms })}${dbInfo}`)
-      saveToHistory(command)
-    } else {
-      addMessage('error', `${t('redis.exec_fail')}${dbInfo}: ${result.error}`)
-      message.error(`${t('redis.exec_fail')}: ${result.error}`)
+    const selectDbArg = parsedCommand.command === 'SELECT' ? parsedCommand.args[0] : null
+    if (selectDbArg && /^\d+$/.test(selectDbArg)) {
+      syncDatabaseState(`db${selectDbArg}`)
     }
+
+    addMessage('success', `${t('redis.exec_success', { time: result.execution_time_ms })}${dbInfo}`)
+    saveToHistory(parsedCommand.displayText)
   } catch (error: unknown) {
+    commandResults.value.push({
+      success: false,
+      result: null,
+      error: String(error),
+      execution_time_ms: 0,
+    })
     addMessage('error', `${t('redis.exec_fail')}${dbInfo}: ${error}`)
     message.error(`${t('redis.exec_fail')}: ${error}`)
   } finally {
@@ -317,18 +443,8 @@ function clearEditor() {
 
 // 切换数据库
 async function handleDatabaseChange(database: unknown) {
-  const dbStr = String(database || 'db0')
-  selectedDatabase.value = dbStr
-  const dbNum = dbStr.replace('db', '')
-
   try {
-    await redisApi.executeCommand(
-      connectionStore.activeConnectionId!,
-      `SELECT ${dbNum}`,
-      [],
-    )
-    message.success(t('redis.switched_db', { db: dbStr }))
-    if (activeKeyName.value) viewerRefreshKey.value++
+    await switchRedisDatabase(String(database || 'db0'))
   } catch (error: unknown) {
     message.error(t('redis.switch_fail', { error: String(error) }))
   }
@@ -376,15 +492,8 @@ function removeFromHistory(item: CommandHistoryItem) {
 
 // 切换数据库（供外部调用）
 async function switchDatabase(dbName: string) {
-  selectedDatabase.value = dbName
-  const dbNum = dbName.replace('db', '')
-
   try {
-    await redisApi.executeCommand(
-      connectionStore.activeConnectionId!,
-      `SELECT ${dbNum}`,
-      [],
-    )
+    await switchRedisDatabase(dbName, { showSuccessMessage: false })
   } catch (error: unknown) {
     console.error('Failed to switch database:', error)
     throw error
