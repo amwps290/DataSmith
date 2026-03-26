@@ -42,6 +42,36 @@ impl PostgreSqlDatabase {
         format!("'{}'", val.replace('\\', "\\\\").replace('\'', "\\'"))
     }
 
+    fn trim_utf8_to_bytes(input: &str, max_bytes: usize) -> String {
+        if input.len() <= max_bytes {
+            return input.to_string();
+        }
+
+        let mut end = max_bytes;
+        while end > 0 && !input.is_char_boundary(end) {
+            end -= 1;
+        }
+        input[..end].to_string()
+    }
+
+    fn build_application_name(config: &ConnectionConfig) -> String {
+        let connection_name = config
+            .name
+            .chars()
+            .filter(|ch| !ch.is_control())
+            .collect::<String>()
+            .trim()
+            .to_string();
+
+        let application_name = if connection_name.is_empty() {
+            "DataSmith".to_string()
+        } else {
+            format!("DataSmith/{}", connection_name)
+        };
+
+        Self::trim_utf8_to_bytes(&application_name, 63)
+    }
+
     /// 获取已连接客户端的 Arc 引用（不持有锁），若未连接则返回错误
     async fn get_client_arc(&self) -> DbResult<Arc<Client>> {
         let state = self.state.lock().await;
@@ -50,16 +80,22 @@ impl PostgreSqlDatabase {
 
     async fn create_client(config: &ConnectionConfig) -> DbResult<Client> {
         let db_name = config.database.as_deref().unwrap_or("postgres");
+        let application_name = Self::build_application_name(config);
         let conn_str = format!(
-            "host={} port={} user={} password={} dbname={}",
+            "host={} port={} user={} password={} dbname={} application_name={}",
             Self::escape_connstr_value(&config.host),
             config.port,
             Self::escape_connstr_value(&config.username),
             Self::escape_connstr_value(&config.password),
-            Self::escape_connstr_value(db_name)
+            Self::escape_connstr_value(db_name),
+            Self::escape_connstr_value(&application_name)
         );
         
-        debug!(conn = %conn_str.replace(&config.password, "******"), "正在建立 PostgreSQL 物理连接...");
+        debug!(
+            conn = %conn_str.replace(&config.password, "******"),
+            application_name = %application_name,
+            "正在建立 PostgreSQL 物理连接..."
+        );
 
         if config.ssl {
             let connector = TlsConnector::builder().danger_accept_invalid_certs(true).build().map_err(|e| DbError::ConnectionFailed(e.to_string()))?;
