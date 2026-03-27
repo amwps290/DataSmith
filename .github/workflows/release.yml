@@ -48,13 +48,13 @@ jobs:
           $setupFile = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*-setup.exe" | Select-Object -First 1
           
           if ($msiFile) {
-            Copy-Item $msiFile.FullName -Destination "./datasmith-windows.msi"
+            Copy-Item $msiFile.FullName -Destination "./kudu-windows.msi"
           } else {
             Write-Error "MSI file not found!"
           }
           
           if ($setupFile) {
-            Copy-Item $setupFile.FullName -Destination "./datasmith-windows-setup.exe"
+            Copy-Item $setupFile.FullName -Destination "./kudu-windows-setup.exe"
           } else {
             Write-Error "Setup EXE not found!"
           }
@@ -64,8 +64,8 @@ jobs:
         with:
           name: windows-artifacts
           path: |
-            ./datasmith-windows.msi
-            ./datasmith-windows-setup.exe
+            ./kudu-windows.msi
+            ./kudu-windows-setup.exe
 
   build-linux:
     runs-on: ubuntu-latest
@@ -104,14 +104,14 @@ jobs:
           # 查找并复制AppImage
           APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" 2>/dev/null | head -1)
           if [ -f "$APPIMAGE" ]; then
-            cp "$APPIMAGE" "./linux-release/datasmith-linux.AppImage"
-            chmod +x "./linux-release/datasmith-linux.AppImage"
+            cp "$APPIMAGE" "./linux-release/kudu-linux.AppImage"
+            chmod +x "./linux-release/kudu-linux.AppImage"
           fi
           
           # 查找并复制deb包
           DEB=$(find src-tauri/target/release/bundle/deb -name "*.deb" 2>/dev/null | head -1)
           if [ -f "$DEB" ]; then
-            cp "$DEB" "./linux-release/datasmith-linux.deb"
+            cp "$DEB" "./linux-release/kudu-linux.deb"
           fi
 
       - name: Upload Linux artifacts
@@ -140,26 +140,26 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         with:
           tag_name: v${{ github.event.inputs.version }}
-          name: DataSmith v${{ github.event.inputs.version }}
+          name: Kudu v${{ github.event.inputs.version }}
           body: |
-            🚀 **DataSmith Release v${{ github.event.inputs.version }}**
-            📝 数据库管理工具
+            🚀 **Kudu Release v${{ github.event.inputs.version }}**
+            📝 轻量级桌面数据库客户端
 
             ### 下载说明
             **Windows:**
-            - `datasmith-windows.msi`: Windows MSI 安装包
-            - `datasmith-windows-setup.exe`: Windows EXE 安装包
+            - `kudu-windows.msi`: Windows MSI 安装包
+            - `kudu-windows-setup.exe`: Windows EXE 安装包
 
             **Linux:**
-            - `datasmith-linux.AppImage`: Linux AppImage 可执行文件
-            - `datasmith-linux.deb`: Debian/Ubuntu 安装包
+            - `kudu-linux.AppImage`: Linux AppImage 可执行文件
+            - `kudu-linux.deb`: Debian/Ubuntu 安装包
 
             ### 发布说明
             ${{ github.event.inputs.release_notes }}
           draft: false
           prerelease: false
           files: |
-            ./datasmith-windows.msi
-            ./datasmith-windows-setup.exe
-            ./datasmith-linux.AppImage
-            ./datasmith-linux.deb
+            ./kudu-windows.msi
+            ./kudu-windows-setup.exe
+            ./kudu-linux.AppImage
+            ./kudu-linux.deb
