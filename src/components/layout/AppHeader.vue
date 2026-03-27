@@ -180,18 +180,19 @@ onMounted(() => {
 
 .header-drag-handle { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 1; }
 
-.header-content { display: flex; justify-content: space-between; align-items: center; height: 100%; width: 100%; position: relative; z-index: 2; pointer-events: none; }
+.header-content { display: flex; align-items: center; height: 100%; width: 100%; position: relative; z-index: 2; pointer-events: none; }
 
-.logo { display: flex; align-items: center; font-size: 14px; font-weight: bold; color: #1890ff; padding: 0 12px; height: 100%; pointer-events: auto; }
-.header-menu { height: 100%; display: flex; align-items: center; pointer-events: auto; flex: 0 0 auto; min-width: max-content; }
-.top-menu { border-bottom: none; background: transparent; height: 100%; line-height: 32px; min-width: max-content; font-size: 13px; }
+.logo { display: flex; align-items: center; font-size: 14px; font-weight: bold; color: #1890ff; padding: 0 12px; height: 100%; pointer-events: auto; position: relative; z-index: 3; }
+.header-menu { height: 100%; display: flex; align-items: center; pointer-events: auto; flex: 0 0 auto; min-width: max-content; margin-left: 6px; position: relative; z-index: 3; }
+.top-menu { border-bottom: none; background: transparent; height: 100%; line-height: 32px; min-width: max-content; font-size: 13px; display: flex; align-items: center; }
+.top-menu :deep(.ant-menu-overflow) { display: flex; align-items: center; height: 100%; }
 .top-menu :deep(.ant-menu-overflow-item) { padding-inline: 0 !important; }
 .top-menu :deep(.ant-menu-submenu-title) { height: 32px !important; line-height: 32px !important; padding: 0 10px; }
 .top-menu :deep(.ant-menu-title-content) { line-height: 32px; }
 
 .header-drag-spacer { flex: 1 1 auto; min-width: 16px; height: 100%; pointer-events: auto; }
 
-.header-actions { display: flex; align-items: center; height: 100%; pointer-events: auto; padding-right: 0; }
+.header-actions { display: flex; align-items: center; height: 100%; pointer-events: auto; padding-right: 0; margin-left: auto; position: relative; z-index: 3; }
 .settings-btn { margin-right: 4px; }
 .theme-btn {
   margin-right: 4px;

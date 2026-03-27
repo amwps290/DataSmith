@@ -6,6 +6,7 @@
         :executing="executing"
         :selected-database="selectedDatabase"
         :databases="availableDatabases"
+        :result-panel-visible="resultPanelVisible"
         @action="handleToolbarAction"
         @database-change="handleToolbarDbChange"
       />
@@ -21,16 +22,12 @@
         <div class="resizer-handle"></div>
       </div>
 
-      <div class="result-dock-header">
-        <button class="result-dock-toggle" type="button" @click="toggleResultPanel">
-          {{ resultPanelVisible ? '▾' : '▴' }}
-        </button>
-        <span class="result-dock-title">{{ $t('editor.result') }}</span>
-        <a-tag v-if="showExecutionSummary" :color="executionStatusColor" class="execution-summary-tag">
+      <div v-if="showExecutionSummary" class="result-dock-header">
+        <a-tag :color="executionStatusColor" class="execution-summary-tag">
           {{ executionStatusLabel }}
         </a-tag>
-        <span v-if="showExecutionSummary" class="execution-summary-text">{{ executionState.summary }}</span>
-        <span v-if="showExecutionSummary && executionSummaryMeta" class="execution-summary-meta">{{ executionSummaryMeta }}</span>
+        <span class="execution-summary-text">{{ executionState.summary }}</span>
+        <span v-if="executionSummaryMeta" class="execution-summary-meta">{{ executionSummaryMeta }}</span>
       </div>
 
       <a-tabs v-if="resultPanelVisible" v-model:activeKey="resultTabKey" size="small" class="result-tabs">
@@ -225,7 +222,7 @@ const appStore = useAppStore()
 const RESULT_PANEL_HEIGHT_KEY = 'sql_result_panel_height'
 const RESULT_PANEL_VISIBLE_KEY = 'sql_result_panel_visible'
 const RESULT_PANEL_MIN_HEIGHT = 180
-const RESULT_PANEL_COLLAPSED_HEIGHT = 32
+const RESULT_PANEL_COLLAPSED_HEIGHT = 0
 
 const internalSessionId = ref(props.tabId || props.filePath || `editor-${Math.random().toString(36).substring(2, 9)}`)
 const sessionConnectionId = computed(() => {
@@ -780,6 +777,7 @@ function handleToolbarAction(method: string) {
     openHistory,
     openSnippets,
     refreshAutocomplete,
+    toggleResultPanel,
   }
 
   const action = actionMap[method]
@@ -1486,7 +1484,7 @@ defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, exp
 }
 .result-dock { flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; border-top: 1px solid #e5e7eb; background: rgba(255, 255, 255, 0.96); box-shadow: 0 -12px 24px rgba(15, 23, 42, 0.06); transition: height 0.18s ease; }
 .dark-mode .result-dock { background: rgba(24, 24, 24, 0.98); border-top-color: #303030; box-shadow: 0 -12px 24px rgba(0, 0, 0, 0.24); }
-.result-dock.collapsed { box-shadow: 0 -6px 16px rgba(15, 23, 42, 0.04); }
+.result-dock.collapsed { border-top-color: transparent; box-shadow: none; }
 .split-resizer { height: 1px; background: #e5e7eb; cursor: row-resize; display: block; transition: background-color 0.2s; flex-shrink: 0; position: relative; overflow: visible; }
 .split-resizer::before { content: ''; position: absolute; left: 0; right: 0; top: -4px; bottom: -4px; cursor: row-resize; }
 .split-resizer:hover { background: #1677ff; }
@@ -1495,10 +1493,6 @@ defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, exp
 .result-dock-header { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 10px; border-bottom: 1px solid #f0f0f0; background: rgba(248, 250, 252, 0.92); flex-shrink: 0; }
 .dark-mode .result-dock-header { border-bottom-color: #2c2c2c; background: rgba(24, 24, 24, 0.96); }
 .result-dock.collapsed .result-dock-header { border-bottom: 0; }
-.result-dock-toggle { width: 18px; height: 18px; padding: 0; border: 0; background: transparent; color: #6b7280; font-size: 11px; cursor: pointer; }
-.dark-mode .result-dock-toggle { color: #9ca3af; }
-.result-dock-title { font-size: 12px; font-weight: 600; color: #4b5563; flex-shrink: 0; }
-.dark-mode .result-dock-title { color: #d1d5db; }
 .execution-summary-tag { margin-inline-end: 0; }
 .execution-summary-text { color: #262626; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dark-mode .execution-summary-text { color: #f5f5f5; }

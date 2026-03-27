@@ -59,6 +59,18 @@
             </a-menu>
           </template>
         </a-dropdown>
+        <a-divider type="horizontal" />
+        <a-tooltip :title="$t('editor.result')">
+          <a-button
+            type="text"
+            size="small"
+            class="result-toggle-btn"
+            :class="{ active: resultPanelVisible }"
+            @click="$emit('action', 'toggleResultPanel')"
+          >
+            <template #icon><TableOutlined /></template>
+          </a-button>
+        </a-tooltip>
       </template>
       <template v-else>
         <a-space :size="12">
@@ -82,7 +94,7 @@
 <script setup lang="ts">
 import {
   PlayCircleFilled, StopOutlined, SaveOutlined,
-  FormatPainterOutlined, ClearOutlined, HistoryOutlined, CodeOutlined, SyncOutlined, SearchOutlined, DatabaseOutlined
+  FormatPainterOutlined, ClearOutlined, HistoryOutlined, CodeOutlined, SyncOutlined, SearchOutlined, DatabaseOutlined, TableOutlined
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
 import type { DatabaseInfo } from '@/types/database'
@@ -91,8 +103,10 @@ withDefaults(defineProps<{
   executing: boolean
   selectedDatabase: string
   databases: DatabaseInfo[]
+  resultPanelVisible?: boolean
   vertical?: boolean
 }>(), {
+  resultPanelVisible: false,
   vertical: false,
 })
 
@@ -160,6 +174,13 @@ function handleDatabaseMenuClick({ key }: { key: string | number }) {
 .btn-run:hover { background: rgba(82, 196, 26, 0.12) !important; }
 .btn-stop { color: #ff4d4f !important; }
 .btn-stop:hover { background: rgba(255, 77, 79, 0.12) !important; }
+.result-toggle-btn.active {
+  color: #1677ff !important;
+  background: rgba(22, 119, 255, 0.08);
+}
+.dark-mode .result-toggle-btn.active {
+  background: rgba(22, 119, 255, 0.18);
+}
 .db-label { font-size: 12px; color: #8c8c8c; margin-right: 8px; }
 .db-trigger { width: 100%; }
 </style>
