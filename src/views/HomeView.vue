@@ -143,7 +143,7 @@ const { sidebarWidth, startResize } = useSidebarResize()
 const {
   dataTabs, mainTabKey,
   activeTabType, activeTabDatabase,
-  setSqlEditorRef, updateSqlExecutionState, closeTab, closeTabsLeftOf, closeTabsRightOf, closeOtherTabs, closeSavedTabs,
+  setSqlEditorRef, updateSqlExecutionState, callActiveEditor, closeTab, closeTabsLeftOf, closeTabsRightOf, closeOtherTabs, closeSavedTabs,
   tabExists, addTab, handleContentChange, handleFileSaved,
 } = useTabManager()
 
@@ -208,6 +208,12 @@ const isSqlSupported = computed(() => {
 })
 
 watch([dataTabs, mainTabKey], () => { workspaceStore.saveSession(dataTabs.value, mainTabKey.value) }, { deep: true })
+watch(mainTabKey, async () => {
+  await nextTick()
+  if (activeTabType.value === 'query') {
+    window.setTimeout(() => callActiveEditor('focusEditor'), 0)
+  }
+})
 
 async function restoreSession() {
   workspaceStore.isRestoring = true

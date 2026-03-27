@@ -191,7 +191,7 @@
     </div>
 
     <SaveQueryDialog v-model="showSaveDialog" :sql="editor?.getValue() || ''" @saved="handleQuerySaved" />
-    <SqlSnippetsManager v-model:visible="showSnippets" @insert="insertSnippet" />
+    <SqlSnippetsManager v-model:visible="showSnippets" />
   </div>
 </template>
 
@@ -1256,7 +1256,6 @@ async function stopExecution() {
 async function formatSql() { if (!editor) return; try { const formatted = await queryApi.beautifySql(sessionConnectionId.value, editor.getValue()); editor.setValue(formatted); message.success(t('editor.format_success')) } catch (e: any) { message.error(getErrorMessage(e)) } }
 function clearEditor() { editor?.setValue(''); queryResults.value = []; resultTabKey.value = 'empty'; messages.value = []; Object.keys(queryResultStates).forEach(k => delete queryResultStates[Number(k)]); Object.keys(resultClipboardSelections).forEach(k => delete resultClipboardSelections[Number(k)]); hideResultContextMenu(); resetExecutionState(); }
 function handleQuerySaved() { message.success(t('common.save')) }
-function insertSnippet(sql: string) { if (!editor) return; const selection = editor.getSelection(); editor.executeEdits('insert-snippet', [{ range: selection || editor.getSelection()!, text: sql }]); showSnippets.value = false }
 async function pasteFromSystemClipboard() {
   if (!editor) return
 
@@ -1270,6 +1269,13 @@ async function pasteFromSystemClipboard() {
   } catch (e: any) {
     message.error(getErrorMessage(e))
   }
+}
+function focusEditor() {
+  nextTick(() => {
+    if (!editor) return
+    editor.layout()
+    editor.focus()
+  })
 }
 function openHistory() { historySearch.value = ''; showHistory.value = true }
 function openSnippets() { showSnippets.value = true }
@@ -1336,9 +1342,10 @@ onMounted(() => {
   updateAutocompleteContext(); editor.onDidChangeModelContent(() => { emit('contentChange', editor?.getValue() || ''); triggerAutoSave() }); editor.onKeyUp((event) => { if (event.keyCode === monaco.KeyCode.Space || event.keyCode === monaco.KeyCode.Period) editor?.trigger('keyboard', 'editor.action.triggerSuggest', {}) }); editor.addCommand(monaco.KeyCode.F5, () => executeQuery()); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => handleSave()); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => { void pasteFromSystemClipboard() });
   sqlHistory.value = getStorageItem(STORAGE_KEYS.SQL_HISTORY, [])
   loadAvailableDatabases();
+  focusEditor()
 })
 let autoSaveTimer: any = null; function triggerAutoSave() { if (autoSaveTimer) clearTimeout(autoSaveTimer); autoSaveTimer = setTimeout(() => { handleSave(true) }, 2000) }
-onActivated(() => { nextTick(() => { if (editor) editor.layout() }) })
+onActivated(() => { focusEditor() })
 onUnmounted(() => { hideExecutionSummary(); hideResultContextMenu(); const model = editor?.getModel(); if (model) autocompleteManager.unbindModel(model); editor?.dispose(); })
 watch(() => [appStore.theme, appStore.editorSettings.fontSize, appStore.editorSettings.minimap, appStore.editorSettings.lineNumbers, appStore.editorSettings.fontFamily], ([theme]) => {
   if (!editor) return
@@ -1355,7 +1362,7 @@ watch(() => [appStore.theme, appStore.editorSettings.fontSize, appStore.editorSe
 watch(() => props.connectionId || connectionStore.activeConnectionId, () => { updateAutocompleteContext(); loadAvailableDatabases(); })
 watch(resultPanelVisible, (value) => { setStorageItem(RESULT_PANEL_VISIBLE_KEY, value) })
 watch(resultPanelHeight, (value) => { setStorageItem(RESULT_PANEL_HEIGHT_KEY, value) })
-defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, explainQuery, stopExecution, handleDatabaseChange, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
+defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, explainQuery, stopExecution, handleDatabaseChange, focusEditor, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
 </script>
 
 <style scoped>

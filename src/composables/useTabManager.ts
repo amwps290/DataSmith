@@ -13,6 +13,7 @@ export interface SqlEditorExposed {
   explainQuery: () => void
   stopExecution: () => void
   handleSave: () => void
+  focusEditor: () => void
   formatSql: () => void
   clearEditor: () => void
   openHistory: () => void

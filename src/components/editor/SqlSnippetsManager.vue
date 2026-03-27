@@ -36,7 +36,7 @@
               <a-list-item
                 :class="{ active: selectedSnippet?.id === item.id }"
                 @click="selectSnippet(item)"
-                @dblclick="insertSnippet(item)"
+                @dblclick="copySnippet(item)"
                 class="snippet-item"
               >
                 <a-list-item-meta>
@@ -57,13 +57,6 @@
                   </template>
                 </a-list-item-meta>
                 <template #actions>
-                  <a-button
-                    type="text"
-                    size="small"
-                    :icon="h(CodeOutlined)"
-                    @click.stop="insertSnippet(item)"
-                    :title="$t('common.insert_to_editor')"
-                  />
                   <a-button
                     type="text"
                     size="small"
@@ -125,10 +118,6 @@
                 <SaveOutlined />
                 {{ $t('common.save') }}
               </a-button>
-              <a-button @click="insertSnippet()">
-                <CodeOutlined />
-                {{ $t('common.insert_to_editor') }}
-              </a-button>
               <a-button @click="copySnippet(selectedSnippet)">
                 <CopyOutlined />
                 {{ $t('common.copy') }}
@@ -148,8 +137,8 @@ import {
   CopyOutlined,
   DeleteOutlined,
   SaveOutlined,
-  CodeOutlined,
 } from '@ant-design/icons-vue'
+import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { message, Modal } from 'ant-design-vue'
 import { useI18n } from 'vue-i18n'
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from '@/utils/storageService'
@@ -171,7 +160,7 @@ const props = defineProps<{
   visible: boolean
 }>()
 
-const emit = defineEmits(['update:visible', 'insert-snippet'])
+const emit = defineEmits(['update:visible'])
 
 const searchText = ref('')
 const categoryFilter = ref('__all__')
@@ -383,17 +372,11 @@ function deleteSnippet(snippet: SqlSnippet) {
   })
 }
 
-// 复制片段
-function copySnippet(snippet: SqlSnippet) {
-  navigator.clipboard.writeText(snippet.sql)
-  message.success(t('dialog.snippets.copy_success'))
-}
-
-// 插入片段到编辑器
-function insertSnippet(snippet: SqlSnippet | null = selectedSnippet.value) {
+// 复制片段到系统剪贴板
+async function copySnippet(snippet: SqlSnippet | null = selectedSnippet.value) {
   if (!snippet) return
-  emit('insert-snippet', snippet.sql)
-  message.success(t('dialog.snippets.insert_success'))
+  await writeText(snippet.sql)
+  message.success(t('dialog.snippets.copy_success'))
 }
 
 // 取消
