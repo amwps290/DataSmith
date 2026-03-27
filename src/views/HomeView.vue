@@ -486,8 +486,10 @@ function getConnectionColor(connectionId?: string) {
 .sidebar-wrapper { background: #fafafa; border-right: 1px solid #e8e8e8; height: 100%; overflow: hidden; flex-shrink: 0; }
 .dark-mode .sidebar-wrapper { background: #141414; border-right-color: #303030; }
 .sidebar-inner { height: 100%; overflow: auto; padding: 0 8px; }
-.sidebar-resizer { width: 4px; cursor: col-resize; background: transparent; transition: background-color 0.2s; z-index: 10; }
-.sidebar-resizer:hover { background: #1890ff; }
+.sidebar-resizer { width: 1px; cursor: col-resize; background: #e5e7eb; transition: background-color 0.2s; z-index: 10; flex-shrink: 0; position: relative; overflow: visible; }
+.sidebar-resizer::before { content: ''; position: absolute; top: 0; bottom: 0; left: -4px; right: -4px; cursor: col-resize; }
+.dark-mode .sidebar-resizer { background: #303030; }
+.sidebar-resizer:hover { background: #1677ff; }
 .main-workspace { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #fff; min-width: 0; }
 .dark-mode .main-workspace { background: #1f1f1f; }
 .workspace-tabs { flex: 1; display: flex; flex-direction: column; overflow: hidden; }

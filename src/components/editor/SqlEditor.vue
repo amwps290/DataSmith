@@ -1487,10 +1487,11 @@ defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, exp
 .result-dock { flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; border-top: 1px solid #e5e7eb; background: rgba(255, 255, 255, 0.96); box-shadow: 0 -12px 24px rgba(15, 23, 42, 0.06); transition: height 0.18s ease; }
 .dark-mode .result-dock { background: rgba(24, 24, 24, 0.98); border-top-color: #303030; box-shadow: 0 -12px 24px rgba(0, 0, 0, 0.24); }
 .result-dock.collapsed { box-shadow: 0 -6px 16px rgba(15, 23, 42, 0.04); }
-.split-resizer { height: 4px; background: #f0f0f0; cursor: row-resize; display: flex; align-items: center; justify-content: center; transition: background 0.2s; flex-shrink: 0; }
-.split-resizer:hover { background: #1890ff; }
+.split-resizer { height: 1px; background: #e5e7eb; cursor: row-resize; display: block; transition: background-color 0.2s; flex-shrink: 0; position: relative; overflow: visible; }
+.split-resizer::before { content: ''; position: absolute; left: 0; right: 0; top: -4px; bottom: -4px; cursor: row-resize; }
+.split-resizer:hover { background: #1677ff; }
 .dark-mode .split-resizer { background: #303030; }
-.resizer-handle { width: 30px; height: 2px; background: #d9d9d9; border-radius: 1px; }
+.resizer-handle { display: none; }
 .result-dock-header { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 10px; border-bottom: 1px solid #f0f0f0; background: rgba(248, 250, 252, 0.92); flex-shrink: 0; }
 .dark-mode .result-dock-header { border-bottom-color: #2c2c2c; background: rgba(24, 24, 24, 0.96); }
 .result-dock.collapsed .result-dock-header { border-bottom: 0; }

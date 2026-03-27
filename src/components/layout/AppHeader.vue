@@ -165,7 +165,7 @@ onMounted(() => {
 
 <style scoped>
 .header {
-  height: 40px;
+  height: 32px;
   background: #fff;
   border-bottom: 1px solid #f0f0f0;
   flex-shrink: 0;
@@ -182,10 +182,12 @@ onMounted(() => {
 
 .header-content { display: flex; justify-content: space-between; align-items: center; height: 100%; width: 100%; position: relative; z-index: 2; pointer-events: none; }
 
-.logo { display: flex; align-items: center; font-size: 16px; font-weight: bold; color: #1890ff; padding: 0 16px; height: 100%; pointer-events: auto; }
+.logo { display: flex; align-items: center; font-size: 14px; font-weight: bold; color: #1890ff; padding: 0 12px; height: 100%; pointer-events: auto; }
 .header-menu { height: 100%; display: flex; align-items: center; pointer-events: auto; flex: 0 0 auto; min-width: max-content; }
-.top-menu { border-bottom: none; background: transparent; height: 100%; line-height: 40px; min-width: max-content; }
-.top-menu :deep(.ant-menu-submenu-title) { height: 40px !important; line-height: 40px !important; padding: 0 12px; }
+.top-menu { border-bottom: none; background: transparent; height: 100%; line-height: 32px; min-width: max-content; font-size: 13px; }
+.top-menu :deep(.ant-menu-overflow-item) { padding-inline: 0 !important; }
+.top-menu :deep(.ant-menu-submenu-title) { height: 32px !important; line-height: 32px !important; padding: 0 10px; }
+.top-menu :deep(.ant-menu-title-content) { line-height: 32px; }
 
 .header-drag-spacer { flex: 1 1 auto; min-width: 16px; height: 100%; pointer-events: auto; }
 
@@ -202,11 +204,17 @@ onMounted(() => {
   font-size: 18px;
   opacity: 0.95;
 }
-.search-btn { margin-right: 8px; }
+.search-btn { margin-right: 6px; }
 .menu-icon { margin-right: 8px; }
 
-.window-controls { display: flex; align-items: center; gap: 2px; height: 100%; padding: 0 4px 0 2px; }
-.win-btn { display: inline-flex; justify-content: center; align-items: center; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; transition: background-color 0.2s; font-size: 14px; color: #595959; }
+.header-actions :deep(.ant-btn.ant-btn-sm) {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+}
+.window-controls { display: flex; align-items: center; gap: 0; height: 100%; padding: 0 2px 0 0; }
+.win-btn { display: inline-flex; justify-content: center; align-items: center; width: 28px; height: 28px; border-radius: 0; cursor: pointer; transition: background-color 0.2s; font-size: 13px; color: #595959; }
 .dark-mode .win-btn { color: #aaa; }
 .win-btn:hover { background-color: rgba(0, 0, 0, 0.05); }
 .dark-mode .win-btn:hover { background-color: rgba(255, 255, 255, 0.1); }
