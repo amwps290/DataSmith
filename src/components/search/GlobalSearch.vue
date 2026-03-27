@@ -162,6 +162,7 @@ import { useI18n } from 'vue-i18n'
 import { metadataApi } from '@/api'
 import { invoke } from '@tauri-apps/api/core'
 import type { DatabaseInfo } from '@/types/database'
+import { writeClipboardText } from '@/utils/clipboard'
 
 interface SearchResult {
   type: 'table' | 'column' | 'view' | 'procedure' | 'function' | 'trigger'
@@ -428,7 +429,7 @@ function handleViewData(item: SearchResult) {
 }
 
 // 复制路径
-function handleCopyPath(item: SearchResult) {
+async function handleCopyPath(item: SearchResult) {
   let path = ''
   if (item.table) {
     path = `${item.database}.${item.table}.${item.name}`
@@ -436,7 +437,7 @@ function handleCopyPath(item: SearchResult) {
     path = `${item.database}.${item.name}`
   }
 
-  navigator.clipboard.writeText(path)
+  await writeClipboardText(path)
   message.success(t('search.path_copied'))
 }
 

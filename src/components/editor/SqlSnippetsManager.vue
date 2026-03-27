@@ -138,9 +138,9 @@ import {
   DeleteOutlined,
   SaveOutlined,
 } from '@ant-design/icons-vue'
-import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { message, Modal } from 'ant-design-vue'
 import { useI18n } from 'vue-i18n'
+import { writeClipboardText } from '@/utils/clipboard'
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from '@/utils/storageService'
 
 interface SqlSnippet {
@@ -375,7 +375,7 @@ function deleteSnippet(snippet: SqlSnippet) {
 // 复制片段到系统剪贴板
 async function copySnippet(snippet: SqlSnippet | null = selectedSnippet.value) {
   if (!snippet) return
-  await writeText(snippet.sql)
+  await writeClipboardText(snippet.sql)
   message.success(t('dialog.snippets.copy_success'))
 }
 

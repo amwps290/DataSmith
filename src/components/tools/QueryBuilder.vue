@@ -184,6 +184,7 @@ import { useI18n } from 'vue-i18n'
 import { metadataApi } from '@/api'
 import { useConnectionStore } from '@/stores/connection'
 import type { DatabaseInfo, TableInfo, ColumnInfo, DatabaseType } from '@/types/database'
+import { writeClipboardText } from '@/utils/clipboard'
 
 interface WhereCondition {
   column: string
@@ -389,8 +390,8 @@ function removeCondition(index: number) {
 }
 
 // 复制SQL
-function copySql() {
-  navigator.clipboard.writeText(generatedSql.value)
+async function copySql() {
+  await writeClipboardText(generatedSql.value)
   message.success(t('tools.query_builder.copy_success'))
 }
 

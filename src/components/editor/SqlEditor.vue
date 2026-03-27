@@ -196,10 +196,9 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch, ref, computed, onActivated, nextTick, reactive, h } from 'vue'
+import { onMounted, onUnmounted, watch, ref, computed, onActivated, reactive, h } from 'vue'
 import { useI18n } from 'vue-i18n'
 import * as monaco from 'monaco-editor'
-import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { getSqlAutocompleteManager } from '@/services/sqlAutocomplete'
 import { message, Modal } from 'ant-design-vue'
 import { ExportOutlined, CopyOutlined } from '@ant-design/icons-vue'
@@ -211,6 +210,7 @@ import { createIdleExecutionState, type SqlExecutionState, type SqlExecutionStat
 import { useConnectionStore } from '@/stores/connection'
 import { useAppStore } from '@/stores/app'
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from '@/utils/storageService'
+import { readClipboardText, writeClipboardText } from '@/utils/clipboard'
 import { analyzeSqlSafety, analyzeSqlWrites, type SqlDangerIssue } from '@/utils/sqlSafety'
 import SaveQueryDialog from './SaveQueryDialog.vue'
 import SqlSnippetsManager from './SqlSnippetsManager.vue'
@@ -481,8 +481,71 @@ function buildClipboardResultText(result: QueryResult) {
 }
 
 async function copyTextToClipboard(text: string, successMessage: string) {
-  await writeText(text)
+  await writeClipboardText(text)
   message.success(successMessage)
+}
+
+function getEditorSelections() {
+  if (!editor) return []
+  return editor.getSelections() || (editor.getSelection() ? [editor.getSelection()!] : [])
+}
+
+function getEditorClipboardEntries() {
+  const model = editor?.getModel()
+  if (!editor || !model) return []
+
+  return getEditorSelections().map((selection) => {
+    if (!selection.isEmpty()) {
+      return {
+        text: model.getValueInRange(selection),
+        deleteRange: selection,
+      }
+    }
+
+    const lineNumber = selection.positionLineNumber
+    const lineMaxColumn = model.getLineMaxColumn(lineNumber)
+    const isLastLine = lineNumber === model.getLineCount()
+
+    if (!isLastLine) {
+      return {
+        text: `${model.getLineContent(lineNumber)}${model.getEOL()}`,
+        deleteRange: new monaco.Range(lineNumber, 1, lineNumber + 1, 1),
+      }
+    }
+
+    if (lineNumber > 1) {
+      const previousLine = lineNumber - 1
+      return {
+        text: model.getLineContent(lineNumber),
+        deleteRange: new monaco.Range(previousLine, model.getLineMaxColumn(previousLine), lineNumber, lineMaxColumn),
+      }
+    }
+
+    return {
+      text: model.getLineContent(lineNumber),
+      deleteRange: new monaco.Range(lineNumber, 1, lineNumber, lineMaxColumn),
+    }
+  })
+}
+
+async function copyEditorSelectionToSystemClipboard() {
+  const entries = getEditorClipboardEntries()
+  if (entries.length === 0) return
+  await writeClipboardText(entries.map((entry) => entry.text).join(''))
+}
+
+async function cutEditorSelectionToSystemClipboard() {
+  if (!editor) return
+
+  const entries = getEditorClipboardEntries()
+  if (entries.length === 0) return
+
+  await writeClipboardText(entries.map((entry) => entry.text).join(''))
+  editor.executeEdits('system-clipboard-cut', entries.map((entry) => ({
+    range: entry.deleteRange,
+    text: '',
+  })))
+  editor.focus()
 }
 
 function getHistoryPreview(sql: string) {
@@ -1259,23 +1322,35 @@ function handleQuerySaved() { message.success(t('common.save')) }
 async function pasteFromSystemClipboard() {
   if (!editor) return
 
-  try {
-    const text = await readText()
-    const selections = editor.getSelections() || (editor.getSelection() ? [editor.getSelection()!] : [])
-    if (selections.length === 0) return
+  const text = await readClipboardText()
+  const selections = getEditorSelections()
+  if (selections.length === 0) return
 
-    editor.executeEdits('system-clipboard-paste', selections.map((range) => ({ range, text })))
-    editor.focus()
+  editor.executeEdits('system-clipboard-paste', selections.map((range) => ({ range, text })))
+  editor.focus()
+}
+function focusEditor() {
+  if (!editor) return
+  editor.layout()
+  editor.focus()
+}
+async function handleSystemClipboardAction(action: 'copy' | 'cut' | 'paste') {
+  if (!editor) return
+
+  try {
+    focusEditor()
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+
+    if (action === 'copy') {
+      await copyEditorSelectionToSystemClipboard()
+    } else if (action === 'cut') {
+      await cutEditorSelectionToSystemClipboard()
+    } else if (action === 'paste') {
+      await pasteFromSystemClipboard()
+    }
   } catch (e: any) {
     message.error(getErrorMessage(e))
   }
-}
-function focusEditor() {
-  nextTick(() => {
-    if (!editor) return
-    editor.layout()
-    editor.focus()
-  })
 }
 function openHistory() { historySearch.value = ''; showHistory.value = true }
 function openSnippets() { showSnippets.value = true }
@@ -1338,14 +1413,14 @@ function handleDatabaseChange(dbName: string) {
 onMounted(() => {
   if (!editorContainer.value) return
   resultPanelHeight.value = Math.min(getMaxResultPanelHeight(), Math.max(RESULT_PANEL_MIN_HEIGHT, resultPanelHeight.value))
-  editor = monaco.editor.create(editorContainer.value, { value: props.initialValue || t('editor.placeholder'), language: 'sql', theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs', automaticLayout: true, readOnly: false, domReadOnly: false, fontSize: appStore.editorSettings.fontSize, fontFamily: appStore.editorSettings.fontFamily, minimap: { enabled: appStore.editorSettings.minimap }, scrollBeyondLastLine: false, lineNumbers: appStore.editorSettings.lineNumbers, renderLineHighlight: 'all', quickSuggestions: { other: true, comments: false, strings: false }, suggestOnTriggerCharacters: true, acceptSuggestionOnCommitCharacter: true, acceptSuggestionOnEnter: 'on', tabCompletion: 'on' })
-  updateAutocompleteContext(); editor.onDidChangeModelContent(() => { emit('contentChange', editor?.getValue() || ''); triggerAutoSave() }); editor.onKeyUp((event) => { if (event.keyCode === monaco.KeyCode.Space || event.keyCode === monaco.KeyCode.Period) editor?.trigger('keyboard', 'editor.action.triggerSuggest', {}) }); editor.addCommand(monaco.KeyCode.F5, () => executeQuery()); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => handleSave()); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => { void pasteFromSystemClipboard() });
+  editor = monaco.editor.create(editorContainer.value, { value: props.initialValue || t('editor.placeholder'), language: 'sql', theme: appStore.theme === 'dark' ? 'vs-dark' : 'vs', automaticLayout: true, readOnly: false, domReadOnly: false, fontSize: appStore.editorSettings.fontSize, fontFamily: appStore.editorSettings.fontFamily, minimap: { enabled: appStore.editorSettings.minimap }, scrollBeyondLastLine: false, lineNumbers: appStore.editorSettings.lineNumbers, renderLineHighlight: 'all', quickSuggestions: { other: true, comments: false, strings: false }, suggestOnTriggerCharacters: true, acceptSuggestionOnCommitCharacter: true, acceptSuggestionOnEnter: 'on', tabCompletion: 'on', emptySelectionClipboard: false, selectionClipboard: false })
+  updateAutocompleteContext(); editor.onDidChangeModelContent(() => { emit('contentChange', editor?.getValue() || ''); triggerAutoSave() }); editor.onKeyUp((event) => { if (event.keyCode === monaco.KeyCode.Space || event.keyCode === monaco.KeyCode.Period) editor?.trigger('keyboard', 'editor.action.triggerSuggest', {}) }); editor.addCommand(monaco.KeyCode.F5, () => executeQuery()); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => handleSave());
   sqlHistory.value = getStorageItem(STORAGE_KEYS.SQL_HISTORY, [])
   loadAvailableDatabases();
-  focusEditor()
+  window.requestAnimationFrame(() => focusEditor())
 })
 let autoSaveTimer: any = null; function triggerAutoSave() { if (autoSaveTimer) clearTimeout(autoSaveTimer); autoSaveTimer = setTimeout(() => { handleSave(true) }, 2000) }
-onActivated(() => { focusEditor() })
+onActivated(() => { window.requestAnimationFrame(() => focusEditor()) })
 onUnmounted(() => { hideExecutionSummary(); hideResultContextMenu(); const model = editor?.getModel(); if (model) autocompleteManager.unbindModel(model); editor?.dispose(); })
 watch(() => [appStore.theme, appStore.editorSettings.fontSize, appStore.editorSettings.minimap, appStore.editorSettings.lineNumbers, appStore.editorSettings.fontFamily], ([theme]) => {
   if (!editor) return
@@ -1362,7 +1437,7 @@ watch(() => [appStore.theme, appStore.editorSettings.fontSize, appStore.editorSe
 watch(() => props.connectionId || connectionStore.activeConnectionId, () => { updateAutocompleteContext(); loadAvailableDatabases(); })
 watch(resultPanelVisible, (value) => { setStorageItem(RESULT_PANEL_VISIBLE_KEY, value) })
 watch(resultPanelHeight, (value) => { setStorageItem(RESULT_PANEL_HEIGHT_KEY, value) })
-defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, explainQuery, stopExecution, handleDatabaseChange, focusEditor, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
+defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, explainQuery, stopExecution, handleDatabaseChange, focusEditor, handleSystemClipboardAction, formatSql, clearEditor, openHistory, openSnippets, refreshAutocomplete, handleSave })
 </script>
 
 <style scoped>

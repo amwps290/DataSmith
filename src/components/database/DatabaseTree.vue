@@ -103,6 +103,7 @@ import RestoreDatabaseDialog from './RestoreDatabaseDialog.vue'
 import { useMonacoEditor } from '@/composables/useMonacoEditor'
 import { useContextMenu } from '@/composables/useContextMenu'
 import { getDatabaseSupportProfile } from '@/utils/databaseSupport'
+import { writeClipboardText } from '@/utils/clipboard'
 
 interface TreeNode {
   key: string; title: string; type: string; children?: TreeNode[];
@@ -354,7 +355,7 @@ async function handleMenuClick({ key }: any) {
     showRestoreDialog.value = true
   }
   else if (key === 'refresh') handleRefreshNode(selectedNode.value)
-  else if (key === 'copy-name') { navigator.clipboard.writeText(selectedNode.value.title); message.success(t('common.copy')) }
+  else if (key === 'copy-name') { await writeClipboardText(selectedNode.value.title); message.success(t('common.copy')) }
   else if (key === 'view-data') {
     emit('table-selected', { 
       database: selectedNode.value.metadata.database, 

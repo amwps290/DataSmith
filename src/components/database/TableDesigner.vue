@@ -182,6 +182,7 @@ import { useI18n } from 'vue-i18n'
 import { withErrorHandler } from '@/utils/errorHandler'
 import { useMonacoEditor } from '@/composables/useMonacoEditor'
 import { useConnectionStore } from '@/stores/connection'
+import { writeClipboardText } from '@/utils/clipboard'
 import TableDesignerColumns from './TableDesignerColumns.vue'
 import TableDesignerIndexes from './TableDesignerIndexes.vue'
 import TableDesignerForeignKeys from './TableDesignerForeignKeys.vue'
@@ -683,7 +684,7 @@ async function loadDDL() {
 }
 
 // 复制DDL
-function copyDDL() { navigator.clipboard.writeText(ddlSql.value); message.success(t('common.copy') + ' ' + t('common.ok')) }
+async function copyDDL() { await writeClipboardText(ddlSql.value); message.success(t('common.copy') + ' ' + t('common.ok')) }
 
 // 添加索引
 function addIndex() {

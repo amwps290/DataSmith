@@ -189,6 +189,7 @@ import { save } from '@tauri-apps/plugin-dialog'
 import { useConnectionStore } from '@/stores/connection'
 import InsertRecordDialog from '@/components/database/InsertRecordDialog.vue'
 import ImportDataDialog from '@/components/database/ImportDataDialog.vue'
+import { writeClipboardText } from '@/utils/clipboard'
 import type { VxeGridProps, VxeGridInstance, VxeGridEvents } from 'vxe-table'
 import type { ColumnInfo, QueryResult } from '@/types/database'
 
@@ -383,8 +384,8 @@ function formatJsonInViewer() {
   }
 }
 
-function copyViewerContent() {
-  navigator.clipboard.writeText(viewerValue.value)
+async function copyViewerContent() {
+  await writeClipboardText(viewerValue.value)
   message.success(t('common.copy'))
 }
 

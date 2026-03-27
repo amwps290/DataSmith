@@ -14,6 +14,7 @@ export interface SqlEditorExposed {
   stopExecution: () => void
   handleSave: () => void
   focusEditor: () => void
+  handleSystemClipboardAction: (action: 'copy' | 'cut' | 'paste') => void
   formatSql: () => void
   clearEditor: () => void
   openHistory: () => void
