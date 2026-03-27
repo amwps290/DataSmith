@@ -531,6 +531,7 @@
     "snippets": {
       "title": "SQL代码片段",
       "new_snippet": "新建片段",
+      "all_categories": "全部分类",
       "search_placeholder": "搜索片段...",
       "no_description": "无描述",
       "snippet_title": "标题",
@@ -541,6 +542,7 @@
       "sql_placeholder": "输入SQL代码...",
       "shortcut": "快捷键",
       "shortcut_placeholder": "例如: Ctrl+Shift+1",
+      "updated_at": "最近更新",
       "save_success": "片段已保存",
       "delete_confirm_title": "确认删除",
       "delete_confirm_content": "确定要删除片段 \"{title}\" 吗？",

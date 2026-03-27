@@ -12,6 +12,12 @@
           <a-button :icon="h(PlusOutlined)" @click="handleAddSnippet" type="primary">
             {{ $t('dialog.snippets.new_snippet') }}
           </a-button>
+          <a-select
+            v-model:value="categoryFilter"
+            size="small"
+            style="width: 160px"
+            :options="categoryFilterOptions"
+          />
           <a-input-search
             v-model:value="searchText"
             :placeholder="$t('dialog.snippets.search_placeholder')"
@@ -30,6 +36,7 @@
               <a-list-item
                 :class="{ active: selectedSnippet?.id === item.id }"
                 @click="selectSnippet(item)"
+                @dblclick="insertSnippet(item)"
                 class="snippet-item"
               >
                 <a-list-item-meta>
@@ -39,13 +46,24 @@
                       <a-tag v-if="item.category" size="small" color="blue">
                         {{ item.category }}
                       </a-tag>
+                      <a-tag v-if="item.shortcut" size="small">
+                        {{ item.shortcut }}
+                      </a-tag>
                     </div>
                   </template>
                   <template #description>
-                    {{ item.description || $t('dialog.snippets.no_description') }}
+                    <div class="snippet-description">{{ item.description || $t('dialog.snippets.no_description') }}</div>
+                    <div class="snippet-meta">{{ formatSnippetMeta(item) }}</div>
                   </template>
                 </a-list-item-meta>
                 <template #actions>
+                  <a-button
+                    type="text"
+                    size="small"
+                    :icon="h(CodeOutlined)"
+                    @click.stop="insertSnippet(item)"
+                    :title="$t('common.insert_to_editor')"
+                  />
                   <a-button
                     type="text"
                     size="small"
@@ -107,7 +125,7 @@
                 <SaveOutlined />
                 {{ $t('common.save') }}
               </a-button>
-              <a-button @click="insertSnippet">
+              <a-button @click="insertSnippet()">
                 <CodeOutlined />
                 {{ $t('common.insert_to_editor') }}
               </a-button>
@@ -156,18 +174,42 @@ const props = defineProps<{
 const emit = defineEmits(['update:visible', 'insert-snippet'])
 
 const searchText = ref('')
+const categoryFilter = ref('__all__')
 const selectedSnippet = ref<SqlSnippet | null>(null)
 const snippets = ref<SqlSnippet[]>([])
 
 // 默认分类
-const categoryOptions = computed(() => [
-  { label: 'SELECT', value: 'SELECT' },
-  { label: 'INSERT', value: 'INSERT' },
-  { label: 'UPDATE', value: 'UPDATE' },
-  { label: 'DELETE', value: 'DELETE' },
-  { label: 'DDL', value: 'DDL' },
-  { label: t('dialog.snippets.category_common'), value: t('dialog.snippets.category_common') },
-  { label: t('dialog.snippets.category_other'), value: t('dialog.snippets.category_other') },
+const builtinCategories = computed(() => [
+  'SELECT',
+  'INSERT',
+  'UPDATE',
+  'DELETE',
+  'DDL',
+  t('dialog.snippets.category_common'),
+  t('dialog.snippets.category_other'),
+])
+
+const availableCategories = computed(() => {
+  const categories = new Set<string>()
+  builtinCategories.value.forEach((item) => categories.add(item))
+  snippets.value.forEach((snippet) => {
+    const category = snippet.category?.trim()
+    if (category) categories.add(category)
+  })
+  return Array.from(categories).sort((a, b) => a.localeCompare(b))
+})
+
+const categoryOptions = computed(() => availableCategories.value.map((category) => ({
+  label: category,
+  value: category,
+})))
+
+const categoryFilterOptions = computed(() => [
+  { label: t('dialog.snippets.all_categories'), value: '__all__' },
+  ...availableCategories.value.map((category) => ({
+    label: category,
+    value: category,
+  })),
 ])
 
 // 预置的代码片段
@@ -251,16 +293,22 @@ ORDER BY count DESC;`,
 
 // 过滤片段
 const filteredSnippets = computed(() => {
-  if (!searchText.value) {
-    return snippets.value
-  }
-  const text = searchText.value.toLowerCase()
-  return snippets.value.filter(
-    (snippet) =>
-      snippet.title.toLowerCase().includes(text) ||
-      snippet.description?.toLowerCase().includes(text) ||
-      snippet.sql.toLowerCase().includes(text)
-  )
+  const text = searchText.value.trim().toLowerCase()
+  const category = categoryFilter.value
+
+  return snippets.value
+    .filter((snippet) => {
+      if (category !== '__all__' && (snippet.category || '') !== category) {
+        return false
+      }
+      if (!text) return true
+      return snippet.title.toLowerCase().includes(text)
+        || snippet.description?.toLowerCase().includes(text)
+        || snippet.sql.toLowerCase().includes(text)
+        || snippet.shortcut?.toLowerCase().includes(text)
+        || snippet.category?.toLowerCase().includes(text)
+    })
+    .sort((a, b) => b.updatedAt - a.updatedAt)
 })
 
 // 加载片段
@@ -278,6 +326,10 @@ function saveToStorage() {
   setStorageItem(STORAGE_KEYS.CODE_SNIPPETS, snippets.value)
 }
 
+function formatSnippetMeta(snippet: SqlSnippet) {
+  return `${t('dialog.snippets.updated_at')}: ${new Date(snippet.updatedAt).toLocaleString()}`
+}
+
 // 添加新片段
 function handleAddSnippet() {
   const newSnippet: SqlSnippet = {
@@ -291,6 +343,7 @@ function handleAddSnippet() {
   }
   snippets.value.unshift(newSnippet)
   selectedSnippet.value = newSnippet
+  categoryFilter.value = '__all__'
 }
 
 // 选择片段
@@ -337,9 +390,9 @@ function copySnippet(snippet: SqlSnippet) {
 }
 
 // 插入片段到编辑器
-function insertSnippet() {
-  if (!selectedSnippet.value) return
-  emit('insert-snippet', selectedSnippet.value.sql)
+function insertSnippet(snippet: SqlSnippet | null = selectedSnippet.value) {
+  if (!snippet) return
+  emit('insert-snippet', snippet.sql)
   message.success(t('dialog.snippets.insert_success'))
 }
 
@@ -352,6 +405,10 @@ function handleCancel() {
 watch(() => props.visible, (visible) => {
   if (visible) {
     loadSnippets()
+    categoryFilter.value = '__all__'
+    if (!selectedSnippet.value && snippets.value.length > 0) {
+      selectedSnippet.value = { ...filteredSnippets.value[0] }
+    }
   }
 })
 </script>
@@ -417,6 +474,16 @@ watch(() => props.visible, (visible) => {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.snippet-description {
+  margin-bottom: 4px;
+}
+
+.snippet-meta {
+  font-size: 12px;
+  color: #8c8c8c;
 }
 
 .snippet-editor {
@@ -439,5 +506,9 @@ watch(() => props.visible, (visible) => {
 
 .dark-mode .snippet-actions {
   border-top-color: #303030;
+}
+
+.dark-mode .snippet-meta {
+  color: #a6a6a6;
 }
 </style>

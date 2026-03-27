@@ -531,6 +531,7 @@
     "snippets": {
       "title": "SQL Code Snippets",
       "new_snippet": "New Snippet",
+      "all_categories": "All Categories",
       "search_placeholder": "Search snippets...",
       "no_description": "No description",
       "snippet_title": "Title",
@@ -541,6 +542,7 @@
       "sql_placeholder": "Enter SQL code...",
       "shortcut": "Shortcut",
       "shortcut_placeholder": "e.g., Ctrl+Shift+1",
+      "updated_at": "Updated",
       "save_success": "Snippet saved",
       "delete_confirm_title": "Confirm Delete",
       "delete_confirm_content": "Are you sure you want to delete snippet \"{title}\"?",
