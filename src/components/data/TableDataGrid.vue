@@ -109,7 +109,16 @@
       <template #extra>
         <a-space>
           <a-button size="small" @click="formatJsonInViewer">{{ $t('data.format_json') }}</a-button>
-          <a-button size="small" @click="copyViewerContent">{{ $t('data.copy_content') }}</a-button>
+          <a-dropdown-button size="small" @click="copyViewerContent">
+            {{ $t('data.copy_content') }}
+            <template #overlay>
+              <a-menu @click="handleViewerCopyAction">
+                <a-menu-item key="cell">{{ $t('data.copy_content') }}</a-menu-item>
+                <a-menu-item key="row-json">{{ $t('data.copy_row_json') }}</a-menu-item>
+                <a-menu-item key="row-insert">{{ $t('data.copy_row_insert_sql') }}</a-menu-item>
+              </a-menu>
+            </template>
+          </a-dropdown-button>
         </a-space>
       </template>
       <div v-if="selectedCell" class="viewer-container">
@@ -386,7 +395,58 @@ function formatJsonInViewer() {
 
 async function copyViewerContent() {
   await writeClipboardText(viewerValue.value)
-  message.success(t('common.copy'))
+  message.success(t('data.copy_cell_success'))
+}
+
+function getSelectedRowPayload() {
+  const row = selectedCell.value?.row as GridRow | undefined
+  if (!row) return null
+
+  const payload = tableColumns.value.reduce<Record<string, any>>((acc, column) => {
+    acc[column.name] = row[column.name] ?? null
+    return acc
+  }, {})
+
+  return Object.keys(payload).length > 0 ? payload : null
+}
+
+async function copySelectedRowAsJson() {
+  const payload = getSelectedRowPayload()
+  if (!payload) {
+    message.warning(t('data.select_cell_prompt'))
+    return
+  }
+
+  await writeClipboardText(JSON.stringify(payload, null, 2))
+  message.success(t('data.copy_row_json_success'))
+}
+
+async function copySelectedRowAsInsertSql() {
+  const payload = getSelectedRowPayload()
+  if (!payload) {
+    message.warning(t('data.select_cell_prompt'))
+    return
+  }
+
+  const columns = Object.keys(payload)
+  const sql = `INSERT INTO ${tableRef()} (${columns.map(name => quote(name)).join(', ')}) VALUES (${columns.map(name => escapeSqlLiteral(payload[name])).join(', ')});`
+  await writeClipboardText(sql)
+  message.success(t('data.copy_row_insert_sql_success'))
+}
+
+async function handleViewerCopyAction({ key }: { key: string | number }) {
+  const action = String(key)
+  if (action === 'cell') {
+    await copyViewerContent()
+    return
+  }
+  if (action === 'row-json') {
+    await copySelectedRowAsJson()
+    return
+  }
+  if (action === 'row-insert') {
+    await copySelectedRowAsInsertSql()
+  }
 }
 
 function clearPendingEdits() {

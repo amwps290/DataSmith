@@ -325,7 +325,12 @@
     "select_cell_prompt": "Select a cell",
     "invalid_json": "Invalid JSON format",
     "format_json": "Format JSON",
-    "copy_content": "Copy Content"
+    "copy_content": "Copy Current Cell",
+    "copy_cell_success": "Current cell content copied",
+    "copy_row_json": "Copy Row as JSON",
+    "copy_row_json_success": "Current row JSON copied",
+    "copy_row_insert_sql": "Copy Row as INSERT SQL",
+    "copy_row_insert_sql_success": "Current row INSERT SQL copied"
   },
   "designer": {
     "title": "Table Designer - {table}",

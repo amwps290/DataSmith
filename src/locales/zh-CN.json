@@ -325,7 +325,12 @@
     "select_cell_prompt": "请选择一个单元格",
     "invalid_json": "无效的 JSON 格式",
     "format_json": "格式化 JSON",
-    "copy_content": "复制内容"
+    "copy_content": "复制当前单元格",
+    "copy_cell_success": "已复制当前单元格内容",
+    "copy_row_json": "复制当前行为 JSON",
+    "copy_row_json_success": "已复制当前行 JSON",
+    "copy_row_insert_sql": "复制当前行为 INSERT SQL",
+    "copy_row_insert_sql_success": "已复制当前行 INSERT SQL"
   },
   "designer": {
     "title": "表设计器 - {table}",
