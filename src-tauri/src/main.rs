@@ -1,10 +1,10 @@
 // Prevents additional console window on Windows in release mode
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use datasmith::commands;
-use datasmith::database::ConnectionManager;
-use datasmith::utils;
-use datasmith::AppState;
+use kudu::commands;
+use kudu::database::ConnectionManager;
+use kudu::utils;
+use kudu::AppState;
 use std::sync::Arc;
 use tauri::Manager;
 

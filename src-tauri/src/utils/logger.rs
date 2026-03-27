@@ -38,7 +38,7 @@ pub fn init_logger(app_dir: PathBuf) -> WorkerGuard {
 
     let env_filter = EnvFilter::try_from_default_env()
         .or_else(|_| build_env_filter("info"))
-        .unwrap_or_else(|_| EnvFilter::new("info,datasmith=info"));
+        .unwrap_or_else(|_| EnvFilter::new("info,kudu=info"));
     let (filter_layer, reload_handle) = reload::Layer::new(env_filter);
     let _ = FILTER_RELOAD_HANDLE.set(reload_handle);
 
@@ -52,7 +52,7 @@ pub fn init_logger(app_dir: PathBuf) -> WorkerGuard {
     let file_appender = RollingFileAppender::new(
         Rotation::DAILY,
         &log_dir,
-        "datasmith.log",
+        "kudu.log",
     );
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
@@ -111,7 +111,7 @@ fn normalize_log_level(level: &str) -> Result<String, String> {
 fn build_env_filter(level: &str) -> Result<EnvFilter, String> {
     let normalized = normalize_log_level(level)?;
     let directives = format!(
-        "{base},datasmith={base},tao=warn,wry=warn,hyper=warn,tower=warn",
+        "{base},kudu={base},tao=warn,wry=warn,hyper=warn,tower=warn",
         base = normalized
     );
 
@@ -121,7 +121,7 @@ fn build_env_filter(level: &str) -> Result<EnvFilter, String> {
 
 pub fn write_fatal_report(stage: &str, error: &str) -> Option<PathBuf> {
     let report = format!(
-        "DataSmith Fatal Error\n\
+        "Kudu Fatal Error\n\
          Time: {}\n\
          Stage: {}\n\
          Error: {}\n\n\
@@ -155,7 +155,7 @@ fn install_panic_hook() {
         };
 
         let report = format!(
-            "DataSmith Panic\n\
+            "Kudu Panic\n\
              Time: {}\n\
              Thread: {}\n\
              Location: {}\n\
@@ -281,7 +281,7 @@ unsafe extern "system" fn unhandled_exception_filter(
     };
 
     let report = format!(
-        "DataSmith Windows Crash\n\
+        "Kudu Windows Crash\n\
          Time: {}\n\
          Thread: {}\n\
          ExceptionCode: 0x{:08X}\n\
@@ -351,7 +351,7 @@ unsafe fn write_linux_signal_report(signal: libc::c_int, info: *const libc::sigi
     let tid = libc::syscall(libc::SYS_gettid) as i64;
     let mut report = [0u8; 1024];
     let mut len = 0usize;
-    append_bytes(&mut report, &mut len, b"DataSmith Linux Crash\n");
+    append_bytes(&mut report, &mut len, b"Kudu Linux Crash\n");
     append_bytes(&mut report, &mut len, b"Time: ");
     append_datetime(&mut report, &mut len, year, month, day, hour, minute, second, millis);
     append_bytes(&mut report, &mut len, b"\nSignal: ");

@@ -64,9 +64,9 @@ impl PostgreSqlDatabase {
             .to_string();
 
         let application_name = if connection_name.is_empty() {
-            "DataSmith".to_string()
+            "Kudu".to_string()
         } else {
-            format!("DataSmith/{}", connection_name)
+            format!("Kudu/{}", connection_name)
         };
 
         Self::trim_utf8_to_bytes(&application_name, 63)

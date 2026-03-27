@@ -6,8 +6,8 @@
     <div class="header-content">
       <!-- Logo 区域 (支持拖拽) -->
       <div class="logo" data-tauri-drag-region>
-        <DatabaseOutlined style="font-size: 18px; margin-right: 6px" data-tauri-drag-region />
-        <span class="title" data-tauri-drag-region>DataSmith</span>
+        <img src="/kudu-mark.svg" alt="Kudu" class="brand-mark" data-tauri-drag-region />
+        <span class="title" data-tauri-drag-region>Kudu</span>
       </div>
 
       <!-- 菜单区域 (宽度自适应，不阻挡两侧拖拽) -->
@@ -112,7 +112,7 @@
 import { computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import {
-  BuildOutlined, DatabaseOutlined, PlusOutlined, SettingOutlined,
+  BuildOutlined, PlusOutlined, SettingOutlined,
   MenuOutlined, RetweetOutlined, SearchOutlined,
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
@@ -183,6 +183,7 @@ onMounted(() => {
 .header-content { display: flex; align-items: center; height: 100%; width: 100%; position: relative; z-index: 2; pointer-events: none; }
 
 .logo { display: flex; align-items: center; font-size: 14px; font-weight: bold; color: #1890ff; padding: 0 12px; height: 100%; pointer-events: auto; position: relative; z-index: 3; }
+.brand-mark { width: 18px; height: 18px; margin-right: 6px; display: block; flex-shrink: 0; }
 .header-menu { height: 100%; display: flex; align-items: center; pointer-events: auto; flex: 0 0 auto; min-width: max-content; margin-left: 6px; position: relative; z-index: 3; }
 .top-menu { border-bottom: none; background: transparent; height: 100%; line-height: 32px; min-width: max-content; font-size: 13px; display: flex; align-items: center; }
 .top-menu :deep(.ant-menu-overflow) { display: flex; align-items: center; height: 100%; }
