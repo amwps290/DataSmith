@@ -15,40 +15,48 @@
           :label="col.name"
           :required="!col.nullable && !col.is_auto_increment"
         >
-          <a-input
-            v-if="isTextType(col.data_type)"
-            v-model:value="formData[col.name]"
-            :placeholder="getPlaceholder(col)"
-            :disabled="col.is_auto_increment"
-          />
-          <a-input-number
-            v-else-if="isNumericType(col.data_type)"
-            v-model:value="formData[col.name]"
-            style="width: 100%"
-            :placeholder="getPlaceholder(col)"
-            :disabled="col.is_auto_increment"
-          />
-          <a-date-picker
-            v-else-if="isDateType(col.data_type)"
-            v-model:value="formData[col.name]"
-            show-time
-            style="width: 100%"
-            :placeholder="getPlaceholder(col)"
-            :disabled="col.is_auto_increment"
-          />
-          <a-switch
-            v-else-if="isBooleanType(col.data_type)"
-            v-model:checked="formData[col.name]"
-            :disabled="col.is_auto_increment"
-          />
-          <a-textarea
-            v-else
-            v-model:value="formData[col.name]"
-            :placeholder="getPlaceholder(col)"
-            :disabled="col.is_auto_increment"
-            :rows="3"
-          />
-          <div v-if="col.comment" style="font-size: 12px; color: #999; margin-top: 4px;">
+          <div class="insert-field">
+            <a-select
+              v-if="getFieldKind(col) === 'boolean'"
+              v-model:value="formData[col.name]"
+              :options="getBooleanOptions(col)"
+              :placeholder="getPlaceholder(col)"
+              :disabled="isFieldDisabled(col)"
+              @change="markFieldDirty(col.name)"
+            />
+            <a-textarea
+              v-else-if="getFieldKind(col) === 'textarea' || getFieldKind(col) === 'json'"
+              v-model:value="formData[col.name]"
+              :placeholder="getPlaceholder(col)"
+              :disabled="isFieldDisabled(col)"
+              :rows="getFieldKind(col) === 'json' ? 5 : 3"
+              @change="markFieldDirty(col.name)"
+            />
+            <a-input
+              v-else
+              v-model:value="formData[col.name]"
+              :placeholder="getPlaceholder(col)"
+              :disabled="isFieldDisabled(col)"
+              @change="markFieldDirty(col.name)"
+            />
+          </div>
+          <div class="insert-field-meta">
+            <span>{{ col.data_type }}</span>
+            <span v-if="hasColumnDefault(col)">{{ $t('dialog.insert_record.default_value', { value: col.default_value }) }}</span>
+            <span v-else-if="col.is_auto_increment">{{ $t('dialog.insert_record.auto_generated') }}</span>
+            <span v-else-if="col.nullable">{{ $t('dialog.insert_record.optional') }}</span>
+            <span v-else>{{ $t('dialog.insert_record.required') }}</span>
+          </div>
+          <div class="insert-field-options">
+            <a-checkbox
+              v-if="col.nullable && !col.is_auto_increment && getFieldKind(col) !== 'boolean'"
+              v-model:checked="nullFields[col.name]"
+              @change="handleNullToggle(col)"
+            >
+              {{ $t('data.set_null') }}
+            </a-checkbox>
+          </div>
+          <div v-if="col.comment" class="insert-field-comment">
             {{ col.comment }}
           </div>
         </a-form-item>
@@ -63,15 +71,15 @@ import { message } from 'ant-design-vue'
 import { useI18n } from 'vue-i18n'
 import { metadataApi, dataApi } from '@/api'
 import { useDialogModel } from '@/composables/useDialogModel'
+import {
+  getInsertFieldKind,
+  hasColumnDefault,
+  normalizeInsertValue,
+  parseColumnDefaultValue,
+} from '@/utils/tableColumns'
+import type { ColumnInfo } from '@/types/database'
 
-interface InsertColumn {
-  name: string
-  data_type: string
-  nullable: boolean
-  is_auto_increment: boolean
-  default_value: string | null
-  comment: string
-}
+type InsertColumn = ColumnInfo
 
 const { t } = useI18n()
 
@@ -91,29 +99,22 @@ const inserting = ref(false)
 const loadingColumns = ref(false)
 const columns = ref<InsertColumn[]>([])
 const formData = ref<Record<string, any>>({})
+const dirtyFields = ref<Record<string, boolean>>({})
+const nullFields = ref<Record<string, boolean>>({})
 
-function normalizeType(dataType: string): string {
-  return dataType.trim().toLowerCase()
+function getFieldKind(col: InsertColumn) {
+  return getInsertFieldKind(col)
 }
 
-function isTextType(dataType: string): boolean {
-  const normalized = normalizeType(dataType)
-  return ['varchar', 'char', 'text', 'character varying', 'character'].includes(normalized)
-}
+function getInitialValue(col: InsertColumn) {
+  const parsed = parseColumnDefaultValue(col.default_value)
+  if (parsed === undefined) return undefined
 
-function isNumericType(dataType: string): boolean {
-  const normalized = normalizeType(dataType)
-  return ['int', 'integer', 'bigint', 'smallint', 'tinyint', 'decimal', 'numeric', 'float', 'double', 'real'].includes(normalized)
-}
-
-function isDateType(dataType: string): boolean {
-  const normalized = normalizeType(dataType)
-  return ['date', 'datetime', 'timestamp', 'timestamp without time zone', 'timestamp with time zone'].includes(normalized)
-}
-
-function isBooleanType(dataType: string): boolean {
-  const normalized = normalizeType(dataType)
-  return ['boolean', 'bool', 'tinyint(1)'].includes(normalized)
+  const normalized = normalizeInsertValue(col, parsed)
+  if (getFieldKind(col) === 'boolean') {
+    return normalized === null ? null : normalized ? 1 : 0
+  }
+  return normalized
 }
 
 function getPlaceholder(col: InsertColumn): string {
@@ -129,6 +130,55 @@ function getPlaceholder(col: InsertColumn): string {
   return t('dialog.insert_record.required')
 }
 
+function getBooleanOptions(col: InsertColumn) {
+  const options: Array<{ label: string, value: string | number | null }> = [
+    { label: t('dialog.insert_record.boolean_true'), value: 1 },
+    { label: t('dialog.insert_record.boolean_false'), value: 0 },
+  ]
+
+  if (col.nullable) {
+    options.push({ label: t('data.set_null'), value: null })
+  }
+
+  return options
+}
+
+function isFieldDisabled(col: InsertColumn) {
+  return col.is_auto_increment || Boolean(nullFields.value[col.name])
+}
+
+function markFieldDirty(field: string) {
+  dirtyFields.value[field] = true
+}
+
+function handleNullToggle(col: InsertColumn) {
+  const enabled = Boolean(nullFields.value[col.name])
+  if (enabled) {
+    formData.value[col.name] = null
+    dirtyFields.value[col.name] = true
+    return
+  }
+
+  formData.value[col.name] = getInitialValue(col)
+  dirtyFields.value[col.name] = false
+}
+
+function resetFormState() {
+  const nextFormData: Record<string, any> = {}
+  const nextDirtyFields: Record<string, boolean> = {}
+  const nextNullFields: Record<string, boolean> = {}
+
+  for (const col of columns.value) {
+    nextFormData[col.name] = getInitialValue(col)
+    nextDirtyFields[col.name] = false
+    nextNullFields[col.name] = false
+  }
+
+  formData.value = nextFormData
+  dirtyFields.value = nextDirtyFields
+  nullFields.value = nextNullFields
+}
+
 async function loadTableStructure() {
   if (!props.table) return
 
@@ -142,7 +192,7 @@ async function loadTableStructure() {
     }) as unknown as InsertColumn[]
 
     columns.value = result
-    formData.value = {}
+    resetFormState()
   } catch (error: unknown) {
     message.error(t('dialog.insert_record.load_fail', { error: String(error) }))
   } finally {
@@ -150,36 +200,95 @@ async function loadTableStructure() {
   }
 }
 
-async function handleInsert() {
-  // 验证必填字段
+function buildInsertPayload() {
+  const data: Record<string, any> = {}
+  const missingFields: string[] = []
+
   for (const col of columns.value) {
-    const currentValue = formData.value[col.name]
-    if (!col.nullable && !col.is_auto_increment && (currentValue === undefined || currentValue === null || currentValue === '')) {
-      message.error(t('dialog.insert_record.field_required', { field: col.name }))
+    if (col.is_auto_increment) continue
+
+    const initialValue = getInitialValue(col)
+    const touched = Boolean(dirtyFields.value[col.name])
+    const hasDefaultValue = hasColumnDefault(col)
+
+    if (nullFields.value[col.name]) {
+      data[col.name] = null
+      continue
+    }
+
+    const rawValue = formData.value[col.name]
+    if (rawValue === undefined || rawValue === null) {
+      if (rawValue === null && touched && col.nullable) {
+        data[col.name] = null
+      } else if (!col.nullable && !hasDefaultValue) {
+        missingFields.push(col.name)
+      }
+      continue
+    }
+
+    if (!touched && hasDefaultValue && JSON.stringify(rawValue) === JSON.stringify(initialValue)) {
+      continue
+    }
+
+    if (typeof rawValue === 'string') {
+      const trimmed = rawValue.trim()
+      if (!trimmed) {
+        if (getFieldKind(col) === 'text' || getFieldKind(col) === 'textarea') {
+          if (touched) {
+            data[col.name] = rawValue
+          } else if (!col.nullable && !hasDefaultValue) {
+            missingFields.push(col.name)
+          }
+          continue
+        }
+
+        if (!col.nullable && !hasDefaultValue) missingFields.push(col.name)
+        continue
+      }
+    }
+
+    data[col.name] = normalizeInsertValue(col, rawValue)
+  }
+
+  return { data, missingFields }
+}
+
+async function handleInsert() {
+  let payload: Record<string, any> = {}
+  try {
+    const { data, missingFields } = buildInsertPayload()
+    if (missingFields.length > 0) {
+      message.error(t('dialog.insert_record.field_required', { field: missingFields.join(', ') }))
       return
     }
+    if (Object.keys(data).length === 0) {
+      message.error(t('data.insert_empty_error'))
+      return
+    }
+    payload = data
+  } catch (error: unknown) {
+    const detail = String(error)
+    if (detail.startsWith('Error: INVALID_JSON:')) {
+      const field = detail.slice('Error: INVALID_JSON:'.length)
+      message.error(t('dialog.insert_record.invalid_json', { field }))
+      return
+    }
+    message.error(t('dialog.insert_record.fail', { error: detail }))
+    return
   }
 
   inserting.value = true
   try {
-    // 过滤掉自增字段和空值
-    const data: Record<string, any> = {}
-    for (const col of columns.value) {
-      if (!col.is_auto_increment && formData.value[col.name] !== undefined && formData.value[col.name] !== '') {
-        data[col.name] = formData.value[col.name]
-      }
-    }
-
     await dataApi.insertTableData({
       connectionId: props.connectionId,
       database: props.database,
       table: props.table,
       schema: props.schema,
-      data,
+      data: payload,
     })
 
     message.success(t('dialog.insert_record.success'))
-    emit('inserted')
+    emit('inserted', payload)
     handleCancel()
   } catch (error: unknown) {
     message.error(t('dialog.insert_record.fail', { error: String(error) }))
@@ -189,7 +298,7 @@ async function handleInsert() {
 }
 
 function handleCancel() {
-  formData.value = {}
+  resetFormState()
   visible.value = false
 }
 
@@ -203,5 +312,27 @@ watch(visible, (newVal) => {
 <style scoped>
 :deep(.ant-form-item) {
   margin-bottom: 16px;
+}
+
+.insert-field {
+  width: 100%;
+}
+
+.insert-field-meta,
+.insert-field-comment {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #8c8c8c;
+}
+
+.insert-field-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.insert-field-options {
+  min-height: 22px;
+  margin-top: 4px;
 }
 </style>

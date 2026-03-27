@@ -186,7 +186,7 @@
 </template>
 
 <script setup lang="ts">
-import { h, ref, watch, computed, reactive } from 'vue'
+import { h, ref, watch, computed, reactive, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ReloadOutlined, PlusOutlined, DeleteOutlined, FilterOutlined,
@@ -199,6 +199,7 @@ import { useConnectionStore } from '@/stores/connection'
 import InsertRecordDialog from '@/components/database/InsertRecordDialog.vue'
 import ImportDataDialog from '@/components/database/ImportDataDialog.vue'
 import { writeClipboardText } from '@/utils/clipboard'
+import { buildInitialColumnValue, hasColumnDefault, normalizeInsertValue } from '@/utils/tableColumns'
 import type { VxeGridProps, VxeGridInstance, VxeGridEvents } from 'vxe-table'
 import type { ColumnInfo, QueryResult } from '@/types/database'
 
@@ -363,6 +364,16 @@ function handleCellClick({ row, column }: any) {
   isViewerSetNull.value = row[column.field] === null
 }
 
+function applyViewerSelection(row: GridRow, field: string) {
+  const gridColumn = (gridOptions.columns || []).find((column: any) => column.field === field)
+  if (!gridColumn) return
+
+  selectedCell.value = { row, column: gridColumn }
+  viewerValue.value = row[field] === null ? '' : String(row[field])
+  isViewerSetNull.value = row[field] === null
+  showViewer.value = true
+}
+
 function handleViewerValueChange() {
   if (isReadOnly.value) return
   if (!selectedCell.value) return
@@ -459,6 +470,15 @@ function clearPendingDeletes() {
   }
 }
 
+function formatInsertError(error: unknown) {
+  const detail = String(error)
+  if (detail.startsWith('Error: INVALID_JSON:')) {
+    const field = detail.slice('Error: INVALID_JSON:'.length)
+    return t('dialog.insert_record.invalid_json', { field })
+  }
+  return detail
+}
+
 function resetPreviewState() {
   showPreviewDialog.value = false
   previewPlan.value = null
@@ -513,9 +533,14 @@ function buildInsertPayload(row: GridRow) {
   const missingRequired: string[] = []
 
   for (const column of tableColumns.value) {
-    const value = row[column.name]
+    const rawValue = row[column.name]
     const touched = Boolean(row._newTouchedFields?.[column.name])
-    const hasDefault = column.default_value !== undefined && column.default_value !== null && column.default_value !== ''
+    const hasDefault = hasColumnDefault(column)
+
+    let value = rawValue
+    if (value !== null && value !== undefined) {
+      value = normalizeInsertValue(column, value)
+    }
 
     if (value === null || value === undefined) {
       if (touched) {
@@ -540,6 +565,7 @@ function escapeSqlLiteral(value: any) {
   if (value === null || value === undefined) return 'NULL'
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'NULL'
   if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE'
+  if (typeof value === 'object') return `'${JSON.stringify(value).replace(/'/g, "''")}'`
   return `'${String(value).replace(/'/g, "''")}'`
 }
 
@@ -635,7 +661,7 @@ async function submitChanges() {
     previewSql.value = [...plan.inserts, ...plan.updates, ...plan.deletes].map(item => item.sql).join('\n\n')
     showPreviewDialog.value = true
   } catch (e: any) {
-    message.error(t('data.save_fail', { error: String(e) }))
+    message.error(t('data.save_fail', { error: formatInsertError(e) }))
   }
 }
 
@@ -708,7 +734,7 @@ async function confirmSubmitChanges() {
         // 忽略刷新失败，保留原始错误提示
       }
     }
-    message.error(t('data.save_fail', { error: String(e) }))
+    message.error(t('data.save_fail', { error: formatInsertError(e) }))
   } finally {
     saving.value = false
   }
@@ -767,15 +793,7 @@ async function loadData(isAppend: boolean) {
   if (!props.table) return
   loading.value = true; if (!isAppend) gridOptions.loading = true
   try {
-    if (tableColumns.value.length === 0) {
-      tableColumns.value = await metadataApi.getTableStructure({
-        connectionId: props.connectionId,
-        table: props.table,
-        schema: props.schema || null,
-        database: props.database
-      })
-      primaryKeys.value = tableColumns.value.filter(c => c.is_primary_key).map(c => c.name)
-    }
+    await ensureTableStructure()
     const offset = (pagination.current - 1) * pagination.pageSize
     let sql = `SELECT * FROM ${tableRef()}`
     if (filterCondition.value) sql += ` WHERE ${filterCondition.value}`
@@ -808,6 +826,18 @@ async function loadData(isAppend: boolean) {
   }
 }
 
+async function ensureTableStructure() {
+  if (tableColumns.value.length > 0) return
+
+  tableColumns.value = await metadataApi.getTableStructure({
+    connectionId: props.connectionId,
+    table: props.table,
+    schema: props.schema || null,
+    database: props.database
+  })
+  primaryKeys.value = tableColumns.value.filter(c => c.is_primary_key).map(c => c.name)
+}
+
 function handleCheckboxChange() {
   const records = gridRef.value?.getCheckboxRecords() || []
   selectedRowKeys.value = records.map((r: any) => r.__rowIndex)
@@ -815,23 +845,65 @@ function handleCheckboxChange() {
 
 function applyFilter() { showFilterDialog.value = false; refresh() }
 
-function addRow() {
+function findFirstEditableColumn() {
+  const editableName = tableColumns.value.find(column => !column.is_auto_increment)?.name
+  if (!editableName) return null
+
+  const gridColumn = (gridOptions.columns || []).find((column: any) => column.field === editableName)
+  return gridColumn || { field: editableName, title: editableName }
+}
+
+async function focusNewRow(row: GridRow) {
+  const targetColumn = findFirstEditableColumn()
+  if (!targetColumn) return
+  const fieldName = String(targetColumn.field || '')
+  if (!fieldName) return
+
+  await nextTick()
+  selectedCell.value = { row, column: targetColumn }
+  viewerValue.value = row[fieldName] === null ? '' : String(row[fieldName])
+  isViewerSetNull.value = row[fieldName] === null
+  showViewer.value = true
+  ;(gridRef.value as any)?.setCurrentRow?.(row)
+  ;(gridRef.value as any)?.scrollToRow?.(row)
+}
+
+async function addRow() {
   if (isReadOnly.value) {
     warnReadOnly()
     return
   }
+
+  await ensureTableStructure()
   const rowData = tableColumns.value.reduce<Record<string, any>>((acc, column) => {
-    acc[column.name] = null
+    acc[column.name] = buildInitialColumnValue(column)
     return acc
   }, {})
 
   const newRow = createGridRow(rowData, { isNew: true })
   gridOptions.data = [newRow, ...((gridOptions.data || []) as GridRow[])]
+  await focusNewRow(newRow)
 }
 
-async function handleRecordInserted() {
+function findInsertedRow(payload: Record<string, any>) {
+  return ((gridOptions.data || []) as GridRow[]).find(row =>
+    Object.entries(payload).every(([field, value]) => JSON.stringify(row[field] ?? null) === JSON.stringify(value ?? null))
+  ) || null
+}
+
+async function handleRecordInserted(payload?: Record<string, any>) {
   showInsertDialog.value = false
   await doRefresh()
+  if (!payload || Object.keys(payload).length === 0) return
+
+  const matchedRow = findInsertedRow(payload)
+  if (!matchedRow) return
+
+  const field = Object.keys(payload)[0]
+  await nextTick()
+  ;(gridRef.value as any)?.setCurrentRow?.(matchedRow)
+  ;(gridRef.value as any)?.scrollToRow?.(matchedRow)
+  applyViewerSelection(matchedRow, field)
 }
 
 async function handleDataImported() {

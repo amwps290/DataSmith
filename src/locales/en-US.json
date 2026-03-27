@@ -509,8 +509,11 @@
       "default_value": "Default: {value}",
       "optional": "Optional",
       "required": "Required",
+      "boolean_true": "True",
+      "boolean_false": "False",
       "load_fail": "Failed to load table structure: {error}",
       "field_required": "Please fill in required field: {field}",
+      "invalid_json": "Field {field} contains invalid JSON",
       "success": "Record inserted successfully",
       "fail": "Failed to insert record: {error}"
     },
