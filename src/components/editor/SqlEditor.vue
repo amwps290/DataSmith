@@ -140,20 +140,30 @@
 
     <!-- 历史记录 -->
     <a-drawer :title="$t('editor.history_title')" placement="right" v-model:open="showHistory" width="400">
-      <a-list :data-source="sqlHistory" size="small">
-        <template #renderItem="{ item }">
-          <a-list-item class="history-item" @click="useHistorySql(item.sql)">
-            <a-list-item-meta>
-              <template #title>
-                <code class="history-sql">{{ item.sql.substring(0, 100) }}{{ item.sql.length > 100 ? '...' : '' }}</code>
-              </template>
-              <template #description>
-                {{ new Date(item.timestamp).toLocaleString() }} • {{ item.database || ($t('common.ok') === 'OK' ? 'Default' : '默认') }}
-              </template>
-            </a-list-item-meta>
-          </a-list-item>
-        </template>
-      </a-list>
+      <div class="history-panel">
+        <div class="history-toolbar">
+          <a-input
+            v-model:value="historySearch"
+            allow-clear
+            size="small"
+            :placeholder="$t('editor.history_search_placeholder')"
+          />
+          <span class="history-count">{{ filteredSqlHistory.length }}</span>
+        </div>
+
+        <a-list v-if="filteredSqlHistory.length > 0" :data-source="filteredSqlHistory" size="small" class="history-list">
+          <template #renderItem="{ item }">
+            <a-list-item class="history-item" @click="useHistorySql(item.sql)">
+              <div class="history-entry">
+                <code class="history-sql">{{ getHistoryPreview(item.sql) }}</code>
+                <div class="history-meta">{{ formatHistoryMeta(item) }}</div>
+              </div>
+            </a-list-item>
+          </template>
+        </a-list>
+
+        <a-empty v-else :description="historyEmptyDescription" />
+      </div>
     </a-drawer>
 
     <div
@@ -241,7 +251,8 @@ const queryResults = ref<QueryResult[]>([])
 const resultTabKey = ref('empty')
 const messages = ref<any[]>([])
 const showHistory = ref(false)
-const sqlHistory = ref<any[]>([])
+const historySearch = ref('')
+const sqlHistory = ref<Array<{ sql: string; timestamp: number; database?: string }>>([])
 const showSaveDialog = ref(false)
 const showSnippets = ref(false)
 const resultPanelVisible = ref(getStorageItem(RESULT_PANEL_VISIBLE_KEY, false))
@@ -288,6 +299,51 @@ const executionSummaryMeta = computed(() => {
   return parts.join(' · ')
 })
 const resultDockHeight = computed(() => resultPanelVisible.value ? resultPanelHeight.value : RESULT_PANEL_COLLAPSED_HEIGHT)
+function normalizeHistoryText(value: string) {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+function buildHistoryDateKeywords(timestamp: number) {
+  const date = new Date(timestamp)
+  const year = String(date.getFullYear())
+  const month = String(date.getMonth() + 1)
+  const day = String(date.getDate())
+  const monthPadded = month.padStart(2, '0')
+  const dayPadded = day.padStart(2, '0')
+
+  return [
+    `${year}/${month}/${day}`,
+    `${year}/${monthPadded}/${dayPadded}`,
+    `${year}-${month}-${day}`,
+    `${year}-${monthPadded}-${dayPadded}`,
+    `${year}${monthPadded}${dayPadded}`,
+    `${month}/${day}`,
+    `${monthPadded}/${dayPadded}`,
+    `${month}-${day}`,
+    `${monthPadded}-${dayPadded}`,
+  ]
+}
+
+const normalizedHistorySearch = computed(() => normalizeHistoryText(historySearch.value))
+const filteredSqlHistory = computed(() => {
+  const keyword = normalizedHistorySearch.value
+  if (!keyword) return sqlHistory.value
+  return sqlHistory.value.filter((item) => {
+    const haystack = [
+      item.sql,
+      item.database || '',
+      new Date(item.timestamp).toLocaleString(),
+      formatHistoryMeta(item),
+      ...buildHistoryDateKeywords(item.timestamp),
+    ]
+      .map((text) => normalizeHistoryText(text))
+      .join(' ')
+    return haystack.includes(keyword)
+  })
+})
+const historyEmptyDescription = computed(() => normalizedHistorySearch.value
+  ? t('editor.history_no_match')
+  : t('editor.history_empty'))
 
 interface ResultClipboardSelection {
   row: Record<string, any>
@@ -427,6 +483,18 @@ function buildClipboardResultText(result: QueryResult) {
 async function copyTextToClipboard(text: string, successMessage: string) {
   await writeText(text)
   message.success(successMessage)
+}
+
+function getHistoryPreview(sql: string) {
+  return sql.substring(0, 100) + (sql.length > 100 ? '...' : '')
+}
+
+function getHistoryDatabaseLabel(database?: string) {
+  return database || (t('common.ok') === 'OK' ? 'Default' : '默认')
+}
+
+function formatHistoryMeta(item: { timestamp: number; database?: string }) {
+  return `${new Date(item.timestamp).toLocaleString()} • ${getHistoryDatabaseLabel(item.database)}`
 }
 
 function handleResultCellClick({ row, column, index }: { row: Record<string, any>; column: any; index: number }) {
@@ -1203,7 +1271,7 @@ async function pasteFromSystemClipboard() {
     message.error(getErrorMessage(e))
   }
 }
-function openHistory() { showHistory.value = true }
+function openHistory() { historySearch.value = ''; showHistory.value = true }
 function openSnippets() { showSnippets.value = true }
 function useHistorySql(sql: string) { editor?.setValue(sql); showHistory.value = false; }
 function saveToHistory(sql: string) { sqlHistory.value.unshift({ sql, timestamp: Date.now(), database: selectedDatabase.value }); if (sqlHistory.value.length > 100) sqlHistory.value.pop(); setStorageItem(STORAGE_KEYS.SQL_HISTORY, sqlHistory.value) }
@@ -1368,10 +1436,17 @@ defineExpose({ setSelectedDatabase, executing, executionState, executeQuery, exp
 .message-item.success { border-left-color: #52c41a; }
 .message-item.error { border-left-color: #ff4d4f; color: #ff4d4f; }
 .message-time { color: #8c8c8c; margin-right: 8px; }
+.history-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.history-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.history-count { flex-shrink: 0; min-width: 24px; font-size: 12px; color: #8c8c8c; text-align: right; }
+.history-list { flex: 1; min-height: 0; overflow-y: auto; }
 .history-item { cursor: pointer; transition: background 0.2s; }
 .history-item:hover { background: #f5f5f5; }
 .dark-mode .history-item:hover { background: #262626; }
-.history-sql { font-family: monospace; background: transparent; padding: 0; }
+.history-entry { display: flex; flex-direction: column; gap: 4px; width: 100%; min-width: 0; }
+.history-sql { display: block; font-family: monospace; background: transparent; padding: 0; white-space: pre-wrap; word-break: break-word; color: inherit; }
+.history-meta { font-size: 12px; color: #8c8c8c; line-height: 1.4; }
+.dark-mode .history-meta { color: #a6a6a6; }
 .result-tab-label { display: inline-flex; align-items: center; gap: 6px; max-width: 180px; }
 .result-tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .result-tab-close { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 999px; background: transparent; color: #8c8c8c; font-size: 12px; line-height: 1; cursor: pointer; flex-shrink: 0; transition: background-color 0.2s, color 0.2s; }
