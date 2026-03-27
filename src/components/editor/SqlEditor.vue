@@ -64,18 +64,38 @@
                 <a-divider type="vertical" />
                 <span class="affected-text" v-if="result.affected_rows > 0">{{ $t('editor.affected_rows', { n: result.affected_rows }) }}</span>
               </a-space>
-              <a-dropdown>
-                <template #overlay>
-                  <a-menu @click="handleExportMenuClick(index, $event)">
-                    <a-menu-item key="csv">{{ $t('data.export_csv') }}</a-menu-item>
-                    <a-menu-item key="json">{{ $t('data.export_json') }}</a-menu-item>
-                    <a-menu-item key="sql">{{ $t('data.export_sql') }}</a-menu-item>
-                  </a-menu>
-                </template>
-                <a-button size="small" :icon="h(ExportOutlined)" :disabled="result.columns.length === 0">
-                  {{ $t('editor.export_result') }}
-                </a-button>
-              </a-dropdown>
+              <a-space :size="8">
+                <a-dropdown>
+                  <template #overlay>
+                    <a-menu @click="handleCopyMenuClick(index, $event)">
+                      <a-menu-item key="cell" :disabled="!hasResultClipboardSelection(index)">
+                        {{ $t('editor.copy_cell') }}
+                      </a-menu-item>
+                      <a-menu-item key="row" :disabled="!hasResultClipboardSelection(index)">
+                        {{ $t('editor.copy_row') }}
+                      </a-menu-item>
+                      <a-menu-item key="result" :disabled="result.columns.length === 0">
+                        {{ $t('editor.copy_result_set') }}
+                      </a-menu-item>
+                    </a-menu>
+                  </template>
+                  <a-button size="small" :icon="h(CopyOutlined)" :disabled="result.columns.length === 0">
+                    {{ $t('common.copy') }}
+                  </a-button>
+                </a-dropdown>
+                <a-dropdown>
+                  <template #overlay>
+                    <a-menu @click="handleExportMenuClick(index, $event)">
+                      <a-menu-item key="csv">{{ $t('data.export_csv') }}</a-menu-item>
+                      <a-menu-item key="json">{{ $t('data.export_json') }}</a-menu-item>
+                      <a-menu-item key="sql">{{ $t('data.export_sql') }}</a-menu-item>
+                    </a-menu>
+                  </template>
+                  <a-button size="small" :icon="h(ExportOutlined)" :disabled="result.columns.length === 0">
+                    {{ $t('editor.export_result') }}
+                  </a-button>
+                </a-dropdown>
+              </a-space>
             </div>
             
             <div class="table-wrapper">
@@ -83,6 +103,7 @@
                 :ref="(el: any) => setGridRef(el, index)"
                 v-bind="getGridOptions(result, index)"
                 @scroll="(params: any) => handleScroll({ ...params, index })"
+                @cell-click="(params: any) => handleResultCellClick({ ...params, index })"
               >
                 <template #cell_default="{ row, column }">
                   <span class="result-cell-text" :class="{ 'null-text': row[column.field] === null }">
@@ -168,10 +189,10 @@
 import { onMounted, onUnmounted, watch, ref, computed, onActivated, nextTick, reactive, h } from 'vue'
 import { useI18n } from 'vue-i18n'
 import * as monaco from 'monaco-editor'
-import { readText } from '@tauri-apps/plugin-clipboard-manager'
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { getSqlAutocompleteManager } from '@/services/sqlAutocomplete'
 import { message, Modal } from 'ant-design-vue'
-import { ExportOutlined } from '@ant-design/icons-vue'
+import { ExportOutlined, CopyOutlined } from '@ant-design/icons-vue'
 import { save } from '@tauri-apps/plugin-dialog'
 import { exportApi, queryApi, metadataApi, utilsApi } from '@/api'
 import type { QueryResult } from '@/types/database'
@@ -268,12 +289,20 @@ const executionSummaryMeta = computed(() => {
 })
 const resultDockHeight = computed(() => resultPanelVisible.value ? resultPanelHeight.value : RESULT_PANEL_COLLAPSED_HEIGHT)
 
+interface ResultClipboardSelection {
+  row: Record<string, any>
+  rowIndex: number
+  field: string
+  title: string
+}
+
 const gridRefs = reactive<Record<number, any>>({})
 function setGridRef(el: any, index: number) { if (el) gridRefs[index] = el; else delete gridRefs[index]; }
 const resultContextMenuVisible = ref(false)
 const resultContextMenuX = ref(0)
 const resultContextMenuY = ref(0)
 const resultContextIndex = ref(-1)
+const resultClipboardSelections = reactive<Record<number, ResultClipboardSelection>>({})
 const activeResultIndex = computed(() => {
   const match = /^result-(\d+)$/.exec(resultTabKey.value)
   return match ? Number(match[1]) : -1
@@ -359,6 +388,94 @@ function getGridOptions(result: QueryResult, index: number): VxeGridProps {
   }
 }
 
+function getResultClipboardSelection(index: number) {
+  return resultClipboardSelections[index] || null
+}
+
+function hasResultClipboardSelection(index: number) {
+  return Boolean(getResultClipboardSelection(index))
+}
+
+function formatClipboardScalar(value: unknown) {
+  if (value === null || value === undefined) return 'NULL'
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') return String(value)
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function formatClipboardTsvValue(value: unknown) {
+  const text = formatClipboardScalar(value)
+  if (!/[\t\r\n"]/.test(text)) return text
+  return `"${text.replace(/"/g, '""')}"`
+}
+
+function buildClipboardRowText(result: QueryResult, row: Record<string, any>) {
+  return result.columns.map((column) => formatClipboardTsvValue(row[column])).join('\t')
+}
+
+function buildClipboardResultText(result: QueryResult) {
+  if (result.columns.length === 0) return ''
+  const header = result.columns.map((column) => formatClipboardTsvValue(column)).join('\t')
+  const rows = result.rows.map((row) => buildClipboardRowText(result, row as Record<string, any>))
+  return [header, ...rows].join('\n')
+}
+
+async function copyTextToClipboard(text: string, successMessage: string) {
+  await writeText(text)
+  message.success(successMessage)
+}
+
+function handleResultCellClick({ row, column, index }: { row: Record<string, any>; column: any; index: number }) {
+  if (!column?.field || column.type === 'seq' || column.type === 'checkbox') return
+  resultClipboardSelections[index] = {
+    row,
+    rowIndex: Number(row.__rowIndex ?? -1),
+    field: String(column.field),
+    title: String(column.title || column.field),
+  }
+}
+
+async function copyResultCell(index: number) {
+  const selection = getResultClipboardSelection(index)
+  if (!selection) {
+    message.warning(t('editor.copy_cell_select_first'))
+    return
+  }
+  await copyTextToClipboard(
+    formatClipboardScalar(selection.row[selection.field]),
+    t('editor.copy_cell_success'),
+  )
+}
+
+async function copyResultRow(index: number) {
+  const selection = getResultClipboardSelection(index)
+  const result = queryResults.value[index]
+  if (!selection || !result) {
+    message.warning(t('editor.copy_row_select_first'))
+    return
+  }
+  await copyTextToClipboard(
+    buildClipboardRowText(result, selection.row),
+    t('editor.copy_row_success'),
+  )
+}
+
+async function copyResultSet(index: number) {
+  const result = queryResults.value[index]
+  if (!result || result.columns.length === 0) {
+    message.warning(t('editor.copy_result_empty'))
+    return
+  }
+  await copyTextToClipboard(
+    buildClipboardResultText(result),
+    t('editor.copy_result_success', { n: result.rows.length }),
+  )
+}
+
 function buildResultState(statement: PreparedSqlStatement | undefined, result: QueryResult) {
   return {
     pagination: { current: 1, pageSize: 100 },
@@ -385,10 +502,12 @@ function appendQueryResults(results: QueryResult[], states: Array<{ pagination: 
 function replaceResultTabs(keptSourceIndices: number[]) {
   const nextResults = keptSourceIndices.map((sourceIndex) => queryResults.value[sourceIndex])
   const nextStates = keptSourceIndices.map((sourceIndex) => queryResultStates[sourceIndex])
+  const nextClipboardSelections = keptSourceIndices.map((sourceIndex) => resultClipboardSelections[sourceIndex])
   const previousActiveIndex = activeResultIndex.value
 
   queryResults.value = nextResults
   Object.keys(queryResultStates).forEach((key) => delete queryResultStates[Number(key)])
+  Object.keys(resultClipboardSelections).forEach((key) => delete resultClipboardSelections[Number(key)])
   nextStates.forEach((state, index) => {
     if (!state) return
     queryResultStates[index] = {
@@ -397,6 +516,10 @@ function replaceResultTabs(keptSourceIndices: number[]) {
       hasMore: state.hasMore,
       sql: state.sql,
     }
+  })
+  nextClipboardSelections.forEach((selection, index) => {
+    if (!selection) return
+    resultClipboardSelections[index] = selection
   })
 
   if (previousActiveIndex < 0) {
@@ -715,6 +838,21 @@ async function handleExportResult(index: number, format: string) {
 
 function handleExportMenuClick(index: number, { key }: { key: string | number }) {
   return handleExportResult(index, String(key))
+}
+
+async function handleCopyMenuClick(index: number, { key }: { key: string | number }) {
+  try {
+    const action = String(key)
+    if (action === 'cell') {
+      await copyResultCell(index)
+    } else if (action === 'row') {
+      await copyResultRow(index)
+    } else if (action === 'result') {
+      await copyResultSet(index)
+    }
+  } catch (e: any) {
+    message.error(getErrorMessage(e))
+  }
 }
 
 function getErrorMessage(error: unknown): string {
@@ -1048,7 +1186,7 @@ async function stopExecution() {
   })
 }
 async function formatSql() { if (!editor) return; try { const formatted = await queryApi.beautifySql(sessionConnectionId.value, editor.getValue()); editor.setValue(formatted); message.success(t('editor.format_success')) } catch (e: any) { message.error(getErrorMessage(e)) } }
-function clearEditor() { editor?.setValue(''); queryResults.value = []; resultTabKey.value = 'empty'; messages.value = []; Object.keys(queryResultStates).forEach(k => delete queryResultStates[Number(k)]); hideResultContextMenu(); resetExecutionState(); }
+function clearEditor() { editor?.setValue(''); queryResults.value = []; resultTabKey.value = 'empty'; messages.value = []; Object.keys(queryResultStates).forEach(k => delete queryResultStates[Number(k)]); Object.keys(resultClipboardSelections).forEach(k => delete resultClipboardSelections[Number(k)]); hideResultContextMenu(); resetExecutionState(); }
 function handleQuerySaved() { message.success(t('common.save')) }
 function insertSnippet(sql: string) { if (!editor) return; const selection = editor.getSelection(); editor.executeEdits('insert-snippet', [{ range: selection || editor.getSelection()!, text: sql }]); showSnippets.value = false }
 async function pasteFromSystemClipboard() {
